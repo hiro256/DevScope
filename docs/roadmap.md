@@ -11,10 +11,10 @@
 
 ### Markdown progress
 
-- [ ] Markdown file discovery
-- [ ] Markdown task checkbox parsing
-- [ ] Completed/total task calculation
-- [ ] Multiple Markdown files support
+- [x] Markdown file discovery
+- [x] Markdown task checkbox parsing
+- [x] Completed/total task calculation
+- [x] Multiple Markdown files support
 
 ### Git activity
 
@@ -34,8 +34,8 @@
 
 ### Quality
 
-- [ ] Unit tests for Markdown parser
-- [ ] Unit tests for progress calculation
+- [x] Unit tests for Markdown parser
+- [x] Unit tests for progress calculation
 - [ ] Basic TUI rendering tests
 - [ ] Windows manual verification
 
