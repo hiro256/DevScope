@@ -1,23 +1,20 @@
 //! DevScope command-line entry point.
-//!
-//! The presentation is intentionally isolated here so a future Ratatui frontend can
-//! be introduced without coupling it to the progress-analysis core.
 
-fn main() {
-    print_welcome();
-}
+mod app;
+mod event_loop;
+mod terminal;
+mod ui;
 
-fn print_welcome() {
-    println!("DevScope");
-    println!("AI-assisted development progress observer");
-    println!();
-    println!("DevScope is not implemented yet.");
-}
+use std::io;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder() {
-        // Keeps the binary crate's initial test command meaningful.
-    }
+use app::App;
+use terminal::TerminalSession;
+
+fn main() -> io::Result<()> {
+    let mut terminal = TerminalSession::enter()?;
+    let mut app = App::new();
+
+    let run_result = event_loop::run(terminal.terminal_mut(), &mut app);
+    let restore_result = terminal.restore();
+    run_result.and(restore_result)
 }

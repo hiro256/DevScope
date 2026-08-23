@@ -5,9 +5,9 @@
 ### Project bootstrap
 
 - [x] Rust project initialization
-- [ ] Ratatui/Crossterm setup
-- [ ] Basic application loop
-- [ ] Initial TUI layout
+- [x] Ratatui/Crossterm setup
+- [x] Basic application loop
+- [x] Initial TUI layout
 
 ### Markdown progress
 

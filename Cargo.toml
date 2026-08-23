@@ -5,3 +5,5 @@ edition = "2024"
 description = "A project-centric progress observer for AI-assisted software development"
 
 [dependencies]
+crossterm = "0.29.0"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29"] }
