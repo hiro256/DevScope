@@ -37,7 +37,7 @@
 - [x] Unit tests for Markdown parser
 - [x] Unit tests for progress calculation
 - [x] Basic TUI rendering tests
-- [ ] Windows manual verification
+- [x] Windows manual verification
 
 ## Post-MVP
 
