@@ -30,7 +30,7 @@
 - [x] Task summary
 - [x] Git activity panel
 - [x] Keyboard navigation
-- [ ] Responsive terminal resize handling
+- [x] Responsive terminal resize handling
 
 ### Quality
 
