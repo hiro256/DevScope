@@ -22,7 +22,10 @@ pub fn run(terminal: &mut AppTerminal, app: &mut App) -> io::Result<()> {
         }
 
         match event::read()? {
-            Event::Key(key) => app.handle_key(key),
+            Event::Key(key) => {
+                app.handle_key(key);
+                needs_render = true;
+            }
             Event::Resize(_, _) => needs_render = true,
             _ => {}
         }
