@@ -59,7 +59,11 @@ fn plan(p: PlanState) -> String {
 fn activity(a: &ActivityState) -> String {
     match a {
         ActivityState::Available(s) if s.changed_files() == 0 => "Clean".into(),
-        ActivityState::Available(s) => format!("{} changed files", s.changed_files()),
+        ActivityState::Available(s) => format!(
+            "{} changed file{}",
+            s.changed_files(),
+            if s.changed_files() == 1 { "" } else { "s" }
+        ),
         ActivityState::NotRepository => "Not a Git repository".into(),
         ActivityState::Unavailable => "Unavailable".into(),
     }
@@ -135,6 +139,75 @@ mod task_ui_tests {
         assert!(draw(TaskState::Available(TaskSummary::new(0, vec![]))).contains("No tasks found"));
         assert!(
             draw(TaskState::Available(TaskSummary::new(1, vec![]))).contains("All tasks completed")
+        );
+    }
+}
+
+#[cfg(test)]
+mod overview_regression_tests {
+    use super::*;
+    use crate::app::{ActivityState, PlanState, TaskState};
+    use devscope::progress::{ActivitySummary, GitActivity, GitCommit, PlanSummary, TaskSummary};
+    use ratatui::{Terminal, backend::TestBackend};
+    fn draw_all(activity: ActivityState) -> String {
+        let a = App::new(
+            PlanState::Available(PlanSummary::new(3, 5)),
+            activity,
+            TaskState::Available(TaskSummary::new(0, vec![])),
+        );
+        let mut t = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        t.draw(|f| render(f, &a)).unwrap();
+        t.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+    #[test]
+    fn renders_plan_clean_and_recent_commit() {
+        let g = GitActivity {
+            changed_files: vec![],
+            recent_commits: vec![GitCommit {
+                id: "abc".into(),
+                summary: "newest".into(),
+            }],
+        };
+        let s = draw_all(ActivityState::Available(ActivitySummary::from(&g)));
+        assert!(s.contains("3 / 5 tasks complete"));
+        assert!(s.contains("Activity   Clean"));
+        assert!(s.contains("newest"));
+    }
+    #[test]
+    fn renders_activity_unavailable_and_pluralization() {
+        assert!(draw_all(ActivityState::Unavailable).contains("Activity   Unavailable"));
+        let g = GitActivity {
+            changed_files: vec![devscope::progress::GitChangedFile {
+                path: "a".into(),
+                status: devscope::progress::GitFileStatus::Modified,
+            }],
+            recent_commits: vec![],
+        };
+        assert!(
+            draw_all(ActivityState::Available(ActivitySummary::from(&g)))
+                .contains("1 changed file")
+        );
+        let g = GitActivity {
+            changed_files: vec![
+                devscope::progress::GitChangedFile {
+                    path: "a".into(),
+                    status: devscope::progress::GitFileStatus::Modified,
+                },
+                devscope::progress::GitChangedFile {
+                    path: "b".into(),
+                    status: devscope::progress::GitFileStatus::Modified,
+                },
+            ],
+            recent_commits: vec![],
+        };
+        assert!(
+            draw_all(ActivityState::Available(ActivitySummary::from(&g)))
+                .contains("2 changed files")
         );
     }
 }

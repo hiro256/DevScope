@@ -129,3 +129,24 @@ mod task_summary_tests {
         assert_eq!(summary.items()[0].text(), "Task summary");
     }
 }
+#[cfg(test)]
+mod markdown_conversion_tests {
+    use super::*;
+    use std::fs;
+    #[test]
+    fn converts_markdown_progress_to_incomplete_task_summary() {
+        let root =
+            std::env::temp_dir().join(format!("devscope-task-summary-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("tasks.md");
+        fs::write(&path, "- [x] completed task\n- [ ] incomplete task").unwrap();
+        let progress = analyze_markdown_progress(&root).unwrap();
+        let summary = TaskSummary::from(&progress);
+        assert_eq!(summary.total(), 2);
+        assert_eq!(summary.remaining(), 1);
+        assert_eq!(summary.items()[0].text(), "incomplete task");
+        assert_eq!(summary.items()[0].line(), 2);
+        assert_eq!(summary.items()[0].path(), path);
+        let _ = fs::remove_dir_all(root);
+    }
+}
