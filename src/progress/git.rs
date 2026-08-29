@@ -238,3 +238,42 @@ mod tests {
         assert!(!c[0].id.is_empty());
     }
 }
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use std::{fs, process::Command};
+    fn run(p: &Path, a: &[&str]) {
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(p)
+                .args(a)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    #[test]
+    fn staged_unstaged_and_commit_order() {
+        let p = std::env::temp_dir().join(format!("devscope-git-extra-{}", std::process::id()));
+        fs::create_dir_all(&p).unwrap();
+        run(&p, &["init"]);
+        run(&p, &["config", "user.name", "Test"]);
+        run(&p, &["config", "user.email", "t@x.invalid"]);
+        for s in ["oldest", "middle", "newest"] {
+            fs::write(p.join("f"), s).unwrap();
+            run(&p, &["add", "."]);
+            run(&p, &["commit", "-m", s]);
+        }
+        fs::write(p.join("f"), "staged").unwrap();
+        run(&p, &["add", "f"]);
+        fs::write(p.join("f"), "unstaged").unwrap();
+        let a = collect_git_activity(&p, 2).unwrap();
+        assert_eq!(a.changed_file_count(), 1);
+        assert_eq!(a.changed_files[0].status, GitFileStatus::Modified);
+        assert_eq!(a.recent_commits.len(), 2);
+        assert_eq!(a.recent_commits[0].summary, "newest");
+        assert_eq!(a.recent_commits[1].summary, "middle");
+        let _ = fs::remove_dir_all(p);
+    }
+}

@@ -28,7 +28,7 @@
 - [x] Overview screen
 - [x] Progress display
 - [ ] Task summary
-- [ ] Git activity panel
+- [x] Git activity panel
 - [ ] Keyboard navigation
 - [ ] Responsive terminal resize handling
 
@@ -36,7 +36,7 @@
 
 - [x] Unit tests for Markdown parser
 - [x] Unit tests for progress calculation
-- [ ] Basic TUI rendering tests
+- [x] Basic TUI rendering tests
 - [ ] Windows manual verification
 
 ## Post-MVP
@@ -49,4 +49,3 @@
 - [ ] Progress history
 - [ ] VS Code integration
 - [ ] Web/API frontend
-
