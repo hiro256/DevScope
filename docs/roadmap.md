@@ -27,7 +27,7 @@
 
 - [x] Overview screen
 - [x] Progress display
-- [ ] Task summary
+- [x] Task summary
 - [x] Git activity panel
 - [ ] Keyboard navigation
 - [ ] Responsive terminal resize handling

@@ -1,6 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use devscope::progress::{ActivitySummary, PlanSummary};
-
+use devscope::progress::{ActivitySummary, PlanSummary, TaskSummary};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanState {
     Available(PlanSummary),
@@ -12,17 +11,24 @@ pub enum ActivityState {
     NotRepository,
     Unavailable,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskState {
+    Available(TaskSummary),
+    Unavailable,
+}
 pub struct App {
     running: bool,
     plan: PlanState,
     activity: ActivityState,
+    tasks: TaskState,
 }
 impl App {
-    pub fn new(plan: PlanState, activity: ActivityState) -> Self {
+    pub fn new(plan: PlanState, activity: ActivityState, tasks: TaskState) -> Self {
         Self {
             running: true,
             plan,
             activity,
+            tasks,
         }
     }
     pub const fn is_running(&self) -> bool {
@@ -34,39 +40,44 @@ impl App {
     pub fn activity(&self) -> &ActivityState {
         &self.activity
     }
-    pub fn handle_key(&mut self, key: KeyEvent) {
-        if key.kind == KeyEventKind::Press && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-        {
-            self.running = false;
+    pub fn tasks(&self) -> &TaskState {
+        &self.tasks
+    }
+    pub fn handle_key(&mut self, k: KeyEvent) {
+        if k.kind == KeyEventKind::Press && matches!(k.code, KeyCode::Char('q') | KeyCode::Esc) {
+            self.running = false
         }
     }
 }
 #[cfg(test)]
-mod tests {
+mod restored_tests {
     use super::*;
     use crossterm::event::KeyModifiers;
+    use devscope::progress::PlanSummary;
     fn app() -> App {
         App::new(
             PlanState::Available(PlanSummary::new(1, 2)),
             ActivityState::Unavailable,
+            TaskState::Unavailable,
         )
     }
     #[test]
-    fn q_exits_the_application() {
-        let mut app = app();
-        app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-        assert!(!app.is_running());
+    fn q_exits() {
+        let mut a = app();
+        a.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!a.is_running());
     }
     #[test]
-    fn escape_exits_the_application() {
-        let mut app = app();
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(!app.is_running());
+    fn escape_exits() {
+        let mut a = app();
+        a.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!a.is_running());
     }
     #[test]
-    fn retains_plan_and_activity_state() {
-        let app = app();
-        assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(1, 2)));
-        assert_eq!(app.activity(), &ActivityState::Unavailable);
+    fn retains_states() {
+        let a = app();
+        assert_eq!(a.plan(), PlanState::Available(PlanSummary::new(1, 2)));
+        assert_eq!(a.activity(), &ActivityState::Unavailable);
+        assert_eq!(a.tasks(), &TaskState::Unavailable);
     }
 }
