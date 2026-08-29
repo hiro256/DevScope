@@ -39,3 +39,9 @@
 - **Decision:** Model Codex and other agents as optional adapters.
 - **Reason:** The project remains useful without a particular agent and avoids
   coupling its core to vendor-specific session formats.
+
+## 2026-08-29 — Git Activity via Git CLI
+
+- **Date:** 2026-08-29
+- **Decision:** Collect Git Activity through the installed Git CLI.
+- **Reason:** It avoids a large embedded Git dependency and follows the user's Git behavior. DevScope therefore requires git.exe (or git) on PATH for this source.

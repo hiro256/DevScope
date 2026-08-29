@@ -18,10 +18,10 @@
 
 ### Git activity
 
-- [ ] Git repository detection
-- [ ] Git status
-- [ ] Changed file count
-- [ ] Recent commits
+- [x] Git repository detection
+- [x] Git status
+- [x] Changed file count
+- [x] Recent commits
 
 ### TUI
 
@@ -49,3 +49,4 @@
 - [ ] Progress history
 - [ ] VS Code integration
 - [ ] Web/API frontend
+
