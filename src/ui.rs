@@ -35,7 +35,7 @@ pub fn render(f: &mut Frame, a: &App) {
         x[1],
     );
     f.render_widget(
-        Paragraph::new(tasks(a.tasks()))
+        Paragraph::new(tasks(a.tasks(), a.selected_task()))
             .block(Block::default().borders(Borders::ALL).title("Task Summary")),
         x[2],
     );
@@ -68,25 +68,34 @@ fn activity(a: &ActivityState) -> String {
         ActivityState::Unavailable => "Unavailable".into(),
     }
 }
-fn tasks(t: &TaskState) -> Vec<Line<'static>> {
+fn tasks(t: &TaskState, selected: Option<usize>) -> Vec<Line<'static>> {
     match t {
         TaskState::Unavailable => vec![Line::from("Unavailable")],
         TaskState::Available(s) if s.total() == 0 => vec![Line::from("No tasks found")],
         TaskState::Available(s) if s.remaining() == 0 => vec![Line::from("All tasks completed")],
         TaskState::Available(s) => {
-            let mut v: Vec<_> = s
-                .items()
+            let total = s.remaining();
+            let selected = selected.unwrap_or(0).min(total - 1);
+            let start = selected
+                .saturating_sub(TASK_LIMIT - 1)
+                .min(total.saturating_sub(TASK_LIMIT));
+            let end = (start + TASK_LIMIT).min(total);
+            let mut lines = s.items()[start..end]
                 .iter()
-                .take(TASK_LIMIT)
-                .map(|i| Line::from(format!("□ {}", i.text())))
-                .collect();
-            if s.remaining() > TASK_LIMIT {
-                v.push(Line::from(format!(
-                    "... and {} more",
-                    s.remaining() - TASK_LIMIT
-                )))
+                .enumerate()
+                .map(|(offset, item)| {
+                    let index = start + offset;
+                    Line::from(format!(
+                        "{} □ {}",
+                        if index == selected { ">" } else { " " },
+                        item.text()
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if end < total {
+                lines.push(Line::from(format!("... and {} more", total - end)))
             }
-            v
+            lines
         }
     }
 }
@@ -209,5 +218,41 @@ mod overview_regression_tests {
             draw_all(ActivityState::Available(ActivitySummary::from(&g)))
                 .contains("2 changed files")
         );
+    }
+}
+#[cfg(test)]
+mod navigation_ui_tests {
+    use super::*;
+    use crate::app::{ActivityState, PlanState, TaskState};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use devscope::progress::{PlanSummary, TaskSummary, TaskSummaryItem};
+    use ratatui::{Terminal, backend::TestBackend};
+    fn text(a: &App) -> String {
+        let mut t = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        t.draw(|f| render(f, a)).unwrap();
+        t.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+    #[test]
+    fn renders_selection_and_moves_it() {
+        let items = ["Task A", "Task B"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| TaskSummaryItem::new("a.md".into(), i + 1, s.into()))
+            .collect();
+        let mut a = App::new(
+            PlanState::Available(PlanSummary::new(0, 2)),
+            ActivityState::Unavailable,
+            TaskState::Available(TaskSummary::new(2, items)),
+        );
+        assert!(text(&a).contains("> □ Task A"));
+        a.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let s = text(&a);
+        assert!(s.contains("  □ Task A"));
+        assert!(s.contains("> □ Task B"));
     }
 }

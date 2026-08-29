@@ -29,7 +29,7 @@
 - [x] Progress display
 - [x] Task summary
 - [x] Git activity panel
-- [ ] Keyboard navigation
+- [x] Keyboard navigation
 - [ ] Responsive terminal resize handling
 
 ### Quality
