@@ -25,8 +25,8 @@
 
 ### TUI
 
-- [ ] Overview screen
-- [ ] Progress display
+- [x] Overview screen
+- [x] Progress display
 - [ ] Task summary
 - [ ] Git activity panel
 - [ ] Keyboard navigation
