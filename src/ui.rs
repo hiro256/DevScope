@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::app::{ActivityState, App, PlanState, RefreshSource, TaskState};
+use devscope::progress::GitFileStatus;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -12,6 +13,13 @@ use ratatui::{
 const COMPACT_WIDTH: u16 = 20;
 const COMPACT_HEIGHT: u16 = 12;
 
+#[derive(Clone, Copy)]
+enum LayoutVariant {
+    Large,
+    Medium,
+    Small,
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     if area.width < COMPACT_WIDTH || area.height < COMPACT_HEIGHT {
@@ -19,35 +27,72 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let panels = if area.height >= 23 {
-        Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Length(6),
-            Constraint::Length(9),
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
-        .split(area)
+    let layout = if area.height >= 30 {
+        LayoutVariant::Large
+    } else if area.height >= 23 {
+        LayoutVariant::Medium
     } else {
-        Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Length(6),
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
-        .split(area)
+        LayoutVariant::Small
     };
+    let (title_area, progress_area, task_area, changed_files_area, commits_area, footer_area) =
+        match layout {
+            LayoutVariant::Large => {
+                let panels = Layout::vertical([
+                    Constraint::Length(2),
+                    Constraint::Length(6),
+                    Constraint::Length(9),
+                    Constraint::Length(6),
+                    Constraint::Min(3),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+                (
+                    panels[0],
+                    panels[1],
+                    panels[2],
+                    Some(panels[3]),
+                    Some(panels[4]),
+                    panels[5],
+                )
+            }
+            LayoutVariant::Medium => {
+                let panels = Layout::vertical([
+                    Constraint::Length(2),
+                    Constraint::Length(6),
+                    Constraint::Length(9),
+                    Constraint::Min(4),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+                (
+                    panels[0],
+                    panels[1],
+                    panels[2],
+                    Some(panels[3]),
+                    None,
+                    panels[4],
+                )
+            }
+            LayoutVariant::Small => {
+                let panels = Layout::vertical([
+                    Constraint::Length(2),
+                    Constraint::Length(6),
+                    Constraint::Min(3),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+                (panels[0], panels[1], panels[2], None, None, panels[3])
+            }
+        };
 
     frame.render_widget(
         Paragraph::new(vec![
             Line::from("DevScope").style(Style::default().add_modifier(Modifier::BOLD)),
             Line::from(refresh_status(app)),
         ]),
-        panels[0],
+        title_area,
     );
-    frame.render_widget(project_progress(app), panels[1]);
-
-    let task_area = panels[2];
+    frame.render_widget(project_progress(app), progress_area);
     frame.render_widget(
         Paragraph::new(tasks(
             app.tasks(),
@@ -58,24 +103,34 @@ pub fn render(frame: &mut Frame, app: &App) {
         task_area,
     );
 
-    if panels.len() == 5 {
-        let commit_area = panels[3];
+    if let Some(changed_files_area) = changed_files_area {
         frame.render_widget(
-            Paragraph::new(commits(app.activity(), inner_height(commit_area))).block(
+            Paragraph::new(changed_files(
+                app.activity(),
+                inner_height(changed_files_area),
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Changed Files"),
+            ),
+            changed_files_area,
+        );
+    }
+
+    if let Some(commits_area) = commits_area {
+        frame.render_widget(
+            Paragraph::new(commits(app.activity(), inner_height(commits_area))).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Recent Commits"),
             ),
-            commit_area,
+            commits_area,
         );
     }
 
-    frame.render_widget(
-        Paragraph::new("r: Reload  q / Esc: Quit"),
-        panels[panels.len() - 1],
-    );
+    frame.render_widget(Paragraph::new("r: Reload  q / Esc: Quit"), footer_area);
 }
-
 fn render_compact(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new("DevScope\nTerminal too small\nq / Esc: Quit"),
@@ -217,6 +272,55 @@ fn task_lines(
     lines
 }
 
+fn changed_files(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
+    if rows == 0 {
+        return vec![];
+    }
+
+    match activity {
+        ActivityState::Available(summary) if summary.changed_files() == 0 => {
+            vec![Line::from("No changed files")]
+        }
+        ActivityState::Available(summary) => {
+            let files = summary.changed_file_items();
+            let file_rows = if files.len() > rows && rows > 1 {
+                rows - 1
+            } else {
+                rows
+            };
+            let mut lines = files
+                .iter()
+                .take(file_rows)
+                .map(|file| {
+                    Line::from(format!(
+                        "{}  {}",
+                        git_file_status(&file.status),
+                        file.path.display()
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if files.len() > file_rows && rows > 1 {
+                lines.push(Line::from(format!(
+                    "... and {} more",
+                    files.len() - file_rows
+                )));
+            }
+            lines
+        }
+        ActivityState::NotRepository | ActivityState::Unavailable => {
+            vec![Line::from("Unavailable")]
+        }
+    }
+}
+
+fn git_file_status(status: &GitFileStatus) -> &'static str {
+    match status {
+        GitFileStatus::Modified => "M",
+        GitFileStatus::Added => "A",
+        GitFileStatus::Deleted => "D",
+        GitFileStatus::Renamed => "R",
+    }
+}
 fn commits(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -453,5 +557,101 @@ mod tests {
             app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         }
         assert!(draw(&app, 40, 15).contains("> □ Task 7"));
+    }
+    fn activity_with_files(files: Vec<GitChangedFile>) -> ActivityState {
+        ActivityState::Available(ActivitySummary::from(&GitActivity {
+            changed_files: files,
+            recent_commits: vec![GitCommit {
+                id: "abc".into(),
+                summary: "recent".into(),
+            }],
+        }))
+    }
+
+    #[test]
+    fn maps_git_file_statuses_to_short_prefixes() {
+        assert_eq!(git_file_status(&GitFileStatus::Modified), "M");
+        assert_eq!(git_file_status(&GitFileStatus::Added), "A");
+        assert_eq!(git_file_status(&GitFileStatus::Deleted), "D");
+        assert_eq!(git_file_status(&GitFileStatus::Renamed), "R");
+    }
+
+    #[test]
+    fn renders_changed_files_and_clean_state() {
+        let activity = activity_with_files(vec![
+            GitChangedFile {
+                path: "src/a.rs".into(),
+                status: GitFileStatus::Modified,
+            },
+            GitChangedFile {
+                path: "src/b.rs".into(),
+                status: GitFileStatus::Added,
+            },
+            GitChangedFile {
+                path: "docs/old.md".into(),
+                status: GitFileStatus::Deleted,
+            },
+            GitChangedFile {
+                path: "docs/new.md".into(),
+                status: GitFileStatus::Renamed,
+            },
+        ]);
+        let changed_app = app(TaskState::Unavailable, activity);
+        let output = draw(&changed_app, 80, 30);
+        assert!(output.contains("Changed Files"));
+        assert!(output.contains("M  src/a.rs"));
+        assert!(output.contains("A  src/b.rs"));
+        assert!(output.contains("D  docs/old.md"));
+        assert!(output.contains("R  docs/new.md"));
+
+        let clean = app(TaskState::Unavailable, activity_with_files(vec![]));
+        assert!(draw(&clean, 80, 30).contains("No changed files"));
+    }
+
+    #[test]
+    fn renders_changed_file_overflow() {
+        let files = (0..8)
+            .map(|index| GitChangedFile {
+                path: format!("src/file-{index}.rs").into(),
+                status: GitFileStatus::Modified,
+            })
+            .collect();
+        let app = app(TaskState::Unavailable, activity_with_files(files));
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("M  src/file-0.rs"));
+        assert!(output.contains("M  src/file-2.rs"));
+        assert!(output.contains("... and 5 more"));
+    }
+
+    #[test]
+    fn prioritizes_changed_files_across_responsive_layouts() {
+        let app = app(
+            TaskState::Available(TaskSummary::new(1, task_items(1))),
+            activity_with_files(vec![GitChangedFile {
+                path: "src/a.rs".into(),
+                status: GitFileStatus::Modified,
+            }]),
+        );
+        let large = draw(&app, 80, 30);
+        assert!(large.contains("Changed Files"));
+        assert!(large.contains("Recent Commits"));
+
+        let medium = draw(&app, 80, 25);
+        assert!(medium.contains("Changed Files"));
+        assert!(!medium.contains("Recent Commits"));
+
+        let small = draw(&app, 40, 15);
+        assert!(small.contains("Task Summary"));
+        assert!(!small.contains("Changed Files"));
+        assert!(!small.contains("Recent Commits"));
+
+        assert!(draw(&app, 19, 12).contains("Terminal too small"));
+    }
+
+    #[test]
+    fn renders_changed_files_unavailable_when_activity_is_unavailable() {
+        let app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        assert!(draw(&app, 80, 30).contains("Changed Files"));
+        assert!(draw(&app, 80, 30).contains("Unavailable"));
     }
 }

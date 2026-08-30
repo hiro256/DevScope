@@ -438,7 +438,16 @@ mod tests {
         assert_eq!(app.plan(), plan);
         assert_eq!(app.tasks(), &tasks);
         assert_eq!(app.selected_task(), selected);
-        assert!(matches!(app.activity(), ActivityState::Available(_)));
+        let ActivityState::Available(activity) = app.activity() else {
+            panic!("Git activity should be available")
+        };
+        assert_eq!(activity.changed_files(), 2);
+        let code_file = activity
+            .changed_file_items()
+            .iter()
+            .find(|file| file.path == Path::new("code.rs"))
+            .expect("new Git detail should be retained");
+        assert_eq!(code_file.status, devscope::progress::GitFileStatus::Added);
         let _ = fs::remove_dir_all(root);
     }
 

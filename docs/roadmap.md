@@ -57,7 +57,7 @@
 
 - [x] Selective automatic refresh
 - [x] Refresh status / last update
-- [ ] Changed Files panel
+- [x] Changed Files panel
 
 ### Quality
 

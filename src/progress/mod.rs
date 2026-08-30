@@ -11,12 +11,15 @@ pub use markdown::{
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivitySummary {
-    changed_files: usize,
+    changed_files: Vec<GitChangedFile>,
     recent_commits: Vec<GitCommit>,
 }
 impl ActivitySummary {
     pub fn changed_files(&self) -> usize {
-        self.changed_files
+        self.changed_files.len()
+    }
+    pub fn changed_file_items(&self) -> &[GitChangedFile] {
+        &self.changed_files
     }
     pub fn recent_commits(&self) -> &[GitCommit] {
         &self.recent_commits
@@ -25,7 +28,7 @@ impl ActivitySummary {
 impl From<&GitActivity> for ActivitySummary {
     fn from(v: &GitActivity) -> Self {
         Self {
-            changed_files: v.changed_file_count(),
+            changed_files: v.changed_files.clone(),
             recent_commits: v.recent_commits.clone(),
         }
     }
@@ -148,5 +151,52 @@ mod markdown_conversion_tests {
         assert_eq!(summary.items()[0].line(), 2);
         assert_eq!(summary.items()[0].path(), path);
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod activity_summary_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_changed_file_details_and_recent_commits() {
+        let activity = GitActivity {
+            changed_files: vec![
+                GitChangedFile {
+                    path: "src/a.rs".into(),
+                    status: GitFileStatus::Modified,
+                },
+                GitChangedFile {
+                    path: "src/b.rs".into(),
+                    status: GitFileStatus::Added,
+                },
+            ],
+            recent_commits: vec![GitCommit {
+                id: "abc123".into(),
+                summary: "Keep activity details".into(),
+            }],
+        };
+
+        let summary = ActivitySummary::from(&activity);
+
+        assert_eq!(summary.changed_files(), 2);
+        assert_eq!(
+            summary.changed_file_items(),
+            activity.changed_files.as_slice()
+        );
+        assert_eq!(
+            summary.changed_file_items()[0].path,
+            std::path::Path::new("src/a.rs")
+        );
+        assert_eq!(
+            summary.changed_file_items()[0].status,
+            GitFileStatus::Modified
+        );
+        assert_eq!(
+            summary.changed_file_items()[1].path,
+            std::path::Path::new("src/b.rs")
+        );
+        assert_eq!(summary.changed_file_items()[1].status, GitFileStatus::Added);
+        assert_eq!(summary.recent_commits(), activity.recent_commits.as_slice());
     }
 }
