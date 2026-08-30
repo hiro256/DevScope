@@ -22,3 +22,6 @@ Before making changes, read `README.md`, `docs/design.md`, `docs/roadmap.md`, an
 
 Use the documents in `docs/` for detailed direction rather than expanding this file
 into a specification.
+
+`docs/backlog.md` contains uncommitted implementation candidates. Do not implement
+backlog items unless they have been promoted to `docs/roadmap.md`.

@@ -69,10 +69,11 @@
 ## Post-MVP
 
 - [ ] Build/Test evidence sources
-- [ ] Codex session adapter
-- [ ] Other agent adapters
+- [ ] Agent integration experiment
 - [ ] Config file
 - [ ] Task weighting
 - [ ] Progress history
 - [ ] VS Code integration
 - [ ] Web/API frontend
+
+Exploratory implementation candidates are tracked in [backlog.md](backlog.md).
