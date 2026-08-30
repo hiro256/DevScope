@@ -1,4 +1,8 @@
-use std::{io, path::Path, time::Duration};
+use std::{
+    io,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -7,6 +11,33 @@ use devscope::project::collect_project_snapshot;
 use crate::{app::App, ui};
 
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(250);
+const PROJECT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+struct PollScheduler {
+    interval: Duration,
+    next_tick: Instant,
+}
+
+impl PollScheduler {
+    fn new(start: Instant, interval: Duration) -> Self {
+        Self {
+            interval,
+            next_tick: next_deadline(start, interval),
+        }
+    }
+
+    fn is_due(&mut self, now: Instant) -> bool {
+        if now < self.next_tick {
+            return false;
+        }
+        self.next_tick = next_deadline(now, self.interval);
+        true
+    }
+}
+
+fn next_deadline(now: Instant, interval: Duration) -> Instant {
+    now.checked_add(interval).unwrap_or(now)
+}
 
 /// Runs the synchronous TUI event loop without polling in a busy loop.
 pub fn run(
@@ -15,6 +46,7 @@ pub fn run(
     app: &mut App,
 ) -> io::Result<()> {
     let mut needs_render = true;
+    let mut scheduler = PollScheduler::new(Instant::now(), PROJECT_POLL_INTERVAL);
 
     while app.is_running() {
         if needs_render {
@@ -22,27 +54,63 @@ pub fn run(
             needs_render = false;
         }
 
-        if !event::poll(EVENT_POLL_TIMEOUT)? {
-            continue;
+        if event::poll(EVENT_POLL_TIMEOUT)? {
+            match event::read()? {
+                Event::Key(key)
+                    if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('r') =>
+                {
+                    if let Some(root) = project_root {
+                        app.apply_snapshot(collect_project_snapshot(root));
+                    }
+                    needs_render = true;
+                }
+                Event::Key(key) => {
+                    app.handle_key(key);
+                    needs_render = true;
+                }
+                Event::Resize(_, _) => needs_render = true,
+                _ => {}
+            }
         }
 
-        match event::read()? {
-            Event::Key(key)
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('r') =>
-            {
-                if let Some(root) = project_root {
-                    app.apply_snapshot(collect_project_snapshot(root));
-                }
-                needs_render = true;
-            }
-            Event::Key(key) => {
-                app.handle_key(key);
-                needs_render = true;
-            }
-            Event::Resize(_, _) => needs_render = true,
-            _ => {}
+        if scheduler.is_due(Instant::now()) {
+            // Change detection and refresh are intentionally added by later tasks.
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_not_due_before_the_interval() {
+        let start = Instant::now();
+        let mut scheduler = PollScheduler::new(start, Duration::from_secs(1));
+        assert!(!scheduler.is_due(start + Duration::from_millis(999)));
+    }
+
+    #[test]
+    fn is_due_at_the_interval_and_reschedules() {
+        let start = Instant::now();
+        let mut scheduler = PollScheduler::new(start, Duration::from_secs(1));
+        let due = start + Duration::from_secs(1);
+        assert!(scheduler.is_due(due));
+        assert!(!scheduler.is_due(due));
+        assert!(!scheduler.is_due(due + Duration::from_millis(999)));
+        assert!(scheduler.is_due(due + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn delayed_checks_emit_only_one_tick() {
+        let start = Instant::now();
+        let mut scheduler = PollScheduler::new(start, Duration::from_secs(1));
+        let delayed = start + Duration::from_millis(3500);
+        assert!(scheduler.is_due(delayed));
+        assert!(!scheduler.is_due(delayed));
+        assert!(!scheduler.is_due(delayed + Duration::from_millis(999)));
+        assert!(scheduler.is_due(delayed + Duration::from_secs(1)));
+    }
 }
