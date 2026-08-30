@@ -65,7 +65,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     }
 
-    frame.render_widget(Paragraph::new("q / Esc: Quit"), panels[panels.len() - 1]);
+    frame.render_widget(
+        Paragraph::new("r: Reload  q / Esc: Quit"),
+        panels[panels.len() - 1],
+    );
 }
 
 fn render_compact(frame: &mut Frame, area: Rect) {

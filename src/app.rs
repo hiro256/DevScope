@@ -13,18 +13,28 @@ pub struct App {
 
 impl App {
     pub fn new(snapshot: ProjectSnapshot) -> Self {
+        let mut app = Self {
+            running: true,
+            plan: PlanState::Unavailable,
+            activity: ActivityState::Unavailable,
+            tasks: TaskState::Unavailable,
+            selected_task: None,
+        };
+        app.apply_snapshot(snapshot);
+        app
+    }
+
+    pub fn apply_snapshot(&mut self, snapshot: ProjectSnapshot) {
         let (plan, activity, tasks) = snapshot.into_parts();
-        let selected_task = match &tasks {
-            TaskState::Available(summary) if summary.remaining() > 0 => Some(0),
+        self.plan = plan;
+        self.activity = activity;
+        self.tasks = tasks;
+        self.selected_task = match &self.tasks {
+            TaskState::Available(summary) if summary.remaining() > 0 => {
+                Some(self.selected_task.unwrap_or(0).min(summary.remaining() - 1))
+            }
             _ => None,
         };
-        Self {
-            running: true,
-            plan,
-            activity,
-            tasks,
-            selected_task,
-        }
     }
 
     pub const fn is_running(&self) -> bool {
@@ -77,22 +87,38 @@ mod tests {
     use crossterm::event::KeyModifiers;
     use devscope::{
         progress::{PlanSummary, TaskSummary, TaskSummaryItem},
-        project::ProjectSnapshot,
+        project::{ProjectSnapshot, collect_project_snapshot},
+    };
+    use std::{
+        fs,
+        sync::atomic::{AtomicUsize, Ordering},
     };
 
+    static ID: AtomicUsize = AtomicUsize::new(0);
+
     fn app(count: usize) -> App {
+        App::new(snapshot(count))
+    }
+
+    fn snapshot(count: usize) -> ProjectSnapshot {
         let items = (0..count)
             .map(|index| TaskSummaryItem::new("a.md".into(), index, "x".into()))
             .collect();
-        App::new(ProjectSnapshot::new(
+        ProjectSnapshot::new(
             PlanState::Available(PlanSummary::new(0, count)),
             ActivityState::Unavailable,
             TaskState::Available(TaskSummary::new(count, items)),
-        ))
+        )
     }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn move_to(app: &mut App, index: usize) {
+        for _ in 0..index {
+            app.handle_key(key(KeyCode::Down));
+        }
     }
 
     #[test]
@@ -107,6 +133,48 @@ mod tests {
         assert_eq!(app.selected_task(), Some(2));
         app.handle_key(key(KeyCode::Char('k')));
         assert_eq!(app.selected_task(), Some(1));
+    }
+
+    #[test]
+    fn applies_snapshot_and_preserves_or_clamps_selection() {
+        let mut app = app(5);
+        move_to(&mut app, 2);
+        app.apply_snapshot(snapshot(4));
+        assert_eq!(app.selected_task(), Some(2));
+
+        move_to(&mut app, 1);
+        assert_eq!(app.selected_task(), Some(3));
+        app.apply_snapshot(snapshot(2));
+        assert_eq!(app.selected_task(), Some(1));
+
+        app.apply_snapshot(snapshot(0));
+        assert_eq!(app.selected_task(), None);
+        app.apply_snapshot(snapshot(2));
+        assert_eq!(app.selected_task(), Some(0));
+    }
+
+    #[test]
+    fn applies_a_recollected_snapshot_from_the_same_root() {
+        let root = std::env::temp_dir().join(format!(
+            "devscope-manual-reload-{}-{}",
+            std::process::id(),
+            ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let markdown = root.join("tasks.md");
+        fs::write(&markdown, "- [ ] First").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+
+        fs::write(&markdown, "- [x] First\n- [ ] Second").unwrap();
+        app.apply_snapshot(collect_project_snapshot(&root));
+
+        assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(1, 2)));
+        let TaskState::Available(tasks) = app.tasks() else {
+            panic!("tasks should be available");
+        };
+        assert_eq!(tasks.remaining(), 1);
+        assert_eq!(tasks.items()[0].text(), "Second");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

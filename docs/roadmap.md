@@ -44,7 +44,7 @@
 ### Refresh infrastructure
 
 - [x] Project snapshot / refresh core
-- [ ] Manual reload with `r`
+- [x] Manual reload with `r`
 
 ### Change detection
 

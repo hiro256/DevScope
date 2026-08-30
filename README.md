@@ -30,6 +30,7 @@ implemented.
 ```text
 Up / k      Previous task
 Down / j    Next task
+r           Reload
 q / Esc     Quit
 ```
 
