@@ -50,7 +50,7 @@
 
 - [x] Polling scheduler
 - [x] Markdown change detection
-- [ ] Git/worktree change detection
+- [x] Git/worktree change detection
 - [ ] Git metadata change detection
 
 ### Live updates

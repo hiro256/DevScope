@@ -6,9 +6,15 @@ use std::{
 
 use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use devscope::{change::MarkdownChangeDetector, project::collect_project_snapshot};
+use devscope::{
+    change::{GitWorktreeChangeDetector, MarkdownChangeDetector},
+    project::collect_project_snapshot,
+};
 
-use crate::{app::App, ui};
+use crate::{
+    app::{ActivityState, App},
+    ui,
+};
 
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 const PROJECT_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -48,6 +54,39 @@ fn check_markdown_changes(
     }
 }
 
+fn check_git_worktree_changes(
+    project_root: Option<&Path>,
+    worktree_changes: &mut Option<GitWorktreeChangeDetector>,
+) {
+    if let (Some(root), Some(detector)) = (project_root, worktree_changes) {
+        let _ = detector.check(root);
+    }
+}
+
+fn new_git_worktree_detector(
+    project_root: Option<&Path>,
+    app: &App,
+) -> Option<GitWorktreeChangeDetector> {
+    match (project_root, app.activity()) {
+        (Some(root), ActivityState::Available(_)) => Some(GitWorktreeChangeDetector::new(root)),
+        _ => None,
+    }
+}
+
+fn sync_git_worktree_detector(
+    project_root: Option<&Path>,
+    app: &App,
+    worktree_changes: &mut Option<GitWorktreeChangeDetector>,
+) {
+    match (project_root, app.activity()) {
+        (Some(root), ActivityState::Available(_)) => match worktree_changes {
+            Some(detector) => detector.sync(root),
+            None => *worktree_changes = Some(GitWorktreeChangeDetector::new(root)),
+        },
+        _ => *worktree_changes = None,
+    }
+}
+
 /// Runs the synchronous TUI event loop without polling in a busy loop.
 pub fn run(
     terminal: &mut AppTerminal,
@@ -57,6 +96,7 @@ pub fn run(
     let mut needs_render = true;
     let mut scheduler = PollScheduler::new(Instant::now(), PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
+    let mut worktree_changes = new_git_worktree_detector(project_root, app);
 
     while app.is_running() {
         if needs_render {
@@ -74,6 +114,7 @@ pub fn run(
                         if let Some(detector) = &mut markdown_changes {
                             detector.sync(root);
                         }
+                        sync_git_worktree_detector(project_root, app, &mut worktree_changes);
                     }
                     needs_render = true;
                 }
@@ -88,6 +129,7 @@ pub fn run(
 
         if scheduler.is_due(Instant::now()) {
             check_markdown_changes(project_root, &mut markdown_changes);
+            check_git_worktree_changes(project_root, &mut worktree_changes);
         }
     }
 
@@ -135,12 +177,7 @@ mod tests {
 
     #[test]
     fn polling_check_updates_the_markdown_detector_baseline() {
-        let root = std::env::temp_dir().join(format!(
-            "devscope-event-loop-{}-{}",
-            std::process::id(),
-            ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).unwrap();
+        let root = temp_root();
         let markdown = root.join("tasks.md");
         fs::write(&markdown, "- [ ] First").unwrap();
         let mut detector = Some(MarkdownChangeDetector::new(&root));
@@ -153,5 +190,32 @@ mod tests {
             devscope::change::MarkdownChange::Unchanged
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn polling_check_updates_the_worktree_detector_baseline() {
+        let root = temp_root();
+        let file = root.join("a.txt");
+        fs::write(&file, "a").unwrap();
+        let mut detector = Some(GitWorktreeChangeDetector::new(&root));
+
+        fs::write(&file, "a longer value").unwrap();
+        check_git_worktree_changes(Some(&root), &mut detector);
+
+        assert_eq!(
+            detector.as_mut().unwrap().check(&root).unwrap(),
+            devscope::change::GitWorktreeChange::Unchanged
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "devscope-event-loop-{}-{}",
+            std::process::id(),
+            ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 }
