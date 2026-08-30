@@ -718,4 +718,56 @@ mod tests {
             GitMetadataChange::Changed
         );
     }
+    #[test]
+    fn git_metadata_detects_detached_head_movement() {
+        let project = git_project();
+        project.write("a.txt", "two");
+        git(&project.0, &["add", "a.txt"]);
+        git(&project.0, &["commit", "-m", "second"]);
+        let commit_b = String::from_utf8(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&project.0)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let commit_a = String::from_utf8(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&project.0)
+                .args(["rev-parse", "HEAD~1"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        git(&project.0, &["checkout", "--detach", commit_a.trim()]);
+        let mut detector = GitMetadataChangeDetector::new(&project.0);
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitMetadataChange::Unchanged
+        );
+        git(&project.0, &["checkout", "--detach", commit_b.trim()]);
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitMetadataChange::Changed
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitMetadataChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_git_ref_paths() {
+        for reference in ["../../outside", "refs/heads/../../outside", "heads/main"] {
+            assert!(matches!(
+                validate_ref(reference),
+                Err(GitMetadataChangeError::UnsafeRef { .. })
+            ));
+        }
+    }
 }
