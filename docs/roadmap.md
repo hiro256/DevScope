@@ -61,10 +61,10 @@
 
 ### Quality
 
-- [ ] No-change polling avoids unnecessary Git collection
-- [ ] Markdown-only changes do not unnecessarily refresh Git
-- [ ] Git changes are reflected automatically
-- [ ] Windows live-update verification
+- [x] No-change polling avoids unnecessary Git collection
+- [x] Markdown-only changes do not unnecessarily refresh Git
+- [x] Git changes are reflected automatically
+- [x] Windows live-update verification
 
 ## Post-MVP
 

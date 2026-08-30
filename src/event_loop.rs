@@ -605,6 +605,158 @@ mod tests {
         assert_eq!(app.refresh_status(), status);
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn unchanged_poll_produces_no_refresh() {
+        let root = git_root();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let status = app.refresh_status();
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut requests,
+        );
+        assert!(!requests.markdown);
+        assert!(!requests.git);
+
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(!outcome.git);
+        assert!(!apply_refresh_status(
+            &mut app,
+            &requests,
+            &outcome,
+            Duration::from_secs(1)
+        ));
+        assert_eq!(app.refresh_status(), status);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn markdown_only_poll_refreshes_only_markdown_state() {
+        let root = temp_root();
+        let markdown_path = root.join("tasks.md");
+        fs::write(&markdown_path, "- [ ] First").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = None;
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+
+        fs::write(&markdown_path, "- [x] First\n- [ ] Second").unwrap();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
+
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.markdown);
+        assert!(!outcome.git);
+        assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(1, 2)));
+        assert_eq!(app.activity(), &ActivityState::NotRepository);
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &outcome,
+            Duration::from_secs(1)
+        ));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Markdown);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn worktree_change_poll_refreshes_git_activity() {
+        let root = git_root();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+
+        fs::write(root.join("tracked.txt"), "changed").unwrap();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut requests,
+        );
+        assert!(!requests.markdown);
+        assert!(requests.git);
+
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(outcome.git);
+        let ActivityState::Available(activity) = app.activity() else {
+            panic!("Git activity should be available");
+        };
+        assert!(activity.changed_file_items().iter().any(|file| {
+            file.path == Path::new("tracked.txt")
+                && file.status == devscope::progress::GitFileStatus::Modified
+        }));
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &outcome,
+            Duration::from_secs(1)
+        ));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Git);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn metadata_only_commit_poll_refreshes_recent_commits() {
+        let root = git_root();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+
+        git(&root, &["commit", "--allow-empty", "-m", "metadata only"]);
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut requests,
+        );
+        assert!(!requests.markdown);
+        assert!(requests.git);
+        assert_eq!(
+            worktree.as_mut().unwrap().check(&root).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(outcome.git);
+        let ActivityState::Available(activity) = app.activity() else {
+            panic!("Git activity should be available");
+        };
+        assert_eq!(activity.recent_commits()[0].summary, "metadata only");
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &outcome,
+            Duration::from_secs(1)
+        ));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Git);
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "devscope-event-loop-{}-{}",
