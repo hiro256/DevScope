@@ -39,6 +39,33 @@
 - [x] Basic TUI rendering tests
 - [x] Windows manual verification
 
+## v0.2.0 - Live Observation
+
+### Refresh infrastructure
+
+- [ ] Project snapshot / refresh core
+- [ ] Manual reload with `r`
+
+### Change detection
+
+- [ ] Polling scheduler
+- [ ] Markdown change detection
+- [ ] Git/worktree change detection
+- [ ] Git metadata change detection
+
+### Live updates
+
+- [ ] Selective automatic refresh
+- [ ] Refresh status / last update
+- [ ] Changed Files panel
+
+### Quality
+
+- [ ] No-change polling avoids unnecessary Git collection
+- [ ] Markdown-only changes do not unnecessarily refresh Git
+- [ ] Git changes are reflected automatically
+- [ ] Windows live-update verification
+
 ## Post-MVP
 
 - [ ] Build/Test evidence sources
