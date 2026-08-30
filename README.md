@@ -1,19 +1,66 @@
 # DevScope
 
-DevScope is a project-centric progress observer for AI-assisted software development.
-It derives a project's status from observable project information instead of relying
-on an agent's self-reported state.
+DevScope is a project-centric terminal user interface (TUI) for observing progress
+in AI-assisted software development. It derives progress from observable project
+state rather than an agent's self-reported state.
 
-DevScope models progress through four concepts:
+```text
+Markdown   = Plan
+Git        = Activity
+Build/Test = Evidence
+Agent      = Current activity
+```
 
-- **Plan** — what is intended, starting with Markdown task lists and planning documents.
-- **Activity** — what has changed, starting with Git status, diffs, and history.
-- **Evidence** — what can be verified, such as build and test results.
-- **Agent** — what an agent is currently doing.
+DevScope v0.1.0 implements Markdown-based Plan progress and Git-based Activity.
+Evidence and Agent are shown in the overview as future sources and are not yet
+implemented.
 
-The first MVP focuses on Markdown, Git, and a terminal user interface (TUI). Windows
-is the primary environment, while the project keeps a cross-platform structure for
-Linux and macOS. DevScope is currently in its initial development stage.
+## v0.1.0 features
 
-See the [design](docs/design.md), [roadmap](docs/roadmap.md), and
-[decision log](docs/decisions.md) for project details.
+- Markdown task discovery across multiple Markdown files
+- Markdown checkbox parsing and completed/total progress
+- Git repository detection and changed-file count
+- Recent Git commits
+- Overview TUI and Task Summary
+- Keyboard task navigation
+- Responsive terminal resize handling
+
+## Controls
+
+```text
+Up / k      Previous task
+Down / j    Next task
+q / Esc     Quit
+```
+
+## Requirements
+
+- Git must be available on `PATH` for Git Activity collection.
+- A Rust toolchain is required to build from source.
+- Windows is the primary verified platform for v0.1.0.
+
+## Build and run
+
+In PowerShell:
+
+```powershell
+cargo build
+cargo run
+```
+
+To build an optimized binary:
+
+```powershell
+cargo build --release
+.\target\release\devscope.exe
+```
+
+## Not yet implemented
+
+- Build/Test Evidence sources
+- Agent adapters
+- Configuration files
+- Automatic reload or file watching
+- Task editing and Git write operations
+
+See [docs/roadmap.md](docs/roadmap.md) for the planned work.
