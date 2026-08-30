@@ -202,14 +202,15 @@ mod tests {
         ActivitySummary, GitActivity, GitChangedFile, GitCommit, GitFileStatus, PlanSummary,
         TaskSummary, TaskSummaryItem,
     };
+    use devscope::project::ProjectSnapshot;
     use ratatui::{Terminal, backend::TestBackend};
 
     fn app(tasks: TaskState, activity: ActivityState) -> App {
-        App::new(
+        App::new(ProjectSnapshot::new(
             PlanState::Available(PlanSummary::new(3, 5)),
             activity,
             tasks,
-        )
+        ))
     }
 
     fn task_items(count: usize) -> Vec<TaskSummaryItem> {
