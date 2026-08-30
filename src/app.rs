@@ -1,7 +1,47 @@
+use std::time::Duration;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::project::ProjectSnapshot;
 
 pub use devscope::project::{ActivityState, PlanState, TaskState};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefreshSource {
+    Initial,
+    Manual,
+    Markdown,
+    Git,
+    MarkdownAndGit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RefreshStatus {
+    last_update: Duration,
+    last_source: RefreshSource,
+    retry_pending: bool,
+}
+
+impl RefreshStatus {
+    const fn initial() -> Self {
+        Self {
+            last_update: Duration::ZERO,
+            last_source: RefreshSource::Initial,
+            retry_pending: false,
+        }
+    }
+
+    pub const fn last_update(&self) -> Duration {
+        self.last_update
+    }
+
+    pub const fn last_source(&self) -> RefreshSource {
+        self.last_source
+    }
+
+    pub const fn retry_pending(&self) -> bool {
+        self.retry_pending
+    }
+}
 
 pub struct App {
     running: bool,
@@ -9,6 +49,7 @@ pub struct App {
     activity: ActivityState,
     tasks: TaskState,
     selected_task: Option<usize>,
+    refresh_status: RefreshStatus,
 }
 
 impl App {
@@ -19,6 +60,7 @@ impl App {
             activity: ActivityState::Unavailable,
             tasks: TaskState::Unavailable,
             selected_task: None,
+            refresh_status: RefreshStatus::initial(),
         };
         app.apply_snapshot(snapshot);
         app
@@ -38,6 +80,19 @@ impl App {
 
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
+    }
+
+    pub fn record_refresh(&mut self, source: RefreshSource, elapsed: Duration) {
+        self.refresh_status.last_source = source;
+        self.refresh_status.last_update = elapsed;
+    }
+
+    pub fn set_refresh_pending(&mut self, pending: bool) -> bool {
+        if self.refresh_status.retry_pending == pending {
+            return false;
+        }
+        self.refresh_status.retry_pending = pending;
+        true
     }
 
     fn reconcile_selected_task(&mut self) {
@@ -67,6 +122,10 @@ impl App {
 
     pub const fn selected_task(&self) -> Option<usize> {
         self.selected_task
+    }
+
+    pub const fn refresh_status(&self) -> RefreshStatus {
+        self.refresh_status
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -252,6 +311,36 @@ mod tests {
         assert_eq!(app.selected_task(), None);
     }
 
+    #[test]
+    fn refresh_status_starts_at_initial_snapshot() {
+        let status = app(1).refresh_status();
+        assert_eq!(status.last_source(), RefreshSource::Initial);
+        assert_eq!(status.last_update(), Duration::ZERO);
+        assert!(!status.retry_pending());
+    }
+
+    #[test]
+    fn records_successful_refreshes() {
+        let mut app = app(1);
+        app.record_refresh(RefreshSource::Markdown, Duration::from_secs(12));
+        let status = app.refresh_status();
+        assert_eq!(status.last_source(), RefreshSource::Markdown);
+        assert_eq!(status.last_update(), Duration::from_secs(12));
+
+        app.record_refresh(RefreshSource::Manual, Duration::from_secs(25));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Manual);
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(25));
+    }
+
+    #[test]
+    fn refresh_pending_reports_only_state_changes() {
+        let mut app = app(1);
+        assert!(app.set_refresh_pending(true));
+        assert!(!app.set_refresh_pending(true));
+        assert!(app.refresh_status().retry_pending());
+        assert!(app.set_refresh_pending(false));
+        assert!(!app.refresh_status().retry_pending());
+    }
     #[test]
     fn q_and_escape_exit() {
         let mut first_app = app(1);

@@ -15,7 +15,7 @@ use devscope::{
 };
 
 use crate::{
-    app::{ActivityState, App},
+    app::{ActivityState, App, RefreshSource},
     ui,
 };
 
@@ -142,20 +142,37 @@ fn sync_git_worktree_detector(
     }
 }
 
+#[derive(Default)]
+struct RefreshOutcome {
+    markdown: bool,
+    git: bool,
+}
+
+impl RefreshOutcome {
+    fn source(&self) -> Option<RefreshSource> {
+        match (self.markdown, self.git) {
+            (true, true) => Some(RefreshSource::MarkdownAndGit),
+            (true, false) => Some(RefreshSource::Markdown),
+            (false, true) => Some(RefreshSource::Git),
+            (false, false) => None,
+        }
+    }
+}
+
 fn apply_pending_refreshes(
     root: &Path,
     app: &mut App,
     worktree_changes: &mut Option<GitWorktreeChangeDetector>,
     requests: &mut RefreshRequest,
-) -> bool {
-    let mut refreshed = false;
+) -> RefreshOutcome {
+    let mut outcome = RefreshOutcome::default();
 
     if requests.markdown
         && let Ok((plan, tasks)) = collect_markdown_state(root)
     {
         app.apply_markdown_state(plan, tasks);
         requests.markdown = false;
-        refreshed = true;
+        outcome.markdown = true;
     }
 
     if requests.git
@@ -164,10 +181,24 @@ fn apply_pending_refreshes(
         app.apply_activity_state(activity);
         requests.git = false;
         reconcile_worktree_detector(Some(root), app, worktree_changes);
-        refreshed = true;
+        outcome.git = true;
     }
 
-    refreshed
+    outcome
+}
+
+fn apply_refresh_status(
+    app: &mut App,
+    requests: &RefreshRequest,
+    outcome: &RefreshOutcome,
+    elapsed: Duration,
+) -> bool {
+    let mut changed = false;
+    if let Some(source) = outcome.source() {
+        app.record_refresh(source, elapsed);
+        changed = true;
+    }
+    app.set_refresh_pending(requests.markdown || requests.git) || changed
 }
 
 /// Runs the synchronous TUI event loop without polling in a busy loop.
@@ -176,8 +207,9 @@ pub fn run(
     project_root: Option<&Path>,
     app: &mut App,
 ) -> io::Result<()> {
+    let session_start = Instant::now();
     let mut needs_render = true;
-    let mut scheduler = PollScheduler::new(Instant::now(), PROJECT_POLL_INTERVAL);
+    let mut scheduler = PollScheduler::new(session_start, PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
     let mut worktree_changes = new_git_worktree_detector(project_root, app);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
@@ -204,6 +236,8 @@ pub fn run(
                             detector.sync(root);
                         }
                         requests.clear();
+                        app.record_refresh(RefreshSource::Manual, session_start.elapsed());
+                        app.set_refresh_pending(false);
                     }
                     needs_render = true;
                 }
@@ -225,8 +259,10 @@ pub fn run(
                 &mut requests,
             );
             if let Some(root) = project_root {
-                needs_render |=
+                let outcome =
                     apply_pending_refreshes(root, app, &mut worktree_changes, &mut requests);
+                needs_render |=
+                    apply_refresh_status(app, &requests, &outcome, session_start.elapsed());
             }
         }
     }
@@ -241,7 +277,7 @@ mod tests {
     use devscope::{
         change::{GitWorktreeChange, MarkdownChange},
         progress::PlanSummary,
-        project::collect_project_snapshot,
+        project::{ProjectSnapshot, collect_project_snapshot},
     };
     use std::{
         fs,
@@ -363,17 +399,14 @@ mod tests {
         };
         let mut worktree = None;
 
-        assert!(apply_pending_refreshes(
-            &root,
-            &mut app,
-            &mut worktree,
-            &mut requests
-        ));
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.markdown);
+        assert!(!outcome.git);
         assert!(!requests.markdown);
         assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(1, 2)));
         assert_eq!(app.activity(), &ActivityState::NotRepository);
         let TaskState::Available(tasks) = app.tasks() else {
-            panic!("tasks should be available");
+            panic!("tasks should be available")
         };
         assert_eq!(tasks.items()[0].text(), "Second");
         let _ = fs::remove_dir_all(root);
@@ -398,12 +431,9 @@ mod tests {
         };
         let mut worktree = Some(GitWorktreeChangeDetector::new(&root));
 
-        assert!(apply_pending_refreshes(
-            &root,
-            &mut app,
-            &mut worktree,
-            &mut requests
-        ));
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(outcome.git);
         assert!(!requests.git);
         assert_eq!(app.plan(), plan);
         assert_eq!(app.tasks(), &tasks);
@@ -423,23 +453,14 @@ mod tests {
             git: true,
         };
 
-        assert!(apply_pending_refreshes(
-            &root,
-            &mut app,
-            &mut worktree,
-            &mut requests
-        ));
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
         assert!(matches!(app.activity(), ActivityState::Available(_)));
         assert!(worktree.is_some());
-
         fs::remove_dir_all(root.join(".git")).unwrap();
         requests.git = true;
-        assert!(apply_pending_refreshes(
-            &root,
-            &mut app,
-            &mut worktree,
-            &mut requests
-        ));
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
         assert_eq!(app.activity(), &ActivityState::NotRepository);
         assert!(worktree.is_none());
         let _ = fs::remove_dir_all(root);
@@ -449,6 +470,8 @@ mod tests {
     fn failed_pending_refresh_is_retained_without_changing_app_state() {
         let root = temp_root();
         let mut app = App::new(collect_project_snapshot(&root));
+        app.record_refresh(RefreshSource::Git, Duration::from_secs(10));
+        let status = app.refresh_status();
         let activity = app.activity().clone();
         fs::remove_dir_all(&root).unwrap();
         fs::write(&root, "not a directory").unwrap();
@@ -458,33 +481,121 @@ mod tests {
         };
         let mut worktree = None;
 
-        assert!(!apply_pending_refreshes(
-            &root,
-            &mut app,
-            &mut worktree,
-            &mut requests
-        ));
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(!outcome.git);
         assert!(requests.markdown);
         assert!(!requests.git);
         assert_eq!(app.activity(), &activity);
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &outcome,
+            Duration::from_secs(20)
+        ));
+        assert_eq!(app.refresh_status().last_source(), status.last_source());
+        assert_eq!(app.refresh_status().last_update(), status.last_update());
+        assert!(app.refresh_status().retry_pending());
         let _ = fs::remove_file(root);
     }
+
     #[test]
-    fn empty_request_does_not_refresh() {
+    fn refresh_status_tracks_markdown_and_git_successes() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let requests = RefreshRequest::default();
+        let markdown = RefreshOutcome {
+            markdown: true,
+            git: false,
+        };
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &markdown,
+            Duration::from_secs(12)
+        ));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Markdown);
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(12));
+        assert!(!app.refresh_status().retry_pending());
+
+        let git = RefreshOutcome {
+            markdown: false,
+            git: true,
+        };
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &git,
+            Duration::from_secs(15)
+        ));
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Git);
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(15));
+
+        let both = RefreshOutcome {
+            markdown: true,
+            git: true,
+        };
+        assert!(apply_refresh_status(
+            &mut app,
+            &requests,
+            &both,
+            Duration::from_secs(19)
+        ));
+        assert_eq!(
+            app.refresh_status().last_source(),
+            RefreshSource::MarkdownAndGit
+        );
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(19));
+    }
+
+    #[test]
+    fn retry_recovery_clears_pending_after_success() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let failed_requests = RefreshRequest {
+            markdown: true,
+            git: false,
+        };
+        assert!(apply_refresh_status(
+            &mut app,
+            &failed_requests,
+            &RefreshOutcome::default(),
+            Duration::from_secs(5)
+        ));
+        assert!(app.refresh_status().retry_pending());
+        let recovered_requests = RefreshRequest::default();
+        assert!(apply_refresh_status(
+            &mut app,
+            &recovered_requests,
+            &RefreshOutcome {
+                markdown: true,
+                git: false
+            },
+            Duration::from_secs(8)
+        ));
+        assert!(!app.refresh_status().retry_pending());
+        assert_eq!(app.refresh_status().last_source(), RefreshSource::Markdown);
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn empty_request_does_not_refresh_or_change_status() {
         let root = temp_root();
         let mut app = App::new(collect_project_snapshot(&root));
+        let status = app.refresh_status();
         let mut requests = RefreshRequest::default();
         let mut worktree = None;
 
-        assert!(!apply_pending_refreshes(
-            &root,
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(!outcome.git);
+        assert!(!apply_refresh_status(
             &mut app,
-            &mut worktree,
-            &mut requests
+            &requests,
+            &outcome,
+            Duration::from_secs(1)
         ));
+        assert_eq!(app.refresh_status(), status);
         let _ = fs::remove_dir_all(root);
     }
-
     fn temp_root() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "devscope-event-loop-{}-{}",

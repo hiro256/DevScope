@@ -1,4 +1,6 @@
-use crate::app::{ActivityState, App, PlanState, TaskState};
+use std::time::Duration;
+
+use crate::app::{ActivityState, App, PlanState, RefreshSource, TaskState};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -37,7 +39,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
 
     frame.render_widget(
-        Paragraph::new("DevScope").style(Style::default().add_modifier(Modifier::BOLD)),
+        Paragraph::new(vec![
+            Line::from("DevScope").style(Style::default().add_modifier(Modifier::BOLD)),
+            Line::from(refresh_status(app)),
+        ]),
         panels[0],
     );
     frame.render_widget(project_progress(app), panels[1]);
@@ -78,6 +83,41 @@ fn render_compact(frame: &mut Frame, area: Rect) {
     );
 }
 
+fn refresh_status(app: &App) -> String {
+    let status = app.refresh_status();
+    let watching = if status.retry_pending() {
+        "Retry pending"
+    } else {
+        "Watching"
+    };
+    format!(
+        "{watching} · Last refresh: {} {}",
+        refresh_source(status.last_source()),
+        format_timestamp(status.last_update())
+    )
+}
+
+fn refresh_source(source: RefreshSource) -> &'static str {
+    match source {
+        RefreshSource::Initial => "Initial",
+        RefreshSource::Manual => "Manual",
+        RefreshSource::Markdown => "Markdown",
+        RefreshSource::Git => "Git",
+        RefreshSource::MarkdownAndGit => "Markdown+Git",
+    }
+}
+
+fn format_timestamp(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+    if hours == 0 {
+        format!("+{minutes:02}:{seconds:02}")
+    } else {
+        format!("+{hours}:{minutes:02}:{seconds:02}")
+    }
+}
 fn project_progress(app: &App) -> Paragraph<'static> {
     Paragraph::new(vec![
         Line::from(format!("Plan       {}", plan(app.plan()))),
@@ -337,6 +377,40 @@ mod tests {
         assert!(output.contains("> □ Task 1"));
     }
 
+    #[test]
+    fn renders_initial_refresh_status() {
+        let app = app(
+            TaskState::Available(TaskSummary::new(0, vec![])),
+            ActivityState::Unavailable,
+        );
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Watching"));
+        assert!(output.contains("Last refresh"));
+        assert!(output.contains("Initial"));
+        assert!(output.contains("+00:00"));
+    }
+
+    #[test]
+    fn renders_retry_pending_refresh_status() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(0, vec![])),
+            ActivityState::Unavailable,
+        );
+        app.record_refresh(RefreshSource::Git, Duration::from_secs(65));
+        app.set_refresh_pending(true);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Retry pending"));
+        assert!(output.contains("Git"));
+        assert!(output.contains("+01:05"));
+    }
+
+    #[test]
+    fn formats_session_relative_timestamps() {
+        assert_eq!(format_timestamp(Duration::from_secs(0)), "+00:00");
+        assert_eq!(format_timestamp(Duration::from_secs(7)), "+00:07");
+        assert_eq!(format_timestamp(Duration::from_secs(65)), "+01:05");
+        assert_eq!(format_timestamp(Duration::from_secs(3661)), "+1:01:01");
+    }
     #[test]
     fn renders_without_panicking_at_small_sizes() {
         let app = app(
