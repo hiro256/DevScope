@@ -6,7 +6,7 @@ use std::{
 
 use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use devscope::project::collect_project_snapshot;
+use devscope::{change::MarkdownChangeDetector, project::collect_project_snapshot};
 
 use crate::{app::App, ui};
 
@@ -47,6 +47,7 @@ pub fn run(
 ) -> io::Result<()> {
     let mut needs_render = true;
     let mut scheduler = PollScheduler::new(Instant::now(), PROJECT_POLL_INTERVAL);
+    let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
 
     while app.is_running() {
         if needs_render {
@@ -61,6 +62,9 @@ pub fn run(
                 {
                     if let Some(root) = project_root {
                         app.apply_snapshot(collect_project_snapshot(root));
+                        if let Some(detector) = &mut markdown_changes {
+                            detector.sync(root);
+                        }
                     }
                     needs_render = true;
                 }

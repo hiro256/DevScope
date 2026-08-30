@@ -49,7 +49,7 @@
 ### Change detection
 
 - [x] Polling scheduler
-- [ ] Markdown change detection
+- [x] Markdown change detection
 - [ ] Git/worktree change detection
 - [ ] Git metadata change detection
 
