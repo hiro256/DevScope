@@ -1,187 +1,256 @@
-# Translation and Explanation Proposal
+# Translation Proposal
 
 ## Status
 
-This is an exploratory proposal. Translation and explanation are optional
-presentation features and are not part of the current committed roadmap. DevScope
-must continue to work fully without a translation provider.
+This remains exploratory and is not a committed roadmap item. DevScope must work
+normally without translated documents.
 
 ## Motivation
 
-Development planning documents are often written in English because that is common
-in software development and efficient for AI agents. A human user may prefer
-Japanese when reading task descriptions, status details, commit messages, Evidence
-summaries, or other project information.
+Project Markdown may intentionally remain in English because it is convenient for
+AI-assisted development and common development tooling. Humans may still prefer
+Japanese versions in DevScope, VS Code Markdown preview, GitHub, and ordinary
+Markdown viewers. Translated Markdown should therefore be useful independently of
+the DevScope TUI.
 
-The goal is to improve human understanding without rewriting source Markdown or
-creating translation-only Git diffs.
+## Primary direction: pre-generated translations
 
-## Core principles
-
-- Source Markdown remains unchanged.
-- Translation is presentation-only and is not written to tracked project files by
-  default.
-- Translation is optional; failures never prevent normal DevScope operation.
-- The Core remains independent of a particular AI or translation vendor.
-- Providers are replaceable, and original text is always available.
-- Translate only text that is displayed or explicitly requested, and cache results
-  where practical.
+Prefer generating translations ahead of time and storing them as ordinary Markdown
+files in the repository.
 
 ```text
-Project data
-  -> Progress Core
-  -> Presentation text
-  -> Translation / Explanation Service
-  -> TUI
+docs/
+  roadmap.md
+  design.md
+  cli-proposal.md
+
+translations/
+  ja/
+    docs/
+      roadmap.md
+      design.md
+      cli-proposal.md
 ```
 
-Translation is outside the authoritative Plan, Activity, and Evidence model.
+The English source remains authoritative. Files under `translations/` are derived,
+human-readable views. They may be committed to Git so users can read them in normal
+Markdown tools without DevScope or a translation service at viewing time.
 
-## Provider abstraction
+## Source of truth
 
-DevScope should not directly depend on one translation service. Possible
-interchangeable providers include local translation engines, local LLMs, the OpenAI
-API, other cloud translation APIs, and custom external commands.
-
-A conceptual provider interface is:
+Translated Markdown must never become authoritative Plan data.
 
 ```text
-Translator
-  -> translate(text, target_language)
+English Markdown
+    -> authoritative Plan source
 
-Explainer
-  -> explain(text, target_language)
+Japanese Markdown
+    -> derived translation
 ```
 
-The exact Rust API is intentionally undecided.
+DevScope must avoid counting translated task lists as additional project tasks. The
+translation directory, for example `translations/**`, should be excluded from normal
+Markdown Plan discovery. This prevents an English task and its Japanese translation
+from being counted twice.
 
-## Initial provider direction
+## Translation synchronization
 
-The first implementation should favor low coupling.
-
-### External command
-
-DevScope could send source text to a configured command and receive translated
-text.
+Treat translation as a synchronization workflow, not as a runtime TUI service.
+Possible commands include:
 
 ```text
-[translation]
-enabled = true
-target = "ja"
-command = "my-translator"
+devscope translate
+devscope translate status
+devscope translate pending
+devscope translate check
 ```
 
-This avoids provider-specific SDKs, permits local or cloud integrations, and is
-suitable for experiments.
+Exact command names remain undecided. DevScope's responsibility is to determine
+which Markdown source files are translatable, the corresponding translation path,
+and whether a translation is missing or stale. It does not need to perform AI
+translation in the initial design.
 
-### Local HTTP provider
+## No API requirement
 
-An optional locally running translation or LLM service, such as LibreTranslate,
-Ollama, or another local model server, may provide translation without per-request
-cloud API charges.
+The initial workflow must not require an OpenAI API, another cloud API, or a
+provider-specific SDK. For example:
 
-### Cloud provider
+```text
+devscope translate pending
 
-Future optional providers may use OpenAI or other cloud translation APIs. Cloud use
-must remain optional and is never required for normal DevScope operation.
+docs/roadmap.md
+  -> translations/ja/docs/roadmap.md
+  status: stale
+```
 
-## Free and local options
+An AI agent, sub-agent, local model, translation engine, or human can update the
+translated file. `devscope translate check` can then verify synchronization. The
+CLI manages translation state without knowing who performed the translation.
 
-LibreTranslate or Argos Translate are translation-focused local options with a
-simple HTTP interface. Ollama can support translation and explanation with multiple
-models. Local solutions still consume machine resources and may differ in quality
-and latency.
+## Translation worker independence
+
+Possible translation workers include:
+
+- A Codex translation sub-agent.
+- Another AI agent.
+- Ollama or another local LLM.
+- LibreTranslate or Argos Translate.
+- Another translation service.
+- A human translator.
+
+```text
+DevScope
+  -> identifies translation work
+
+Translation worker
+  -> performs translation
+
+DevScope
+  -> verifies synchronization
+```
+
+Provider choice stays outside the authoritative Progress Core.
+
+## AI Skill workflow
+
+A DevScope-oriented Skill may automate translation during AI-assisted development:
+
+1. The agent performs implementation work.
+2. The agent updates source Markdown where appropriate.
+3. At a logical work boundary, before committing, the Skill checks translation
+   status.
+4. If relevant Markdown changed, it delegates translation to a focused sub-agent.
+5. The translated files under `translations/<language>/` are updated.
+6. The Skill verifies synchronization, reviews the diff, and commits source and
+   translated Markdown together.
+
+Do not translate after every file modification. Multiple edits during one task
+should normally be translated once near the work boundary.
+
+## Translation sub-agent
+
+Translation is a suitable narrowly scoped task for a smaller or cheaper model. The
+worker should:
+
+- Preserve Markdown structure, headings, and task checkbox state.
+- Preserve code blocks, inline code, commands, file paths, URLs, and identifiers.
+- Use concise natural Japanese suitable for technical documentation.
+- Preserve task meaning without making design decisions.
+- Modify only the target translated documents.
+
+The exact model or agent is intentionally unspecified.
+
+## Human workflow
+
+The same mechanism must work for direct human edits:
+
+1. A human edits `docs/roadmap.md`.
+2. They run `devscope translate` or `devscope translate pending`.
+3. DevScope reports the stale or missing Japanese translation.
+4. The result is handed to ChatGPT, Codex, another AI, or a human translator.
+5. The translation file is updated.
+6. `devscope translate check` verifies synchronization.
+
+The workflow does not depend on an AI being able to invoke DevScope itself.
+
+## Trigger model and Git hooks
+
+File changes and workflow boundaries are distinct:
+
+```text
+File changed
+  -> mark translation as potentially stale
+  -> do not immediately invoke translation
+
+Logical task completion or before commit
+  -> check pending translations
+  -> update translations
+```
+
+If Git hooks are explored, they should be deterministic and lightweight. A
+pre-commit hook may verify whether required translations are current, but must not
+start an AI model or remote translation service. Commits should not unexpectedly
+wait for AI generation, network failures, or usage limits.
+
+```text
+Skill or human workflow
+    -> generates translation
+
+pre-commit
+    -> verifies translation state
+```
+
+## Staleness detection
+
+DevScope should detect whether a translation corresponds to the current source
+without AI assistance. Source content hashes are a likely mechanism. A translated
+document may record metadata conceptually equivalent to:
+
+```text
+source: docs/roadmap.md
+source-hash: <hash>
+```
+
+The storage format is undecided. Avoid commit SHA as the primary mechanism because
+source and translation are normally committed together, which creates awkward
+self-reference. Metadata must not make translated Markdown authoritative state.
+
+## Markdown viewer use case
+
+Git-tracked translated Markdown is intentionally useful outside DevScope. Users
+should be able to open `translations/ja/docs/roadmap.md` directly in VS Code,
+GitHub, or other ordinary Markdown viewers. This is a key reason to prefer
+pre-generated translation over runtime-only translation.
+
+## Runtime translation
+
+Runtime or on-demand translation may remain a future extension, but it is no longer
+the primary proposal. Possible providers include local translation engines, local
+LLMs, cloud AI APIs, and custom external commands. If added, it remains optional
+and provider-neutral; the initial implementation must not be designed around it.
 
 ## Translation versus explanation
 
-Translation and explanation are separate capabilities.
-
-```text
-Source:
-No-change polling avoids unnecessary Git collection
-
-Translation:
-変更がない場合のポーリングでは、不要なGit情報の収集を行わない
-
-Explanation:
-When no project state has changed, DevScope should avoid running unnecessary Git
-collection work. This reduces repeated processing.
-```
-
-Translation preserves meaning. Explanation prioritizes human understanding and may
-add contextual interpretation, so it must never be treated as authoritative project
-state. A future UI may offer Original, Translate, and Explain views.
-
-## Initial scope
-
-Do not translate entire Markdown documents initially. A small experiment should
-translate only the currently selected task or detail text:
-
-```text
-User selects task
-  -> DevScope requests translation
-  -> provider translates in background
-  -> result is displayed
-  -> original remains available
-```
-
-Possible later targets include task and section descriptions, commit messages,
-Evidence summaries, activity details, and selected Markdown content. Do not
-translate raw logs, code, or large documents automatically.
-
-## Asynchronous behavior and caching
-
-Translation must not block the TUI. While a provider runs, the original text can
-remain visible with a `Translating...` status; failures should show a small error or
-fall back to original text.
-
-Cache results to avoid repeated provider calls. A cache key may include source text,
-target language, provider identity or configuration, and possibly provider or model
-version. Changed source text makes a result stale. The persistence strategy remains
-undecided.
-
-## Markdown and code safety
-
-Technical content should be preserved where possible. Do not modify or translate
-inline code, code blocks, commands, file paths, URLs, or identifiers. An early
-implementation can avoid complex Markdown translation by using already parsed task
-text rather than arbitrary documents.
-
-## Relationship to DevScope architecture
-
-Translation is a presentation concern. It does not change the meaning of Plan,
-Activity, Evidence, or Agent. Markdown, Git, and Build/Test data remain
-authoritative; translation and explanation are derived views shown by the TUI.
-
-## AI independence
-
-DevScope must not require ChatGPT, Codex, Claude, or any other specific AI product.
-Providers may support them through optional adapters or APIs. A user's ChatGPT
-subscription must not be assumed to provide an API interface to DevScope.
+Translation attempts to preserve source meaning. AI explanation can add
+interpretation, so it remains a derived, non-authoritative presentation feature.
+Explanation is future work and must not complicate the initial pre-generated
+translation experiment.
 
 ## Initial experiment
 
-Keep a first experiment deliberately small:
+Validate a deliberately small experiment with:
 
-- Translation disabled by default.
-- Configure one provider.
-- Translate only the selected task, with Japanese as the first target language.
-- Display original and translated text.
-- Perform work asynchronously and cache successful results.
-- Fall back safely when the provider is unavailable.
+- English as the source language and Japanese as the target language.
+- One configured translation directory and source-to-translation path mapping.
+- Missing and stale detection.
+- Translation-directory exclusion from Plan discovery.
+- A Skill workflow using a translation sub-agent.
+- Git-tracked translated Markdown.
+- Synchronization checks that call no API.
 
-Evaluate usefulness, latency, cache behavior, local quality, whether explanation is
-more useful than literal translation, provider abstraction complexity, and whether
-the feature distracts from progress observation. Only then should broader document
-translation or explanation be considered for the roadmap.
+Potential first CLI responsibilities are:
+
+```text
+devscope translate status
+devscope translate pending
+devscope translate check
+```
+
+Do not assume DevScope needs a `translate update` command that calls an AI. The
+first experiment can let the Skill, AI, or human perform the actual translation.
+
+Evaluate convenience outside DevScope, preservation of Markdown structure,
+reliability of stale detection, workflow timing, translation overhead, Plan
+discovery exclusion, and whether a runtime provider is needed at all.
 
 ## Non-goals
 
-The initial feature must not become:
+The initial design should not become:
 
-- A Markdown localization system.
-- An automatic source-file translator.
-- A requirement for an AI API key.
-- A replacement for original project text.
-- A translation database stored in the repository.
-- A core dependency on one external provider.
+- A mandatory localization system.
+- A replacement for English source documents.
+- An AI API dependency.
+- A translation provider framework inside Progress Core.
+- Automatic AI execution from Git hooks.
+- A separate project-management data store.
+- A system that treats translations as authoritative Plan data.
