@@ -7,7 +7,7 @@ use std::{
 use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use devscope::{
-    change::{GitWorktreeChangeDetector, MarkdownChangeDetector},
+    change::{GitMetadataChangeDetector, GitWorktreeChangeDetector, MarkdownChangeDetector},
     project::collect_project_snapshot,
 };
 
@@ -63,6 +63,14 @@ fn check_git_worktree_changes(
     }
 }
 
+fn check_git_metadata_changes(
+    project_root: Option<&Path>,
+    metadata_changes: &mut Option<GitMetadataChangeDetector>,
+) {
+    if let (Some(root), Some(detector)) = (project_root, metadata_changes) {
+        let _ = detector.check(root);
+    }
+}
 fn new_git_worktree_detector(
     project_root: Option<&Path>,
     app: &App,
@@ -97,6 +105,7 @@ pub fn run(
     let mut scheduler = PollScheduler::new(Instant::now(), PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
     let mut worktree_changes = new_git_worktree_detector(project_root, app);
+    let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
 
     while app.is_running() {
         if needs_render {
@@ -115,6 +124,9 @@ pub fn run(
                             detector.sync(root);
                         }
                         sync_git_worktree_detector(project_root, app, &mut worktree_changes);
+                        if let Some(detector) = &mut metadata_changes {
+                            detector.sync(root);
+                        }
                     }
                     needs_render = true;
                 }
@@ -130,6 +142,7 @@ pub fn run(
         if scheduler.is_due(Instant::now()) {
             check_markdown_changes(project_root, &mut markdown_changes);
             check_git_worktree_changes(project_root, &mut worktree_changes);
+            check_git_metadata_changes(project_root, &mut metadata_changes);
         }
     }
 
