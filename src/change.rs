@@ -750,7 +750,10 @@ mod tests {
             detector.check(&project.0).unwrap(),
             GitMetadataChange::Unchanged
         );
-        git(&project.0, &["checkout", "--detach", commit_b.trim()]);
+        git(
+            &project.0,
+            &["update-ref", "--no-deref", "HEAD", commit_b.trim()],
+        );
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitMetadataChange::Changed
