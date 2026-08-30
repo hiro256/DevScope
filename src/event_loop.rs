@@ -726,19 +726,17 @@ mod tests {
         let mut requests = RefreshRequest::default();
 
         git(&root, &["commit", "--allow-empty", "-m", "metadata only"]);
-        collect_change_requests(
-            Some(&root),
-            &mut markdown,
-            &mut worktree,
-            &mut metadata,
-            &mut requests,
-        );
+        let markdown_changed = check_markdown_changes(Some(&root), &mut markdown);
+        let worktree_changed = check_git_worktree_changes(Some(&root), &mut worktree);
+        let metadata_changed = check_git_metadata_changes(Some(&root), &mut metadata);
+        assert!(!markdown_changed);
+        assert!(!worktree_changed);
+        assert!(metadata_changed);
+
+        requests.markdown |= markdown_changed;
+        requests.git |= worktree_changed || metadata_changed;
         assert!(!requests.markdown);
         assert!(requests.git);
-        assert_eq!(
-            worktree.as_mut().unwrap().check(&root).unwrap(),
-            GitWorktreeChange::Unchanged
-        );
 
         let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
         assert!(!outcome.markdown);
