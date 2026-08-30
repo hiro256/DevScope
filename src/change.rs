@@ -326,22 +326,42 @@ mod tests {
     }
 
     #[test]
-    fn worktree_detects_addition_deletion_and_rename() {
+    fn worktree_detects_addition_and_updates_the_baseline() {
         let project = TempProject::new();
         project.write("a.txt", "a");
         let mut detector = GitWorktreeChangeDetector::new(&project.0);
 
         project.write("b.txt", "b");
-        project.write("a.txt", "a longer value");
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitWorktreeChange::Changed
         );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn worktree_detects_deletion() {
+        let project = TempProject::new();
+        project.write("a.txt", "a");
+        project.write("b.txt", "b");
+        let mut detector = GitWorktreeChangeDetector::new(&project.0);
+
         fs::remove_file(project.0.join("b.txt")).unwrap();
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitWorktreeChange::Changed
         );
+    }
+
+    #[test]
+    fn worktree_detects_rename() {
+        let project = TempProject::new();
+        project.write("a.txt", "a");
+        let mut detector = GitWorktreeChangeDetector::new(&project.0);
+
         fs::rename(project.0.join("a.txt"), project.0.join("renamed.txt")).unwrap();
         assert_eq!(
             detector.check(&project.0).unwrap(),
@@ -350,17 +370,23 @@ mod tests {
     }
 
     #[test]
-    fn worktree_detects_nested_addition_and_ignores_git() {
+    fn worktree_detects_nested_addition() {
         let project = TempProject::new();
         project.write("existing/subdir/keep.txt", "keep");
         let mut detector = GitWorktreeChangeDetector::new(&project.0);
 
         project.write("existing/subdir/new.txt", "new");
-        project.write("existing/subdir/keep.txt", "keep longer value");
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitWorktreeChange::Changed
         );
+    }
+
+    #[test]
+    fn worktree_ignores_git_directory_changes() {
+        let project = TempProject::new();
+        project.write("a.txt", "a");
+        let mut detector = GitWorktreeChangeDetector::new(&project.0);
 
         project.write(".git/internal-file", "ignored");
         assert_eq!(
