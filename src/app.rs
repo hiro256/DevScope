@@ -26,9 +26,21 @@ impl App {
 
     pub fn apply_snapshot(&mut self, snapshot: ProjectSnapshot) {
         let (plan, activity, tasks) = snapshot.into_parts();
+        self.apply_markdown_state(plan, tasks);
+        self.apply_activity_state(activity);
+    }
+
+    pub fn apply_markdown_state(&mut self, plan: PlanState, tasks: TaskState) {
         self.plan = plan;
-        self.activity = activity;
         self.tasks = tasks;
+        self.reconcile_selected_task();
+    }
+
+    pub fn apply_activity_state(&mut self, activity: ActivityState) {
+        self.activity = activity;
+    }
+
+    fn reconcile_selected_task(&mut self) {
         self.selected_task = match &self.tasks {
             TaskState::Available(summary) if summary.remaining() > 0 => {
                 Some(self.selected_task.unwrap_or(0).min(summary.remaining() - 1))
@@ -177,6 +189,62 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn markdown_apply_preserves_activity_and_reconciles_selection() {
+        let mut app = App::new(ProjectSnapshot::new(
+            PlanState::Available(PlanSummary::new(0, 3)),
+            ActivityState::NotRepository,
+            TaskState::Available(TaskSummary::new(
+                3,
+                (0..3)
+                    .map(|index| TaskSummaryItem::new("a.md".into(), index, "x".into()))
+                    .collect(),
+            )),
+        ));
+        move_to(&mut app, 2);
+
+        app.apply_markdown_state(
+            PlanState::Available(PlanSummary::new(1, 2)),
+            TaskState::Available(TaskSummary::new(
+                2,
+                (0..2)
+                    .map(|index| TaskSummaryItem::new("b.md".into(), index, "y".into()))
+                    .collect(),
+            )),
+        );
+        assert_eq!(app.activity(), &ActivityState::NotRepository);
+        assert_eq!(app.selected_task(), Some(1));
+
+        app.apply_markdown_state(
+            PlanState::Available(PlanSummary::new(2, 2)),
+            TaskState::Available(TaskSummary::new(2, Vec::new())),
+        );
+        assert_eq!(app.selected_task(), None);
+
+        app.apply_markdown_state(
+            PlanState::Available(PlanSummary::new(2, 3)),
+            TaskState::Available(TaskSummary::new(
+                3,
+                vec![TaskSummaryItem::new("c.md".into(), 0, "z".into())],
+            )),
+        );
+        assert_eq!(app.selected_task(), Some(0));
+    }
+
+    #[test]
+    fn activity_apply_preserves_markdown_and_selection() {
+        let mut app = app(3);
+        move_to(&mut app, 1);
+        let plan = app.plan();
+        let tasks = app.tasks().clone();
+
+        app.apply_activity_state(ActivityState::NotRepository);
+
+        assert_eq!(app.plan(), plan);
+        assert_eq!(app.tasks(), &tasks);
+        assert_eq!(app.selected_task(), Some(1));
+        assert_eq!(app.activity(), &ActivityState::NotRepository);
+    }
     #[test]
     fn empty_and_unavailable_are_unselected() {
         assert_eq!(app(0).selected_task(), None);

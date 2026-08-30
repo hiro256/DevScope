@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use crate::progress::{
-    ActivitySummary, GitActivityError, PlanSummary, TaskSummary, analyze_markdown_progress,
-    collect_git_activity,
+    ActivitySummary, GitActivityError, MarkdownProgressError, PlanSummary, TaskSummary,
+    analyze_markdown_progress, collect_git_activity,
 };
 
 const RECENT_COMMIT_LIMIT: usize = 5;
@@ -70,22 +70,33 @@ impl ProjectSnapshot {
     }
 }
 
+/// Collects the Markdown-derived plan and task state in one analysis pass.
+pub fn collect_markdown_state(
+    root: &Path,
+) -> Result<(PlanState, TaskState), MarkdownProgressError> {
+    let progress = analyze_markdown_progress(root)?;
+    Ok((
+        PlanState::Available(PlanSummary::from(&progress)),
+        TaskState::Available(TaskSummary::from(&progress)),
+    ))
+}
+
+/// Collects the Git-derived activity state. A non-Git directory is a valid result.
+pub fn collect_activity_state(root: &Path) -> Result<ActivityState, GitActivityError> {
+    match collect_git_activity(root, RECENT_COMMIT_LIMIT) {
+        Ok(activity) => Ok(ActivityState::Available(ActivitySummary::from(&activity))),
+        Err(GitActivityError::NotRepository) => Ok(ActivityState::NotRepository),
+        Err(error) => Err(error),
+    }
+}
+
 /// Collects the current Markdown and Git state for a fixed project root.
 pub fn collect_project_snapshot(root: &Path) -> ProjectSnapshot {
-    let markdown = analyze_markdown_progress(root);
-    let (plan, tasks) = match markdown {
-        Ok(progress) => (
-            PlanState::Available(PlanSummary::from(&progress)),
-            TaskState::Available(TaskSummary::from(&progress)),
-        ),
+    let (plan, tasks) = match collect_markdown_state(root) {
+        Ok(states) => states,
         Err(_) => (PlanState::Unavailable, TaskState::Unavailable),
     };
-
-    let activity = match collect_git_activity(root, RECENT_COMMIT_LIMIT) {
-        Ok(activity) => ActivityState::Available(ActivitySummary::from(&activity)),
-        Err(GitActivityError::NotRepository) => ActivityState::NotRepository,
-        Err(_) => ActivityState::Unavailable,
-    };
+    let activity = collect_activity_state(root).unwrap_or(ActivityState::Unavailable);
 
     ProjectSnapshot::new(plan, activity, tasks)
 }
@@ -159,6 +170,30 @@ mod tests {
         assert_eq!(
             snapshot.plan(),
             PlanState::Available(PlanSummary::new(0, 1))
+        );
+    }
+
+    #[test]
+    fn collects_markdown_states_from_one_analysis() {
+        let project = TempProject::new();
+        project.write_markdown("- [x] Completed\n- [ ] Remaining");
+
+        let (plan, tasks) = collect_markdown_state(project.path()).unwrap();
+        assert_eq!(plan, PlanState::Available(PlanSummary::new(1, 2)));
+        let TaskState::Available(tasks) = tasks else {
+            panic!("tasks should be available");
+        };
+        assert_eq!(tasks.remaining(), 1);
+        assert_eq!(tasks.items()[0].text(), "Remaining");
+    }
+
+    #[test]
+    fn collects_non_git_activity_as_a_valid_state() {
+        let project = TempProject::new();
+
+        assert_eq!(
+            collect_activity_state(project.path()).unwrap(),
+            ActivityState::NotRepository
         );
     }
 }

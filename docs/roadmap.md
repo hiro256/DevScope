@@ -55,7 +55,7 @@
 
 ### Live updates
 
-- [ ] Selective automatic refresh
+- [x] Selective automatic refresh
 - [ ] Refresh status / last update
 - [ ] Changed Files panel
 
