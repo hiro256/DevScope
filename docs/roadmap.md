@@ -77,7 +77,7 @@
 
 ### Initial source
 
-- [ ] Cargo Build/Test evidence source
+- [x] Cargo Build/Test evidence source
 - [ ] Non-blocking evidence execution
 - [ ] Manual evidence execution
 

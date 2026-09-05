@@ -2,6 +2,7 @@
 mod build_test;
 mod build_test_freshness;
 mod build_test_source;
+mod cargo_build_test;
 pub use build_test::{
     BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
     BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, BuildTestStatus,
@@ -11,6 +12,7 @@ pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
 };
 pub use build_test_source::BuildTestCommandSpec;
+pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
 mod git;
 mod markdown;
 pub use git::{

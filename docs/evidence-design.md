@@ -42,10 +42,23 @@ boundary between a concrete observation mechanism and the information it present
 Evidence Core. It is not yet a stable trait, generic result type, extension contract,
 plugin API, or provider registry.
 
-Cargo Build/Test Evidence is the first concrete source. DevScope can dogfood fixed,
-safe commands such as `cargo check` for Build and `cargo test` for Test. Exact
-command behavior remains for later implementation rounds. Cargo is a v0.3.0 scope
-decision, not a requirement that every future Evidence source resemble a process.
+Cargo Build/Test Evidence is the first concrete source. Its v0.3 source is
+structurally applicable when the observed project root directly contains a regular
+`Cargo.toml` file. It does not search nested manifests, parse `Cargo.toml`, or detect
+the Cargo executable.
+
+Build and Test are separate v0.3 verification runs:
+
+```text
+Build -> cargo check
+Test  -> cargo test
+```
+
+They have independent commands, outcomes, durations, diagnostics, freshness, and
+lifecycle state. The Cargo source creates a `BuildTestCommandSpec` for each run; exact
+process execution behavior remains for later implementation rounds. Cargo is a v0.3.0
+scope decision, not a requirement that every future Evidence source resemble a
+process.
 
 For the initial v0.3 process-source boundary, a concrete Build/Test source produces a
 `BuildTestCommandSpec` for a process runner:
@@ -255,6 +268,5 @@ safe commands can be evaluated without arbitrary command configuration.
 
 ## Open questions
 
-- Decide whether Build and Test are separate runs.
 - Choose manual key bindings.
 - Identify which concepts are genuinely shared between Cargo and Artifact Evidence.
