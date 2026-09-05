@@ -197,10 +197,27 @@ may make Build/Test Evidence stale. Documentation changes, such as `README.md` o
 false-positive stale results to avoid presenting potentially outdated verification as
 Fresh.
 
-The baseline is captured after completion rather than before process start, so any
-project state created by the completed verification is part of that completion state.
-`target/` is excluded regardless, preventing Cargo's own build artifacts from causing
-self-stale results.
+The event loop checks each completed baseline at its normal polling cadence. A changed
+baseline marks only a Fresh `Completed` result as Stale, preserving its observed
+outcome and all result details. Checks do not update or discard a completed baseline;
+a rerun replaces the baseline only after that run completes. Scan errors leave both the
+current result and its baseline unchanged so a later poll can retry.
+
+There are two runtime-only baseline roles. A run-start baseline is captured when a
+Build or Test run starts and is used only to notice relevant input changes while that
+run is active. A post-completion baseline is captured after the process completes and
+is used to monitor the completed result. Neither role is a generic Evidence API.
+
+If relevant inputs change while verification is running, the completed result begins
+Stale even though the post-completion baseline is still captured. The run-start check
+uses the same `.git/` and `target/` exclusions as completed freshness checks. It may
+therefore treat a Cargo-created included file, such as `Cargo.lock`, as a relevant
+change. v0.3 intentionally prefers false-stale over false-fresh rather than trying to
+attribute that change to Cargo or to an external edit.
+
+The post-completion baseline is captured after completion so any project state created
+by the verification is part of that completion state. `target/` is excluded regardless,
+preventing Cargo's own build artifacts from causing self-stale results.
 
 A Git metadata-only change, such as committing unchanged project contents, does not
 itself stale Build/Test Evidence because `.git/` is excluded from the fingerprint.
@@ -273,8 +290,10 @@ Evidence refresh source.
 
 After a completed Build or Test run, application integration captures the corresponding
 freshness baseline independently. Starting a replacement run or receiving an execution
-error clears only that kind's prior baseline. This round does not yet poll baselines or
-mark results stale after project changes.
+error clears only that kind's prior baseline. The event loop polls completed baselines
+independently and transitions only Fresh completed results to Stale when relevant
+project filesystem state changes. This does not alter the selected Details kind or the
+Markdown/Git RefreshStatus.
 
 Evidence execution remains agent-independent. An agent may request a verification run
 in the future, but DevScope's observed process result remains the source of truth.

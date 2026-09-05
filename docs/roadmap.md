@@ -88,7 +88,7 @@
 
 ### Live behavior
 
-- [ ] Evidence becomes stale after relevant project changes
+- [x] Evidence becomes stale after relevant project changes
 
 ### Quality
 

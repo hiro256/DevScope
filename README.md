@@ -16,8 +16,7 @@ Markdown-based Plan progress and Git-based Activity while DevScope remains open.
 The main branch is currently developing v0.3.0 Build/Test Evidence.
 
 Current v0.3.0 development on `main` includes Cargo project detection, manual
-`cargo check` and `cargo test` execution, non-blocking process observation, and
-Build/Test lifecycle-state display, and an Evidence Details pane. Evidence history and diagnostic scrolling are not implemented yet.
+`cargo check` and `cargo test` execution, non-blocking process observation, automatic Evidence stale updates after relevant project changes, and Build/Test lifecycle-state display with an Evidence Details pane. Evidence history and diagnostic scrolling are not implemented yet.
 
 ## v0.2.0 features
 
@@ -103,7 +102,6 @@ cargo build --release
 ## Not yet implemented
 
 - Full Evidence summary and diagnostic presentation
-- Automatic Evidence stale updates after relevant project changes
 - Agent adapters, including a Codex adapter
 - Configuration files
 - Task editing and Git write operations
