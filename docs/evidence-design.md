@@ -47,6 +47,27 @@ safe commands such as `cargo check` for Build and `cargo test` for Test. Exact
 command behavior remains for later implementation rounds. Cargo is a v0.3.0 scope
 decision, not a requirement that every future Evidence source resemble a process.
 
+For the initial v0.3 process-source boundary, a concrete Build/Test source produces a
+`BuildTestCommandSpec` for a process runner:
+
+```text
+Concrete Build/Test source
+        ↓
+BuildTestCommandSpec
+        ↓
+process runner
+        ↓
+BuildTestResult / BuildTestExecutionError
+```
+
+`BuildTestCommandSpec` holds the Build/Test kind, source label, command label,
+program, argument vector, and working directory. It is a provisional v0.3
+process-source boundary, not the stable generic Evidence extension contract.
+
+The command label is human-readable presentation only. The program plus argument
+vector are the executable process representation, and DevScope must not parse a
+command label to reconstruct them.
+
 For Cargo, structured process invocation such as `Command::new(...).args(...)` is
 the intended direction. The Cargo execution path must not use arbitrary shell strings
 through `cmd /C`, `powershell -Command`, or `sh -c`. This keeps shell injection and
