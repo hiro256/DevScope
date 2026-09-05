@@ -221,9 +221,36 @@ The MVP starts verification only after an explicit user request. It does not run
 `cargo test` or another command automatically whenever a project changes. Automatic
 run policy belongs to a future configuration feature.
 
-Evidence execution must be non-blocking so the TUI can continue navigation, redraw,
-quit handling, and project observation while a process is running. Exact key bindings
-are not decided yet; a manual TUI trigger is required.
+The initial runner is non-blocking for its caller:
+
+```text
+BuildTestCommandSpec
+        ↓
+BuildTestExecution::start
+        ↓
+worker thread
+        ↓
+process execution
+        ↓
+completion channel
+        ↓
+try_complete()
+```
+
+The TUI/event-loop thread never waits for the Build/Test child process. It only polls
+execution completion non-blockingly through `try_complete()`. The worker executes the
+process from the specification's program, argument vector, and working directory;
+it does not parse the display command label or invoke a shell.
+
+v0.3 initially uses worker-thread `Command::output()` to capture stdout and stderr.
+It stores only a bounded diagnostic tail through `BuildTestDiagnostic`; stdout is
+placed before stderr so a retained tail preferentially keeps likely error output.
+Streaming output and a full log viewer remain outside the MVP and can be reconsidered
+through dogfooding.
+
+The runner produces a Fresh completed process result. Freshness-baseline association
+and later stale transitions are wired by application integration, not by the runner
+itself.
 
 The initial scope can allow one Evidence run at a time. Cancellation, parallel runs,
 queues, interactive test processes, terminal emulation, and a full log viewer are

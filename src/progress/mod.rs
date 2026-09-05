@@ -1,6 +1,7 @@
 //! Project progress analysis independent of the TUI.
 mod build_test;
 mod build_test_freshness;
+mod build_test_runner;
 mod build_test_source;
 mod cargo_build_test;
 pub use build_test::{
@@ -11,6 +12,7 @@ pub use build_test::{
 pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
 };
+pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion};
 pub use build_test_source::BuildTestCommandSpec;
 pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
 mod git;
