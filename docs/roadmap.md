@@ -71,7 +71,7 @@
 ### Evidence model
 
 - [x] Evidence architecture and execution model
-- [ ] Build/Test result/state model
+- [x] Build/Test result/state model
 - [ ] Initial Evidence source boundary
 - [ ] Build/Test freshness / stale model
 

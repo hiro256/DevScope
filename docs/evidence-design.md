@@ -85,41 +85,53 @@ not a committed data model in this round.
 
 ## v0.3 Build/Test Evidence model
 
-
-Evidence distinguishes at least these kinds:
+The initial Rust model is intentionally limited to process-based Build/Test
+verification. It is not a generic Evidence contract for future source shapes.
 
 ```text
-Build
-Test
+BuildTestState
+├─ Unavailable
+├─ NotRun
+├─ Running(BuildTestRun)
+├─ Completed(BuildTestResult)
+│    ├─ Outcome: Passed / Failed
+│    └─ Freshness: Fresh / Stale
+└─ ExecutionError(BuildTestExecutionError)
 ```
 
-The v0.3 Build/Test state model is:
+`BuildTestKind` distinguishes Build and Test. `BuildTestOutcome` records Passed or
+Failed after a verification process completes. `BuildTestFreshness` is separate from
+outcome, so a stale result retains whether the most recent completed process Passed
+or Failed.
 
+`BuildTestState::status()` derives a display-oriented status:
 
-- **Unavailable:** No usable Evidence Source is available.
-- **NotRun:** A source is available, but it has not yet been run.
-- **Running:** A verification process is in progress.
-- **Passed:** The latest completed verification exited successfully and is fresh.
-- **Failed:** The verification process ran and reported a failing result.
-- **Stale:** A prior completed result no longer corresponds to the observed project state.
+- Unavailable maps to Unavailable.
+- NotRun maps to NotRun.
+- Running maps to Running.
+- Completed Fresh Passed maps to Passed.
+- Completed Fresh Failed maps to Failed.
+- Completed Stale maps to Stale while preserving its outcome.
+- ExecutionError maps to ExecutionError.
 
-A verification failure differs from an execution error. A test command that exits
-with a failing status is **Failed**. A missing executable, process-spawn failure, or
-inaccessible working directory is an execution error or unavailable source. DevScope
-must not present failure to start as a failed test.
+`BuildTestRun` stores the kind, source label, and command label for an in-progress
+process. It does not store a child handle, PID, thread, channel, or output reader.
 
-A completed Build/Test result should be able to retain the following fields:
+A completed `BuildTestResult` stores kind, outcome, freshness, source label, command
+label, optional exit code, `std::time::Duration`, summary, and an optional bounded
+diagnostic tail. These fields are specific to the v0.3 process model; Artifact
+Evidence will not be required to expose a command, exit code, duration, or diagnostic
+output.
 
+An exit code remains optional because a process outcome cannot always provide one.
+`BuildTestExecutionError` instead records kind, source label, command label, and a
+message when a verification process cannot be started or observed. A non-zero test
+process is Failed; a missing executable or spawn failure is an ExecutionError.
 
-- Evidence kind and normalized status.
-- Source identity and command label.
-- Exit code when available.
-- Duration.
-- A short summary.
-- Bounded diagnostic detail, such as a final output tail.
-
-Raw stdout and stderr must not become unbounded Core data. The MVP keeps a structured
-summary and bounded diagnostics rather than retaining full logs indefinitely.
+`BuildTestDiagnostic` retains at most 4096 Unicode scalar values. When input exceeds
+that limit, it preserves the tail because final errors and summaries are commonly the
+most useful diagnostic details. Truncation is character-based, not byte-index-based,
+so UTF-8 text such as Japanese remains valid.
 
 ## Build/Test freshness and project changes
 
@@ -205,8 +217,6 @@ safe commands can be evaluated without arbitrary command configuration.
 ## Open questions
 
 - Decide whether Build and Test are separate runs.
-- Define the Build/Test result summary fields.
 - Define the exact Build/Test stale fingerprint and relevant-path policy.
-- Choose a bounded diagnostic-output limit.
 - Choose manual key bindings.
 - Identify which concepts are genuinely shared between Cargo and Artifact Evidence.

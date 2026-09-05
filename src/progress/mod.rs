@@ -1,4 +1,10 @@
 //! Project progress analysis independent of the TUI.
+mod build_test;
+pub use build_test::{
+    BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
+    BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, BuildTestStatus,
+    MAX_DIAGNOSTIC_CHARS,
+};
 mod git;
 mod markdown;
 pub use git::{
