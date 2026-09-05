@@ -45,3 +45,12 @@
 - **Date:** 2026-08-29
 - **Decision:** Collect Git Activity through the installed Git CLI.
 - **Reason:** It avoids a large embedded Git dependency and follows the user's Git behavior. DevScope therefore requires git.exe (or git) on PATH for this source.
+
+## 2026-09-05 — Evidence comes from observed verification execution
+
+- **Date:** 2026-09-05
+- **Decision:** Base Evidence on Build/Test processes launched and observed by
+  DevScope, keep Evidence Core tool-neutral, and begin with manual verification
+  execution rather than automatic runs.
+- **Reason:** Observed process outcomes provide reliable exit status and freshness
+  boundaries without coupling Evidence to an agent or a specific tool.

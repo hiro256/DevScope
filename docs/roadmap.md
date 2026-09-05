@@ -66,9 +66,37 @@
 - [x] Git changes are reflected automatically
 - [x] Windows live-update verification
 
+## v0.3.0 - Build/Test Evidence
+
+### Evidence model
+
+- [x] Evidence architecture and execution model
+- [ ] Evidence result/state model
+- [ ] Evidence source boundary
+- [ ] Evidence freshness / stale model
+
+### Initial source
+
+- [ ] Initial Build/Test evidence source
+- [ ] Non-blocking evidence execution
+- [ ] Manual evidence execution
+
+### TUI
+
+- [ ] Evidence state integration
+- [ ] Evidence summary display
+
+### Live behavior
+
+- [ ] Evidence becomes stale after relevant project changes
+
+### Quality
+
+- [ ] Evidence model/source tests
+- [ ] Windows Build/Test evidence verification
+
 ## Post-MVP
 
-- [ ] Build/Test evidence sources
 - [ ] Agent integration experiment
 - [ ] Config file
 - [ ] Task weighting

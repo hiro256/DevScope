@@ -11,9 +11,9 @@ Build/Test = Evidence
 Agent      = Current activity
 ```
 
-The MVP starts with Markdown as the Plan source, Git as the Activity source, and a
-TUI that presents both. Build/Test evidence and agent integrations are deliberately
-outside the initial implementation.
+Markdown and Git are implemented as the Plan and Activity sources, with a TUI that
+presents both. Build/Test Evidence is the next source under development. Agent
+integrations remain optional future adapters.
 
 ## Target architecture
 
