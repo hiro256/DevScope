@@ -329,6 +329,12 @@ fn check_completed_build_test_freshness(
     baseline: Option<&BuildTestFreshnessBaseline>,
     kind: BuildTestKind,
 ) -> bool {
+    let BuildTestState::Completed(mut result) = app.build_test_state(kind).clone() else {
+        return false;
+    };
+    if matches!(result.freshness(), BuildTestFreshness::Stale) {
+        return false;
+    }
     let Some(baseline) = baseline else {
         return false;
     };
@@ -336,13 +342,6 @@ fn check_completed_build_test_freshness(
         baseline.check(project_root),
         Ok(BuildTestInputChange::Changed)
     ) {
-        return false;
-    }
-
-    let BuildTestState::Completed(mut result) = app.build_test_state(kind).clone() else {
-        return false;
-    };
-    if matches!(result.freshness(), BuildTestFreshness::Stale) {
         return false;
     }
 
@@ -382,15 +381,25 @@ fn observe_active_build_test_inputs(project_root: Option<&Path>, runtime: &mut B
     }
 }
 
+fn finish_build_test_execution(
+    project_root: Option<&Path>,
+    app: &mut App,
+    runtime: &mut BuildTestRuntime,
+    completion: BuildTestExecutionCompletion,
+) {
+    observe_active_build_test_inputs(project_root, runtime);
+    let inputs_changed = runtime.active_inputs_changed;
+    runtime.active = None;
+    runtime.active_baseline = None;
+    runtime.active_inputs_changed = false;
+    apply_build_test_completion(project_root, app, runtime, completion, inputs_changed);
+}
+
 fn poll_build_test_execution(
     project_root: Option<&Path>,
     app: &mut App,
     runtime: &mut BuildTestRuntime,
 ) -> bool {
-    if runtime.active.is_none() {
-        return false;
-    }
-    observe_active_build_test_inputs(project_root, runtime);
     let Some(execution) = runtime.active.as_mut() else {
         return false;
     };
@@ -400,11 +409,7 @@ fn poll_build_test_execution(
     match completion {
         Ok(None) => false,
         Ok(Some(completion)) => {
-            let inputs_changed = runtime.active_inputs_changed;
-            runtime.active = None;
-            runtime.active_baseline = None;
-            runtime.active_inputs_changed = false;
-            apply_build_test_completion(project_root, app, runtime, completion, inputs_changed);
+            finish_build_test_execution(project_root, app, runtime, completion);
             true
         }
         Err(error) => {
@@ -476,6 +481,7 @@ pub fn run(
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
 
         if scheduler.is_due(Instant::now()) {
+            observe_active_build_test_inputs(project_root, &mut build_test_runtime);
             needs_render |= check_build_test_freshness(project_root, app, &build_test_runtime);
             collect_change_requests(
                 project_root,
@@ -758,13 +764,7 @@ mod tests {
         };
 
         fs::write(input, "after changed").unwrap();
-        observe_active_build_test_inputs(Some(&root), &mut runtime);
-        assert!(runtime.active_inputs_changed);
-        let inputs_changed = runtime.active_inputs_changed;
-        runtime.active_baseline = None;
-        runtime.active_inputs_changed = false;
-
-        apply_build_test_completion(
+        finish_build_test_execution(
             Some(&root),
             &mut app,
             &mut runtime,
@@ -772,7 +772,6 @@ mod tests {
                 BuildTestKind::Test,
                 BuildTestOutcome::Failed,
             )),
-            inputs_changed,
         );
 
         let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Test) else {
@@ -781,6 +780,66 @@ mod tests {
         assert_eq!(result.outcome(), BuildTestOutcome::Failed);
         assert_eq!(result.freshness(), BuildTestFreshness::Stale);
         assert!(runtime.test_baseline.is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn final_active_input_check_keeps_unchanged_completion_fresh() {
+        let root = temp_root();
+        fs::write(root.join("input.txt"), "input").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime {
+            active_baseline: Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+            ..Default::default()
+        };
+
+        finish_build_test_execution(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(completed_result(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+            )),
+        );
+
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+            panic!("a completed Build result should remain completed");
+        };
+        assert_eq!(result.freshness(), BuildTestFreshness::Fresh);
+        assert!(runtime.build_baseline.is_some());
+        assert!(runtime.active_baseline.is_none());
+        assert!(!runtime.active_inputs_changed);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn final_active_input_check_ignores_target_changes() {
+        let root = temp_root();
+        fs::write(root.join("input.txt"), "input").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime {
+            active_baseline: Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+            ..Default::default()
+        };
+
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(root.join("target/output"), "generated change").unwrap();
+        finish_build_test_execution(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(completed_result(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+            )),
+        );
+
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+            panic!("a completed Build result should remain completed");
+        };
+        assert_eq!(result.freshness(), BuildTestFreshness::Fresh);
 
         let _ = fs::remove_dir_all(root);
     }

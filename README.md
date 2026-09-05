@@ -101,7 +101,7 @@ cargo build --release
 
 ## Not yet implemented
 
-- Full Evidence summary and diagnostic presentation
+- Scrollable, full-screen Evidence diagnostics and history
 - Agent adapters, including a Codex adapter
 - Configuration files
 - Task editing and Git write operations

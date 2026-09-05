@@ -197,15 +197,20 @@ may make Build/Test Evidence stale. Documentation changes, such as `README.md` o
 false-positive stale results to avoid presenting potentially outdated verification as
 Fresh.
 
-The event loop checks each completed baseline at its normal polling cadence. A changed
-baseline marks only a Fresh `Completed` result as Stale, preserving its observed
-outcome and all result details. Checks do not update or discard a completed baseline;
-a rerun replaces the baseline only after that run completes. Scan errors leave both the
-current result and its baseline unchanged so a later poll can retry.
+The event loop checks each completed baseline at its normal project polling cadence. A
+changed baseline marks only a Fresh `Completed` result as Stale, preserving its observed
+outcome and all result details. Only Fresh completed results continue filesystem
+freshness checks; once a result becomes Stale, its retained baseline is not scanned
+again until a rerun establishes a new result. Checks do not update or discard a
+completed baseline; a rerun replaces the baseline only after that run completes. Scan
+errors leave both the current result and its baseline unchanged so a later poll can
+retry.
 
 There are two runtime-only baseline roles. A run-start baseline is captured when a
 Build or Test run starts and is used only to notice relevant input changes while that
-run is active. A post-completion baseline is captured after the process completes and
+run is active. Active-run input checks normally use the project polling cadence, with a
+final active-input check when completion is observed to cover changes since the last
+scheduled check. A post-completion baseline is captured after the process completes and
 is used to monitor the completed result. Neither role is a generic Evidence API.
 
 If relevant inputs change while verification is running, the completed result begins
