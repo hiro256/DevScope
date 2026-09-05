@@ -1,10 +1,14 @@
 //! Project progress analysis independent of the TUI.
 mod build_test;
+mod build_test_freshness;
 mod build_test_source;
 pub use build_test::{
     BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
     BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, BuildTestStatus,
     MAX_DIAGNOSTIC_CHARS,
+};
+pub use build_test_freshness::{
+    BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
 };
 pub use build_test_source::BuildTestCommandSpec;
 mod git;

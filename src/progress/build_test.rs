@@ -152,6 +152,11 @@ impl BuildTestResult {
         self.freshness
     }
 
+    /// Marks this completed result stale while preserving its observed outcome.
+    pub fn mark_stale(&mut self) {
+        self.freshness = BuildTestFreshness::Stale;
+    }
+
     pub fn source_label(&self) -> &str {
         &self.source_label
     }
@@ -340,6 +345,18 @@ mod tests {
         assert_eq!(result.duration(), Duration::from_millis(2400));
         assert_eq!(result.summary(), "142 tests passed");
         assert_eq!(result.diagnostic().unwrap().as_str(), "diagnostic");
+    }
+
+    #[test]
+    fn marks_passed_and_failed_results_stale_without_changing_their_outcomes() {
+        for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+            let mut completed = result(outcome, BuildTestFreshness::Fresh);
+            completed.mark_stale();
+            completed.mark_stale();
+
+            assert_eq!(completed.freshness(), BuildTestFreshness::Stale);
+            assert_eq!(completed.outcome(), outcome);
+        }
     }
 
     #[test]

@@ -156,28 +156,46 @@ so UTF-8 text such as Japanese remains valid.
 
 ## Build/Test freshness and project changes
 
-A passed Cargo Build/Test result is not a permanent claim about the current project.
-After relevant project state changes, the prior result becomes **Stale**, including
-when the Git HEAD is unchanged but a dirty working tree has changed.
-
-The initial Cargo freshness direction is conservative:
+A completed Cargo Build/Test result is not a permanent claim about the current
+project. v0.3 records a `BuildTestFreshnessBaseline` after a verification process
+completes, then compares later project state against that baseline.
 
 ```text
 verification completes
-  -> synchronize the relevant project-observation baseline
-  -> mark the result fresh
-
-relevant project change is observed
-  -> mark the result stale
+        ↓
+capture Build/Test filesystem baseline
+        ↓
+result is Fresh
+        ↓
+later relevant filesystem state differs
+        ↓
+result becomes Stale
 ```
 
-The exact fingerprint is deferred. It must not be based only on the HEAD commit,
-because verification commonly runs in a dirty working tree.
+The v0.3 Cargo Build/Test freshness baseline is a project filesystem fingerprint. It
+includes everything under the project root by default, represented by relative path,
+entry kind, file-content fingerprint, and symlink target where applicable. It excludes
+`.git/` and every `target/` directory subtree.
 
-Build and test commands can create `target/`, coverage, caches, or generated files.
-Those self-generated artifacts must not make a just-completed result immediately
-stale. Completion therefore needs detector-baseline synchronization before Evidence
-is marked fresh. The exact relevant-path policy remains an implementation detail.
+This policy is intentionally conservative: any non-excluded project filesystem change
+may make Build/Test Evidence stale. Documentation changes, such as `README.md` or
+`docs/design.md`, therefore make Evidence stale in v0.3, as do source files,
+`Cargo.toml`, `Cargo.lock`, `build.rs`, additions, and deletions. This accepts some
+false-positive stale results to avoid presenting potentially outdated verification as
+Fresh.
+
+The baseline is captured after completion rather than before process start, so any
+project state created by the completed verification is part of that completion state.
+`target/` is excluded regardless, preventing Cargo's own build artifacts from causing
+self-stale results.
+
+A Git metadata-only change, such as committing unchanged project contents, does not
+itself stale Build/Test Evidence because `.git/` is excluded from the fingerprint.
+
+Comparisons do not update the baseline. Once a change is detected, later checks keep
+comparing to the completion state until a new verification completes and explicitly
+captures a new `BuildTestFreshnessBaseline`. Filesystem scan failures are returned as
+errors rather than being treated as project changes.
 
 Staleness semantics can differ by source shape. Cargo Evidence may become stale after
 relevant project changes, while Artifact Evidence may become stale when an expected
@@ -238,6 +256,5 @@ safe commands can be evaluated without arbitrary command configuration.
 ## Open questions
 
 - Decide whether Build and Test are separate runs.
-- Define the exact Build/Test stale fingerprint and relevant-path policy.
 - Choose manual key bindings.
 - Identify which concepts are genuinely shared between Cargo and Artifact Evidence.
