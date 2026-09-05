@@ -15,6 +15,10 @@ are not committed roadmap work. An item must be promoted to
   derived Japanese Markdown. Evaluate missing and stale detection, exclusion from
   Plan discovery, and AI/provider-independent synchronization. See
   [translation-proposal.md](translation-proposal.md).
+- **Artifact Evidence experiment.** After Cargo Build/Test Evidence is working,
+  explore a small filesystem-based Evidence source for expected artifacts such as
+  `reports/final-report.pdf`. Use it to compare process observation with filesystem
+  observation before defining a stable generic Evidence Source extension contract.
 
 ## Promotion flow
 

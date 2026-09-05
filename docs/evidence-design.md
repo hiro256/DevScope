@@ -2,14 +2,18 @@
 
 ## Purpose
 
-Evidence is an observed result from an actual verification process. It is not an
-agent statement such as "tests passed" or "build succeeded." A result is evidence
-only when DevScope can observe the process it started and normalize its outcome.
+Evidence is information that supports verification of observed work or state.
+v0.3.0 begins with DevScope-observed Cargo Build/Test process results, but process
+execution is the first concrete Evidence shape, not the permanent definition of all
+Evidence.
 
-Examples include `cargo check` exiting with code 0, `cargo test` exiting with code
-0, `pytest` exiting with code 1, or `npm test` exiting with code 1.
+Future Evidence may include Build/Test process results, artifact or file
+observations, HTTP or other machine checks, imported verification results from
+external systems, or human review and approval attestations. These possibilities do
+not expand the v0.3.0 implementation scope.
 
-## Initial execution direction
+## Initial Cargo Build/Test execution direction
+
 
 The initial direction is DevScope-owned execution:
 
@@ -33,22 +37,54 @@ results may become future Evidence sources, but are outside the initial source.
 
 ## Source boundary and tool neutrality
 
-Evidence Core remains tool-neutral. An Evidence Source launches or observes one
-verification mechanism and converts it into a normalized Evidence Result. The Core
-must not embed Cargo, Rust, `Cargo.toml`, or a particular command-line tool.
+Evidence Core remains tool-neutral in concept. An Evidence Source is a conceptual
+boundary between a concrete observation mechanism and the information it presents to
+Evidence Core. It is not yet a stable trait, generic result type, extension contract,
+plugin API, or provider registry.
 
-Cargo is the initial concrete source candidate because DevScope is a Rust project.
-A Cargo Evidence Source could safely provide fixed commands such as `cargo check`
-for Build and `cargo test` for Test. This is a dogfooding choice, not a Core
-requirement. Future sources can cover pytest, npm, dotnet test, Gradle, CI/JUnit,
-or other tools through the same boundary.
+Cargo Build/Test Evidence is the first concrete source. DevScope can dogfood fixed,
+safe commands such as `cargo check` for Build and `cargo test` for Test. Exact
+command behavior remains for later implementation rounds. Cargo is a v0.3.0 scope
+decision, not a requirement that every future Evidence source resemble a process.
 
-Process execution should use structured invocation such as `Command::new(...).args(...)`.
-The initial execution foundation must not use arbitrary shell strings through
-`cmd /C`, `powershell -Command`, or `sh -c`. This keeps shell injection and
-platform-specific quoting out of Evidence Core.
+For Cargo, structured process invocation such as `Command::new(...).args(...)` is
+the intended direction. The Cargo execution path must not use arbitrary shell strings
+through `cmd /C`, `powershell -Command`, or `sh -c`. This keeps shell injection and
+platform-specific quoting out of the implementation.
 
-## Evidence model
+Process observation makes command labels, exit codes, duration, stdout/stderr,
+spawn errors, and Running state important for Cargo Build/Test Evidence. Those are
+source-specific concerns, not fields that every future Evidence source must provide.
+Artifact Evidence, for example, would care more about a path, existence, size, and
+modified time.
+
+After Cargo Evidence works, DevScope should dogfood it and then run a small, materially
+different Artifact Evidence experiment. The intended sequence is:
+
+```text
+Cargo Build/Test Evidence
+        ↓
+dogfood
+        ↓
+Artifact Evidence experiment
+        ↓
+compare the two source shapes
+        ↓
+extract genuinely shared concepts
+        ↓
+consider a stable Evidence Source extension contract
+```
+
+Artifact Evidence is not part of v0.3.0 implementation. It is a future experiment
+for expected files such as `reports/final-report.pdf`, where filesystem observation
+can report existence, size, and modified time. This comparison avoids both Build/Test
+overfitting and speculative generic abstraction.
+
+Observed, Imported, and Attested are possible future provenance vocabulary. They are
+not a committed data model in this round.
+
+## v0.3 Build/Test Evidence model
+
 
 Evidence distinguishes at least these kinds:
 
@@ -57,7 +93,8 @@ Build
 Test
 ```
 
-The MVP state model is:
+The v0.3 Build/Test state model is:
+
 
 - **Unavailable:** No usable Evidence Source is available.
 - **NotRun:** A source is available, but it has not yet been run.
@@ -71,7 +108,8 @@ with a failing status is **Failed**. A missing executable, process-spawn failure
 inaccessible working directory is an execution error or unavailable source. DevScope
 must not present failure to start as a failed test.
 
-A completed result should be able to retain the following structured fields:
+A completed Build/Test result should be able to retain the following fields:
+
 
 - Evidence kind and normalized status.
 - Source identity and command label.
@@ -83,13 +121,13 @@ A completed result should be able to retain the following structured fields:
 Raw stdout and stderr must not become unbounded Core data. The MVP keeps a structured
 summary and bounded diagnostics rather than retaining full logs indefinitely.
 
-## Freshness and project changes
+## Build/Test freshness and project changes
 
-A passed result is not a permanent claim about the current project. After relevant
-project state changes, the prior result becomes **Stale**, including when the Git
-HEAD is unchanged but a dirty working tree has changed.
+A passed Cargo Build/Test result is not a permanent claim about the current project.
+After relevant project state changes, the prior result becomes **Stale**, including
+when the Git HEAD is unchanged but a dirty working tree has changed.
 
-The initial freshness direction is conservative:
+The initial Cargo freshness direction is conservative:
 
 ```text
 verification completes
@@ -107,6 +145,11 @@ Build and test commands can create `target/`, coverage, caches, or generated fil
 Those self-generated artifacts must not make a just-completed result immediately
 stale. Completion therefore needs detector-baseline synchronization before Evidence
 is marked fresh. The exact relevant-path policy remains an implementation detail.
+
+Staleness semantics can differ by source shape. Cargo Evidence may become stale after
+relevant project changes, while Artifact Evidence may become stale when an expected
+file changes, disappears, or is replaced. This round does not define a generic stale
+API.
 
 ## Execution behavior
 
@@ -154,12 +197,16 @@ safe commands can be evaluated without arbitrary command configuration.
 - Parallel verification.
 - Interactive subprocess UI.
 - Full log viewer.
+- A final generic Evidence extension API.
+- Artifact Evidence implementation.
+- A committed Evidence provenance taxonomy.
+- Premature abstraction across hypothetical Evidence sources.
 
 ## Open questions
 
-- Confirm whether Cargo is the first concrete source.
 - Decide whether Build and Test are separate runs.
-- Define exact Evidence summary fields.
-- Define the exact stale fingerprint and relevant-path policy.
+- Define the Build/Test result summary fields.
+- Define the exact Build/Test stale fingerprint and relevant-path policy.
 - Choose a bounded diagnostic-output limit.
 - Choose manual key bindings.
+- Identify which concepts are genuinely shared between Cargo and Artifact Evidence.

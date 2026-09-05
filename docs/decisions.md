@@ -54,3 +54,14 @@
   execution rather than automatic runs.
 - **Reason:** Observed process outcomes provide reliable exit status and freshness
   boundaries without coupling Evidence to an agent or a specific tool.
+
+## 2026-09-05 — Evidence abstraction follows concrete source experiments
+
+- **Date:** 2026-09-05
+- **Decision:** Use Cargo Build/Test as the first concrete Evidence source, keep
+  Evidence broader than process execution, and defer a stable generic Evidence
+  Source extension contract until after a materially different second source
+  experiment, likely Artifact Evidence.
+- **Reason:** This avoids Build/Test overfitting and speculative abstraction. The
+  earlier Evidence decision defines the initial v0.3 Build/Test source, not the
+  permanent definition of every future Evidence source.

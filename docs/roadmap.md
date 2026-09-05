@@ -71,13 +71,13 @@
 ### Evidence model
 
 - [x] Evidence architecture and execution model
-- [ ] Evidence result/state model
-- [ ] Evidence source boundary
-- [ ] Evidence freshness / stale model
+- [ ] Build/Test result/state model
+- [ ] Initial Evidence source boundary
+- [ ] Build/Test freshness / stale model
 
 ### Initial source
 
-- [ ] Initial Build/Test evidence source
+- [ ] Cargo Build/Test evidence source
 - [ ] Non-blocking evidence execution
 - [ ] Manual evidence execution
 
