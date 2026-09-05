@@ -140,4 +140,20 @@ mod tests {
             assert_eq!(spec.working_directory(), project.0);
         }
     }
+    #[test]
+    fn rejects_a_manifest_directory_and_returns_no_command_for_non_cargo_roots() {
+        let directory_manifest = TempProject::new("directory-manifest");
+        fs::create_dir_all(directory_manifest.0.join("Cargo.toml")).unwrap();
+        assert!(!is_cargo_project(&directory_manifest.0));
+
+        let missing = TempProject::new("non-cargo-command");
+        assert!(cargo_build_test_command(&missing.0, BuildTestKind::Build).is_none());
+        assert!(cargo_build_test_command(&missing.0, BuildTestKind::Test).is_none());
+
+        let parent = TempProject::new("parent-manifest");
+        parent.manifest();
+        let child = parent.0.join("child");
+        fs::create_dir_all(&child).unwrap();
+        assert!(!is_cargo_project(&child));
+    }
 }

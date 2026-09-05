@@ -417,4 +417,30 @@ mod tests {
             BuildTestInputChange::Unchanged
         );
     }
+    #[test]
+    fn treats_a_regular_file_named_target_as_a_relevant_input() {
+        let project = TempProject::new();
+        project.write("target", "before");
+        let baseline = project.capture();
+        project.write("target", "after changed");
+
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
+    #[test]
+    fn ignores_nested_target_directories_recursively() {
+        let project = TempProject::new();
+        project.write("src/generated/target/output", "before");
+        let baseline = project.capture();
+        project.write("src/generated/target/output", "after changed");
+        project.write("src/generated/target/nested/another", "added");
+
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+    }
 }

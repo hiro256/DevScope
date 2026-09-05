@@ -330,6 +330,34 @@ mod tests {
     }
 
     #[test]
+    fn executes_program_and_arguments_without_parsing_display_metadata() {
+        let project = TempProject::new();
+        let spec = BuildTestCommandSpec::new(
+            BuildTestKind::Build,
+            "display-only source",
+            "this is not an executable command",
+            env::current_exe().unwrap().into_os_string(),
+            vec![
+                OsString::from("--exact"),
+                OsString::from(format!("{CHILD_PREFIX}child_success")),
+                OsString::from("--ignored"),
+                OsString::from("--nocapture"),
+            ],
+            &project.0,
+        );
+        let mut execution = BuildTestExecution::start(spec).unwrap();
+
+        let BuildTestExecutionCompletion::Completed(result) = wait_for_completion(&mut execution)
+        else {
+            panic!("fixture program should complete successfully");
+        };
+        assert_eq!(result.kind(), BuildTestKind::Build);
+        assert_eq!(result.outcome(), BuildTestOutcome::Passed);
+        assert_eq!(result.source_label(), "display-only source");
+        assert_eq!(result.command_label(), "this is not an executable command");
+        assert_eq!(result.summary(), "this is not an executable command passed");
+    }
+    #[test]
     #[ignore]
     fn child_delayed() {
         thread::sleep(Duration::from_millis(300));

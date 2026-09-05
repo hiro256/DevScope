@@ -367,4 +367,43 @@ mod tests {
         assert!(diagnostic.as_str().ends_with("最後の診断"));
         assert!(std::str::from_utf8(diagnostic.as_str().as_bytes()).is_ok());
     }
+    #[test]
+    fn mark_stale_preserves_every_completed_result_field() {
+        let diagnostic = BuildTestDiagnostic::new("diagnostic detail");
+        let mut result = BuildTestResult::new(
+            BuildTestKind::Build,
+            BuildTestOutcome::Failed,
+            BuildTestFreshness::Fresh,
+            "fixture source",
+            "fixture command",
+            Some(17),
+            Duration::from_millis(123),
+            "fixture summary",
+            Some(diagnostic.clone()),
+        );
+
+        result.mark_stale();
+        result.mark_stale();
+
+        assert_eq!(result.freshness(), BuildTestFreshness::Stale);
+        assert_eq!(result.kind(), BuildTestKind::Build);
+        assert_eq!(result.outcome(), BuildTestOutcome::Failed);
+        assert_eq!(result.source_label(), "fixture source");
+        assert_eq!(result.command_label(), "fixture command");
+        assert_eq!(result.exit_code(), Some(17));
+        assert_eq!(result.duration(), Duration::from_millis(123));
+        assert_eq!(result.summary(), "fixture summary");
+        assert_eq!(result.diagnostic(), Some(&diagnostic));
+    }
+
+    #[test]
+    fn retains_empty_and_exactly_bounded_diagnostics() {
+        let empty = BuildTestDiagnostic::new("");
+        assert_eq!(empty.as_str(), "");
+
+        let exact = "x".repeat(MAX_DIAGNOSTIC_CHARS);
+        let diagnostic = BuildTestDiagnostic::new(exact.clone());
+        assert_eq!(diagnostic.as_str(), exact);
+        assert_eq!(diagnostic.as_str().chars().count(), MAX_DIAGNOSTIC_CHARS);
+    }
 }
