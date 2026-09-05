@@ -248,29 +248,36 @@ placed before stderr so a retained tail preferentially keeps likely error output
 Streaming output and a full log viewer remain outside the MVP and can be reconsidered
 through dogfooding.
 
-The runner produces a Fresh completed process result. Freshness-baseline association
-and later stale transitions are wired by application integration, not by the runner
-itself.
+Manual controls are `b` for a Build run (`cargo check`) and `t` for a Test run
+(`cargo test`). v0.3 permits one active Build/Test execution at a time; additional
+Build/Test start requests while one is running are ignored rather than queued.
 
-The initial scope can allow one Evidence run at a time. Cancellation, parallel runs,
-queues, interactive test processes, terminal emulation, and a full log viewer are
-outside the MVP.
+The runner produces a Fresh completed process result. After a completed process result,
+application integration captures the Build/Test freshness baseline for that kind.
+Baseline capture failure does not erase the observed process result. Freshness-baseline
+association and later stale transitions are wired by application integration, not by
+the runner itself.
+
+Cancellation, parallel runs, queues, interactive test processes, terminal emulation,
+and a full log viewer are outside the MVP.
 
 ## Application integration direction
 
-`ProjectSnapshot` will eventually contain Plan, Activity, Evidence, and Tasks. This
-round does not change `ProjectSnapshot`. Evidence should support independent partial
-updates alongside future operations conceptually similar to applying Markdown state
-or Activity state.
+`ProjectSnapshot` remains limited to Plan, Activity, and Tasks in this round. Build/Test
+verification is runtime state rather than snapshot collection, so snapshot, Markdown,
+and Git refreshes preserve it.
 
-Project refresh status and Evidence execution status are distinct. Existing refresh
-status describes Markdown, Git, and manual snapshot updates. Evidence Running,
-Passed, Failed, and Stale describe verification state, so this round does not add an
-Evidence refresh source.
+The App retains independent Build and Test lifecycle states. This round does not render
+those states in the TUI. Manual execution state remains separate from the existing
+Markdown/Git `RefreshStatus`; it does not add an Evidence refresh source.
 
-Evidence execution remains agent-independent. An agent may request a verification
-run in the future, but DevScope's observed process result remains the source of
-truth.
+After a completed Build or Test run, application integration captures the corresponding
+freshness baseline independently. Starting a replacement run or receiving an execution
+error clears only that kind's prior baseline. This round does not yet poll baselines or
+mark results stale after project changes.
+
+Evidence execution remains agent-independent. An agent may request a verification run
+in the future, but DevScope's observed process result remains the source of truth.
 
 ## Configuration boundary
 
@@ -295,5 +302,4 @@ safe commands can be evaluated without arbitrary command configuration.
 
 ## Open questions
 
-- Choose manual key bindings.
 - Identify which concepts are genuinely shared between Cargo and Artifact Evidence.

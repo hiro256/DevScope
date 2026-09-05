@@ -5,11 +5,15 @@ use std::{
 };
 
 use crate::terminal::AppTerminal;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     change::{
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
         MarkdownChange, MarkdownChangeDetector,
+    },
+    progress::{
+        BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshnessBaseline,
+        BuildTestKind, BuildTestState, cargo_build_test_command, is_cargo_project,
     },
     project::{collect_activity_state, collect_markdown_state, collect_project_snapshot},
 };
@@ -201,6 +205,133 @@ fn apply_refresh_status(
     app.set_refresh_pending(requests.markdown || requests.git) || changed
 }
 
+#[derive(Default)]
+struct BuildTestRuntime {
+    active: Option<BuildTestExecution>,
+    build_baseline: Option<BuildTestFreshnessBaseline>,
+    test_baseline: Option<BuildTestFreshnessBaseline>,
+}
+
+impl BuildTestRuntime {
+    fn clear_baseline(&mut self, kind: BuildTestKind) {
+        match kind {
+            BuildTestKind::Build => self.build_baseline = None,
+            BuildTestKind::Test => self.test_baseline = None,
+        }
+    }
+
+    fn capture_baseline(&mut self, root: Option<&Path>, kind: BuildTestKind) {
+        let baseline = root.and_then(|root| BuildTestFreshnessBaseline::capture(root).ok());
+        match kind {
+            BuildTestKind::Build => self.build_baseline = baseline,
+            BuildTestKind::Test => self.test_baseline = baseline,
+        }
+    }
+}
+
+fn initialize_build_test_availability(project_root: Option<&Path>, app: &mut App) {
+    let state = if project_root.is_some_and(is_cargo_project) {
+        BuildTestState::NotRun
+    } else {
+        BuildTestState::Unavailable
+    };
+    if app.build_test_state(BuildTestKind::Build) == &state
+        && app.build_test_state(BuildTestKind::Test) == &state
+    {
+        return;
+    }
+    app.apply_build_test_state(BuildTestKind::Build, state.clone());
+    app.apply_build_test_state(BuildTestKind::Test, state);
+}
+
+fn manual_build_test_kind(key: KeyEvent) -> Option<BuildTestKind> {
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('b') => Some(BuildTestKind::Build),
+        KeyCode::Char('t') => Some(BuildTestKind::Test),
+        _ => None,
+    }
+}
+
+fn start_manual_build_test(
+    project_root: Option<&Path>,
+    app: &mut App,
+    runtime: &mut BuildTestRuntime,
+    kind: BuildTestKind,
+) -> bool {
+    if runtime.active.is_some() {
+        return false;
+    }
+
+    runtime.clear_baseline(kind);
+    let Some(root) = project_root else {
+        app.apply_build_test_state(kind, BuildTestState::Unavailable);
+        return true;
+    };
+    let Some(spec) = cargo_build_test_command(root, kind) else {
+        app.apply_build_test_state(kind, BuildTestState::Unavailable);
+        return true;
+    };
+
+    match BuildTestExecution::start(spec) {
+        Ok(execution) => {
+            app.apply_build_test_state(kind, BuildTestState::Running(execution.run().clone()));
+            runtime.active = Some(execution);
+        }
+        Err(error) => app.apply_build_test_state(kind, BuildTestState::ExecutionError(error)),
+    }
+    true
+}
+
+fn apply_build_test_completion(
+    project_root: Option<&Path>,
+    app: &mut App,
+    runtime: &mut BuildTestRuntime,
+    completion: BuildTestExecutionCompletion,
+) {
+    match completion {
+        BuildTestExecutionCompletion::Completed(result) => {
+            let kind = result.kind();
+            app.apply_build_test_state(kind, BuildTestState::Completed(result));
+            runtime.capture_baseline(project_root, kind);
+        }
+        BuildTestExecutionCompletion::ExecutionError(error) => {
+            let kind = error.kind();
+            runtime.clear_baseline(kind);
+            app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+        }
+    }
+}
+
+fn poll_build_test_execution(
+    project_root: Option<&Path>,
+    app: &mut App,
+    runtime: &mut BuildTestRuntime,
+) -> bool {
+    let Some(execution) = runtime.active.as_mut() else {
+        return false;
+    };
+    let completion = execution.try_complete();
+
+    match completion {
+        Ok(None) => false,
+        Ok(Some(completion)) => {
+            runtime.active = None;
+            apply_build_test_completion(project_root, app, runtime, completion);
+            true
+        }
+        Err(error) => {
+            let kind = error.kind();
+            runtime.active = None;
+            runtime.clear_baseline(kind);
+            app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            true
+        }
+    }
+}
 /// Runs the synchronous TUI event loop without polling in a busy loop.
 pub fn run(
     terminal: &mut AppTerminal,
@@ -214,6 +345,8 @@ pub fn run(
     let mut worktree_changes = new_git_worktree_detector(project_root, app);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
     let mut requests = RefreshRequest::default();
+    let mut build_test_runtime = BuildTestRuntime::default();
+    initialize_build_test_availability(project_root, app);
 
     while app.is_running() {
         if needs_render {
@@ -241,6 +374,10 @@ pub fn run(
                     }
                     needs_render = true;
                 }
+                Event::Key(key) if let Some(kind) = manual_build_test_kind(key) => {
+                    needs_render |=
+                        start_manual_build_test(project_root, app, &mut build_test_runtime, kind);
+                }
                 Event::Key(key) => {
                     app.handle_key(key);
                     needs_render = true;
@@ -249,6 +386,8 @@ pub fn run(
                 _ => {}
             }
         }
+
+        needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
 
         if scheduler.is_due(Instant::now()) {
             collect_change_requests(
@@ -276,7 +415,11 @@ mod tests {
     use crate::app::{PlanState, TaskState};
     use devscope::{
         change::{GitWorktreeChange, MarkdownChange},
-        progress::PlanSummary,
+        progress::{
+            BuildTestCommandSpec, BuildTestExecution, BuildTestExecutionCompletion,
+            BuildTestExecutionError, BuildTestFreshness, BuildTestFreshnessBaseline, BuildTestKind,
+            BuildTestOutcome, BuildTestResult, BuildTestState, PlanSummary,
+        },
         project::{ProjectSnapshot, collect_project_snapshot},
     };
     use std::{
@@ -287,6 +430,194 @@ mod tests {
     };
 
     static ID: AtomicUsize = AtomicUsize::new(0);
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    fn completed_result(kind: BuildTestKind, outcome: BuildTestOutcome) -> BuildTestResult {
+        BuildTestResult::new(
+            kind,
+            outcome,
+            BuildTestFreshness::Fresh,
+            "cargo",
+            if kind == BuildTestKind::Build {
+                "cargo check"
+            } else {
+                "cargo test"
+            },
+            Some(if outcome == BuildTestOutcome::Passed {
+                0
+            } else {
+                1
+            }),
+            Duration::from_millis(1),
+            "completed",
+            None,
+        )
+    }
+
+    #[test]
+    fn maps_manual_build_and_test_keys_only_on_press() {
+        assert_eq!(
+            manual_build_test_kind(key(KeyCode::Char('b'))),
+            Some(BuildTestKind::Build)
+        );
+        assert_eq!(
+            manual_build_test_kind(key(KeyCode::Char('t'))),
+            Some(BuildTestKind::Test)
+        );
+        for code in [KeyCode::Char('r'), KeyCode::Char('q'), KeyCode::Char('j')] {
+            assert_eq!(manual_build_test_kind(key(code)), None);
+        }
+        let mut repeat = key(KeyCode::Char('b'));
+        repeat.kind = KeyEventKind::Repeat;
+        assert_eq!(manual_build_test_kind(repeat), None);
+    }
+
+    #[test]
+    fn initializes_build_test_availability_from_the_project_root() {
+        let cargo_root = temp_root();
+        fs::write(cargo_root.join("Cargo.toml"), "[package]").unwrap();
+        let mut cargo_app = App::new(ProjectSnapshot::unavailable());
+        initialize_build_test_availability(Some(&cargo_root), &mut cargo_app);
+        assert_eq!(
+            cargo_app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::NotRun
+        );
+        assert_eq!(
+            cargo_app.build_test_state(BuildTestKind::Test),
+            &BuildTestState::NotRun
+        );
+
+        let non_cargo_root = temp_root();
+        let mut non_cargo_app = App::new(ProjectSnapshot::unavailable());
+        initialize_build_test_availability(Some(&non_cargo_root), &mut non_cargo_app);
+        assert_eq!(
+            non_cargo_app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::Unavailable
+        );
+        assert_eq!(
+            non_cargo_app.build_test_state(BuildTestKind::Test),
+            &BuildTestState::Unavailable
+        );
+        let _ = fs::remove_dir_all(cargo_root);
+        let _ = fs::remove_dir_all(non_cargo_root);
+    }
+
+    #[test]
+    fn unavailable_manual_start_keeps_no_active_execution() {
+        let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+
+        assert!(start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Build,
+        ));
+        assert!(runtime.active.is_none());
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::Unavailable
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_a_second_manual_start_while_an_execution_is_active() {
+        let root = temp_root();
+        let active = BuildTestExecution::start(BuildTestCommandSpec::new(
+            BuildTestKind::Build,
+            "fixture",
+            "missing fixture",
+            root.join("missing-program"),
+            Vec::new(),
+            &root,
+        ))
+        .unwrap();
+        let mut runtime = BuildTestRuntime {
+            active: Some(active),
+            ..Default::default()
+        };
+        let mut app = App::new(ProjectSnapshot::unavailable());
+
+        assert!(!start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Test,
+        ));
+        assert!(runtime.active.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn applies_completions_and_keeps_kind_baselines_independent() {
+        let root = temp_root();
+        fs::write(root.join("input.txt"), "input").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+        let build = completed_result(BuildTestKind::Build, BuildTestOutcome::Passed);
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(build.clone()),
+        );
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::Completed(build)
+        );
+        assert!(runtime.build_baseline.is_some());
+        assert!(runtime.test_baseline.is_none());
+
+        let test = completed_result(BuildTestKind::Test, BuildTestOutcome::Failed);
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(test.clone()),
+        );
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Test),
+            &BuildTestState::Completed(test)
+        );
+        assert!(runtime.build_baseline.is_some());
+        assert!(runtime.test_baseline.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn execution_errors_clear_only_the_matching_baseline() {
+        let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime {
+            build_baseline: Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+            test_baseline: Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+            ..Default::default()
+        };
+
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+                "worker disconnected",
+            )),
+        );
+        assert!(matches!(
+            app.build_test_state(BuildTestKind::Build),
+            BuildTestState::ExecutionError(_)
+        ));
+        assert!(runtime.build_baseline.is_none());
+        assert!(runtime.test_baseline.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn is_not_due_before_the_interval() {
@@ -355,7 +686,7 @@ mod tests {
         let mut worktree_detector = None;
         let mut requests = RefreshRequest::default();
 
-        fs::write(&markdown, "- [x] First").unwrap();
+        fs::write(&markdown, "- [x] First`n- [ ] Second").unwrap();
         collect_change_requests(
             Some(&root),
             &mut markdown_detector,

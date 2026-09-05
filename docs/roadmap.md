@@ -79,7 +79,7 @@
 
 - [x] Cargo Build/Test evidence source
 - [x] Non-blocking evidence execution
-- [ ] Manual evidence execution
+- [x] Manual evidence execution
 
 ### TUI
 

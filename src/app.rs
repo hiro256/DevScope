@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use devscope::project::ProjectSnapshot;
+use devscope::{
+    progress::{BuildTestKind, BuildTestState},
+    project::ProjectSnapshot,
+};
 
 pub use devscope::project::{ActivityState, PlanState, TaskState};
 
@@ -48,6 +51,8 @@ pub struct App {
     plan: PlanState,
     activity: ActivityState,
     tasks: TaskState,
+    build_test_build: BuildTestState,
+    build_test_test: BuildTestState,
     selected_task: Option<usize>,
     refresh_status: RefreshStatus,
 }
@@ -59,6 +64,8 @@ impl App {
             plan: PlanState::Unavailable,
             activity: ActivityState::Unavailable,
             tasks: TaskState::Unavailable,
+            build_test_build: BuildTestState::Unavailable,
+            build_test_test: BuildTestState::Unavailable,
             selected_task: None,
             refresh_status: RefreshStatus::initial(),
         };
@@ -120,6 +127,20 @@ impl App {
         &self.tasks
     }
 
+    pub fn build_test_state(&self, kind: BuildTestKind) -> &BuildTestState {
+        match kind {
+            BuildTestKind::Build => &self.build_test_build,
+            BuildTestKind::Test => &self.build_test_test,
+        }
+    }
+
+    pub fn apply_build_test_state(&mut self, kind: BuildTestKind, state: BuildTestState) {
+        match kind {
+            BuildTestKind::Build => self.build_test_build = state,
+            BuildTestKind::Test => self.build_test_test = state,
+        }
+    }
+
     pub const fn selected_task(&self) -> Option<usize> {
         self.selected_task
     }
@@ -157,7 +178,11 @@ mod tests {
     use super::*;
     use crossterm::event::KeyModifiers;
     use devscope::{
-        progress::{PlanSummary, TaskSummary, TaskSummaryItem},
+        progress::{
+            BuildTestExecutionError, BuildTestFreshness, BuildTestKind, BuildTestOutcome,
+            BuildTestResult, BuildTestRun, BuildTestState, PlanSummary, TaskSummary,
+            TaskSummaryItem,
+        },
         project::{ProjectSnapshot, collect_project_snapshot},
     };
     use std::{
@@ -190,6 +215,87 @@ mod tests {
         for _ in 0..index {
             app.handle_key(key(KeyCode::Down));
         }
+    }
+
+    fn completed_build_result() -> BuildTestResult {
+        BuildTestResult::new(
+            BuildTestKind::Build,
+            BuildTestOutcome::Passed,
+            BuildTestFreshness::Fresh,
+            "cargo",
+            "cargo check",
+            Some(0),
+            Duration::from_millis(1),
+            "cargo check passed",
+            None,
+        )
+    }
+
+    #[test]
+    fn build_test_states_start_unavailable_and_remain_independent() {
+        let mut app = app(1);
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::Unavailable
+        );
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Test),
+            &BuildTestState::Unavailable
+        );
+
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+            )),
+        );
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+
+        assert!(matches!(
+            app.build_test_state(BuildTestKind::Build),
+            BuildTestState::Running(_)
+        ));
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Test),
+            &BuildTestState::NotRun
+        );
+    }
+
+    #[test]
+    fn snapshot_and_partial_refreshes_preserve_build_test_states() {
+        let mut app = app(2);
+        let completed = completed_build_result();
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Completed(completed.clone()),
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::Test,
+                "cargo",
+                "cargo test",
+                "spawn failed",
+            )),
+        );
+
+        app.apply_snapshot(snapshot(1));
+        app.apply_markdown_state(
+            PlanState::Unavailable,
+            TaskState::Available(TaskSummary::new(0, Vec::new())),
+        );
+        app.apply_activity_state(ActivityState::NotRepository);
+
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::Completed(completed)
+        );
+        assert!(matches!(
+            app.build_test_state(BuildTestKind::Test),
+            BuildTestState::ExecutionError(_)
+        ));
     }
 
     #[test]
