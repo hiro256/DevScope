@@ -231,7 +231,7 @@ This remains a future possibility, not a v0.3 implementation commitment.
 
 ## v0.3 Evidence summary experiment
 
-The next implementation target is `Evidence summary display`. It should establish:
+`Evidence summary display` is now implemented as the v0.3 contextual Details experiment. It establishes:
 
 - One contextual Details region.
 - Evidence as the first Details content provider.
@@ -445,7 +445,7 @@ requiring agent-specific implementation.
 
 ## Recommended next implementation
 
-The next implementation task is `Evidence summary display`. Before it begins, settle
+After dogfooding the implementation, revisit
 only these small implementation questions:
 
 1. The exact stale Details representation.

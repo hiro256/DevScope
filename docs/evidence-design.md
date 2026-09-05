@@ -299,6 +299,16 @@ such as `Build Passed · Test Unavailable`.
 Detailed command, result, duration, exit-code, summary, and diagnostic presentation
 belongs to the later Evidence summary display task. The state row does not present
 those details.
+## TUI Evidence presentation
+
+Project Progress remains a concise Build/Test lifecycle summary. A contextual Details
+region presents command label, outcome, duration, optional exit code, summary, and
+bounded diagnostic or execution-error message. The most recently accepted `b` or `t`
+request selects Build or Test Details; completion preserves that selection.
+
+Stale Details preserve the completed outcome (`Passed · Stale` or `Failed · Stale`).
+Diagnostics use only the remaining visible Details height and are clipped without
+scrolling. Source labels are not displayed while Cargo is the only source.
 ## Configuration boundary
 
 A general configuration system is scheduled after Evidence work and must not be

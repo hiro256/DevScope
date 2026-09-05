@@ -53,6 +53,7 @@ pub struct App {
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_test: BuildTestState,
+    evidence_detail_kind: Option<BuildTestKind>,
     selected_task: Option<usize>,
     refresh_status: RefreshStatus,
 }
@@ -66,6 +67,7 @@ impl App {
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
+            evidence_detail_kind: None,
             selected_task: None,
             refresh_status: RefreshStatus::initial(),
         };
@@ -139,6 +141,14 @@ impl App {
             BuildTestKind::Build => self.build_test_build = state,
             BuildTestKind::Test => self.build_test_test = state,
         }
+    }
+
+    pub const fn evidence_detail_kind(&self) -> Option<BuildTestKind> {
+        self.evidence_detail_kind
+    }
+
+    pub fn select_evidence_detail(&mut self, kind: BuildTestKind) {
+        self.evidence_detail_kind = Some(kind);
     }
 
     pub const fn selected_task(&self) -> Option<usize> {
@@ -298,6 +308,17 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn evidence_detail_selection_starts_empty_and_survives_state_and_snapshot_updates() {
+        let mut app = app(2);
+        assert_eq!(app.evidence_detail_kind(), None);
+        app.select_evidence_detail(BuildTestKind::Build);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        app.apply_snapshot(snapshot(1));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        app.select_evidence_detail(BuildTestKind::Test);
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+    }
     #[test]
     fn navigation_clamps() {
         let mut app = app(3);

@@ -266,6 +266,7 @@ fn start_manual_build_test(
         return false;
     }
 
+    app.select_evidence_detail(kind);
     runtime.clear_baseline(kind);
     let Some(root) = project_root else {
         app.apply_build_test_state(kind, BuildTestState::Unavailable);
@@ -553,6 +554,38 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn accepted_manual_starts_select_the_matching_evidence_detail() {
+        let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+        assert!(start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Build
+        ));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        runtime.active = Some(
+            BuildTestExecution::start(BuildTestCommandSpec::new(
+                BuildTestKind::Build,
+                "fixture",
+                "missing",
+                root.join("missing"),
+                Vec::new(),
+                &root,
+            ))
+            .unwrap(),
+        );
+        assert!(!start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Test
+        ));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        let _ = fs::remove_dir_all(root);
+    }
     #[test]
     fn applies_completions_and_keeps_kind_baselines_independent() {
         let root = temp_root();

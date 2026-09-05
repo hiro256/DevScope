@@ -17,8 +17,7 @@ The main branch is currently developing v0.3.0 Build/Test Evidence.
 
 Current v0.3.0 development on `main` includes Cargo project detection, manual
 `cargo check` and `cargo test` execution, non-blocking process observation, and
-Build/Test lifecycle-state display. Evidence summary and diagnostic presentation are
-not implemented yet.
+Build/Test lifecycle-state display, and an Evidence Details pane. Evidence history and diagnostic scrolling are not implemented yet.
 
 ## v0.2.0 features
 

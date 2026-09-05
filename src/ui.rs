@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use crate::app::{ActivityState, App, PlanState, RefreshSource, TaskState};
-use devscope::progress::{BuildTestKind, BuildTestState, BuildTestStatus, GitFileStatus};
+use devscope::progress::{
+    BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
+    BuildTestStatus, GitFileStatus,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -11,7 +14,7 @@ use ratatui::{
 };
 
 const COMPACT_WIDTH: u16 = 20;
-const COMPACT_HEIGHT: u16 = 12;
+const COMPACT_HEIGHT: u16 = 18;
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -29,61 +32,75 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let layout = if area.height >= 30 {
         LayoutVariant::Large
-    } else if area.height >= 23 {
+    } else if area.height >= 25 {
         LayoutVariant::Medium
     } else {
         LayoutVariant::Small
     };
-    let (title_area, progress_area, task_area, changed_files_area, commits_area, footer_area) =
-        match layout {
-            LayoutVariant::Large => {
-                let panels = Layout::vertical([
-                    Constraint::Length(2),
-                    Constraint::Length(6),
-                    Constraint::Length(9),
-                    Constraint::Length(6),
-                    Constraint::Min(3),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-                (
-                    panels[0],
-                    panels[1],
-                    panels[2],
-                    Some(panels[3]),
-                    Some(panels[4]),
-                    panels[5],
-                )
-            }
-            LayoutVariant::Medium => {
-                let panels = Layout::vertical([
-                    Constraint::Length(2),
-                    Constraint::Length(6),
-                    Constraint::Length(9),
-                    Constraint::Min(4),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-                (
-                    panels[0],
-                    panels[1],
-                    panels[2],
-                    Some(panels[3]),
-                    None,
-                    panels[4],
-                )
-            }
-            LayoutVariant::Small => {
-                let panels = Layout::vertical([
-                    Constraint::Length(2),
-                    Constraint::Length(6),
-                    Constraint::Min(3),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-                (panels[0], panels[1], panels[2], None, None, panels[3])
-            }
-        };
+    let (
+        title_area,
+        progress_area,
+        task_area,
+        details_area,
+        changed_files_area,
+        commits_area,
+        footer_area,
+    ) = match layout {
+        LayoutVariant::Large => {
+            let panels = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Min(2),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            (
+                panels[0],
+                panels[1],
+                panels[2],
+                panels[3],
+                Some(panels[4]),
+                Some(panels[5]),
+                panels[6],
+            )
+        }
+        LayoutVariant::Medium => {
+            let panels = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            (
+                panels[0],
+                panels[1],
+                panels[2],
+                panels[3],
+                Some(panels[4]),
+                None,
+                panels[5],
+            )
+        }
+        LayoutVariant::Small => {
+            let panels = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Length(6),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            (
+                panels[0], panels[1], panels[2], panels[3], None, None, panels[4],
+            )
+        }
+    };
 
     frame.render_widget(
         Paragraph::new(vec![
@@ -101,6 +118,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         ))
         .block(Block::default().borders(Borders::ALL).title("Task Summary")),
         task_area,
+    );
+    frame.render_widget(
+        Paragraph::new(evidence_details(app, inner_height(details_area))).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(evidence_detail_title(app)),
+        ),
+        details_area,
     );
 
     if let Some(changed_files_area) = changed_files_area {
@@ -216,6 +241,142 @@ fn build_test_status(state: &BuildTestState) -> &'static str {
     }
 }
 
+fn evidence_detail_title(app: &App) -> String {
+    match app.evidence_detail_kind() {
+        Some(BuildTestKind::Build) => "Details: Build".into(),
+        Some(BuildTestKind::Test) => "Details: Test".into(),
+        None => "Details: Evidence".into(),
+    }
+}
+
+fn evidence_details(app: &App, rows: usize) -> Vec<Line<'static>> {
+    if rows == 0 {
+        return Vec::new();
+    }
+
+    let Some(kind) = app.evidence_detail_kind() else {
+        let unavailable = matches!(
+            app.build_test_state(BuildTestKind::Build),
+            BuildTestState::Unavailable
+        ) && matches!(
+            app.build_test_state(BuildTestKind::Test),
+            BuildTestState::Unavailable
+        );
+        return if unavailable {
+            vec![Line::from("Build/Test Evidence is not available.")]
+        } else {
+            vec![
+                Line::from("Build and Test have not been run yet."),
+                Line::from("Press b to run Build or t to run Test."),
+            ]
+        };
+    };
+
+    evidence_detail_lines(kind, app.build_test_state(kind), rows)
+}
+
+fn evidence_detail_lines(
+    kind: BuildTestKind,
+    state: &BuildTestState,
+    rows: usize,
+) -> Vec<Line<'static>> {
+    let lines = match state {
+        BuildTestState::Unavailable => vec![Line::from("Unavailable")],
+        BuildTestState::NotRun => vec![
+            Line::from("Not run"),
+            Line::from(format!(
+                "Press {} to run {}.",
+                detail_key(kind),
+                detail_kind(kind)
+            )),
+        ],
+        BuildTestState::Running(run) => vec![
+            Line::from(run.command_label().to_owned()),
+            Line::from("Running"),
+        ],
+        BuildTestState::Completed(result) => completed_detail_lines(result),
+        BuildTestState::ExecutionError(error) => {
+            let mut lines = vec![
+                Line::from(error.command_label().to_owned()),
+                Line::from("Error"),
+            ];
+            lines.extend(
+                error
+                    .message()
+                    .lines()
+                    .map(|line| Line::from(line.to_owned())),
+            );
+            lines
+        }
+    };
+    lines.into_iter().take(rows).collect()
+}
+
+fn completed_detail_lines(result: &BuildTestResult) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(result.command_label().to_owned()),
+        Line::from(completed_status(result)),
+    ];
+    if !result.summary().is_empty() {
+        lines.push(Line::from(result.summary().to_owned()));
+    }
+    if let Some(diagnostic) = result.diagnostic() {
+        lines.extend(
+            diagnostic
+                .as_str()
+                .lines()
+                .map(|line| Line::from(line.to_owned())),
+        );
+    }
+    lines
+}
+
+fn completed_status(result: &BuildTestResult) -> String {
+    let outcome = match result.outcome() {
+        BuildTestOutcome::Passed => "Passed",
+        BuildTestOutcome::Failed => "Failed",
+    };
+    let freshness = match result.freshness() {
+        BuildTestFreshness::Fresh => "",
+        BuildTestFreshness::Stale => " · Stale",
+    };
+    let exit = result
+        .exit_code()
+        .map(|code| format!(" · exit {code}"))
+        .unwrap_or_default();
+    format!(
+        "{outcome}{freshness} · {}{exit}",
+        format_duration(result.duration())
+    )
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 60 {
+        return format!("{}m {}s", duration.as_secs() / 60, duration.as_secs() % 60);
+    }
+    if duration.as_secs() > 0 {
+        return format!(
+            "{}.{:01}s",
+            duration.as_secs(),
+            duration.subsec_millis() / 100
+        );
+    }
+    format!("{}ms", duration.subsec_millis())
+}
+
+fn detail_kind(kind: BuildTestKind) -> &'static str {
+    match kind {
+        BuildTestKind::Build => "Build",
+        BuildTestKind::Test => "Test",
+    }
+}
+
+fn detail_key(kind: BuildTestKind) -> char {
+    match kind {
+        BuildTestKind::Build => 'b',
+        BuildTestKind::Test => 't',
+    }
+}
 fn inner_height(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2))
 }
@@ -375,9 +536,10 @@ mod tests {
     use crate::app::{ActivityState, PlanState, TaskState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use devscope::progress::{
-        ActivitySummary, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
-        BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, GitActivity,
-        GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary, TaskSummaryItem,
+        ActivitySummary, BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness,
+        BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState,
+        GitActivity, GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary,
+        TaskSummaryItem,
     };
     use devscope::project::ProjectSnapshot;
     use ratatui::{Terminal, backend::TestBackend};
@@ -439,6 +601,91 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn renders_evidence_details_for_initial_running_and_completed_states() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        assert!(draw(&app, 80, 30).contains("Build and Test have not been run yet."));
+        app.select_evidence_detail(BuildTestKind::Build);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "hidden source",
+                "cargo check",
+            )),
+        );
+        let running = draw(&app, 80, 30);
+        assert!(running.contains("Details: Build"));
+        assert!(running.contains("cargo check"));
+        assert!(running.contains("Running"));
+        assert!(!running.contains("hidden source"));
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "hidden source",
+                "cargo check",
+                Some(0),
+                Duration::from_millis(850),
+                "cargo check passed",
+                None,
+            )),
+        );
+        let passed = draw(&app, 80, 30);
+        assert!(passed.contains("Passed · 850ms · exit 0"));
+        assert!(passed.contains("cargo check passed"));
+    }
+
+    #[test]
+    fn renders_failed_stale_and_error_evidence_details() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.select_evidence_detail(BuildTestKind::Test);
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+                "hidden source",
+                "cargo test",
+                Some(101),
+                Duration::from_millis(3400),
+                "cargo test failed",
+                Some(BuildTestDiagnostic::new(
+                    "first diagnostic\nlast diagnostic",
+                )),
+            )),
+        );
+        let failed = draw(&app, 80, 30);
+        assert!(failed.contains("Failed · 3.4s · exit 101"));
+        assert!(failed.contains("cargo test failed"));
+        assert!(failed.contains("first diagnostic"));
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            completed_state(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Stale,
+            ),
+        );
+        assert!(draw(&app, 80, 30).contains("Failed · Stale"));
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            execution_error_state(BuildTestKind::Test),
+        );
+        assert!(draw(&app, 80, 30).contains("a detailed execution error"));
+    }
+
+    #[test]
+    fn formats_evidence_durations() {
+        assert_eq!(format_duration(Duration::from_millis(850)), "850ms");
+        assert_eq!(format_duration(Duration::from_millis(1800)), "1.8s");
+        assert_eq!(format_duration(Duration::from_secs(72)), "1m 12s");
+    }
     #[test]
     fn renders_evidence_unavailable_when_both_states_are_unavailable() {
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
@@ -539,7 +786,7 @@ mod tests {
         );
         let output = draw(&app, 70, 30);
         assert!(output.contains("Task 0"));
-        assert!(output.contains("... and 2 more"));
+        assert!(output.contains("... and 5 more"));
     }
 
     #[test]
@@ -705,7 +952,7 @@ mod tests {
         for _ in 0..7 {
             app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         }
-        assert!(draw(&app, 40, 15).contains("> □ Task 7"));
+        assert!(draw(&app, 40, 18).contains("> □ Task 7"));
     }
     fn activity_with_files(files: Vec<GitChangedFile>) -> ActivityState {
         ActivityState::Available(ActivitySummary::from(&GitActivity {
@@ -789,12 +1036,12 @@ mod tests {
         assert!(medium.contains("Changed Files"));
         assert!(!medium.contains("Recent Commits"));
 
-        let small = draw(&app, 40, 15);
+        let small = draw(&app, 40, 18);
         assert!(small.contains("Task Summary"));
         assert!(!small.contains("Changed Files"));
         assert!(!small.contains("Recent Commits"));
 
-        assert!(draw(&app, 19, 12).contains("Terminal too small"));
+        assert!(draw(&app, 19, 18).contains("Terminal too small"));
     }
 
     #[test]
