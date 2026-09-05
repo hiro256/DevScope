@@ -397,10 +397,8 @@ Recent Commits
   and Footer. Details receives persistent space.
 - **Medium:** Project Progress, Task Summary, Details, Changed Files, and Footer.
   Recent Commits may be omitted as it is today.
-- **Small:** Project Progress, Task Summary, Details, and Footer is the first
-  candidate. This is an implementation experiment: dogfooding may show that Details
-  must be omitted to preserve usable Task Summary space.
-- **Compact:** Keep the current minimum message. Evidence Details is not shown.
+- **Small:** The v0.3 implementation displays Project Progress, Task Summary, Details, and Footer. Changed Files and Recent Commits are omitted. Dogfooding may still motivate future changes to the Small layout or its vertical balance.
+- **Compact:** Minimum message only. The v0.3 implementation uses height 18 as the compact boundary because the Small minimum composition is 2 title/refresh rows, 6 Project Progress rows, 3 Task Summary rows, 6 Details rows, and 1 footer row. Future layout tuning may revisit this threshold.
 
 ## Open questions
 
