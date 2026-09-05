@@ -296,9 +296,7 @@ When both Build and Test are unavailable, the row displays `Not available` for
 compatibility with the earlier reserved Evidence row. A mixed state remains explicit,
 such as `Build Passed · Test Unavailable`.
 
-Detailed command, result, duration, exit-code, summary, and diagnostic presentation
-belongs to the later Evidence summary display task. The state row does not present
-those details.
+The Project Progress Evidence row remains status-only. Detailed command, result, duration, exit-code, summary, diagnostic, and error-message information is presented in the contextual Details region. The Overview does not present those details.
 ## TUI Evidence presentation
 
 Project Progress remains a concise Build/Test lifecycle summary. A contextual Details

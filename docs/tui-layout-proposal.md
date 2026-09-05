@@ -316,10 +316,7 @@ Error
 failed to spawn cargo: ...
 ```
 
-Completed stale Evidence needs a deliberate representation that preserves its
-underlying outcome in Details, such as `Stale · previously Passed · 1.8s · exit 0`
-or `Passed · Stale · 1.8s · exit 0`. The exact representation remains an
-implementation-before question.
+v0.3 uses outcome-first stale formatting: `Passed · Stale` and `Failed · Stale`. Details preserves both the original observed outcome and the fact that it is no longer fresh.
 
 ### Diagnostic boundary
 
@@ -413,10 +410,8 @@ recently interacted Build/Test run.
 
 The following remain open:
 
-- Exact stale Details representation, including the underlying Passed or Failed
-  outcome.
-- Whether Small layout should retain Details permanently after dogfooding.
-- Details minimum height and the number of diagnostic lines to show.
+- The long-term Small-layout policy after dogfooding.
+- The Task Summary versus Details vertical balance, including adaptive Details sizing or diagnostic-heavy temporary growth.
 - The future distinction between focused panel and selected item.
 - Whether Current Work follows selected Task Summary or an explicit active task.
 - When long diagnostics, history, or multiple sources justify a dedicated Evidence
@@ -445,10 +440,6 @@ requiring agent-specific implementation.
 
 ## Recommended next implementation
 
-After dogfooding the implementation, revisit
-only these small implementation questions:
+The next roadmap implementation is `Evidence becomes stale after relevant project changes`. The v0.3 Details implementation uses 6 rows including borders (4 inner rows). Command, status/outcome, and summary take priority; diagnostic uses every remaining inner row and is clipped first. The Details region intentionally consumes vertical space that previously belonged to Task Summary, an intentional v0.3 tradeoff to evaluate during dogfooding.
 
-1. The exact stale Details representation.
-2. Whether Small layout keeps Details in the initial implementation.
-3. Details minimum height.
-4. How many diagnostic lines are shown before clipping.
+Future discussion can revisit the Task Summary versus Details balance, adaptive Details sizing, diagnostic-heavy temporary growth, and the long-term Small-layout policy.
