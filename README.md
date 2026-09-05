@@ -11,9 +11,14 @@ Build/Test = Evidence
 Agent      = Current activity
 ```
 
-DevScope v0.2.0, **Live Observation**, observes Markdown-based Plan progress and
-Git-based Activity while it remains open. Evidence and Agent remain future sources
-and are not yet implemented.
+The latest released milestone is v0.2.0, **Live Observation**, which observes
+Markdown-based Plan progress and Git-based Activity while DevScope remains open.
+The main branch is currently developing v0.3.0 Build/Test Evidence.
+
+Current v0.3.0 development on `main` includes Cargo project detection, manual
+`cargo check` and `cargo test` execution, non-blocking process observation, and
+Build/Test lifecycle-state display. Evidence summary and diagnostic presentation are
+not implemented yet.
 
 ## v0.2.0 features
 
@@ -67,6 +72,8 @@ operations.
 ```text
 Up / k      Previous task
 Down / j    Next task
+b           Run Build evidence (cargo check)
+t           Run Test evidence (cargo test)
 r           Manual full reload
 q / Esc     Quit
 ```
@@ -75,6 +82,7 @@ q / Esc     Quit
 
 - Git must be available on `PATH` for Git Activity collection.
 - A Rust toolchain is required to build from source.
+- Cargo must be available on `PATH` to execute Cargo Build/Test Evidence.
 - Windows is the primary verified platform for v0.2.0.
 
 ## Build and run
@@ -95,12 +103,13 @@ cargo build --release
 
 ## Not yet implemented
 
-- Build/Test Evidence sources
+- Full Evidence summary and diagnostic presentation
+- Automatic Evidence stale updates after relevant project changes
 - Agent adapters, including a Codex adapter
 - Configuration files
 - Task editing and Git write operations
 - Task weighting, progress history, and IDE or Web/API frontends
 
-DevScope v0.2.0 is a source-only release; binary packaging is not provided.
+DevScope v0.2.0 is a source-only release; binary packaging is not provided. v0.3.0 remains under development on `main`.
 
 See [docs/roadmap.md](docs/roadmap.md) for the planned work.

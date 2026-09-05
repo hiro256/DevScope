@@ -686,7 +686,7 @@ mod tests {
         let mut worktree_detector = None;
         let mut requests = RefreshRequest::default();
 
-        fs::write(&markdown, "- [x] First").unwrap();
+        fs::write(&markdown, "- [x] First\n- [ ] Second").unwrap();
         collect_change_requests(
             Some(&root),
             &mut markdown_detector,

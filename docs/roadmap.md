@@ -83,7 +83,7 @@
 
 ### TUI
 
-- [ ] Evidence state integration
+- [x] Evidence state integration
 - [ ] Evidence summary display
 
 ### Live behavior

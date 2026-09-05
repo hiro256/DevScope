@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::app::{ActivityState, App, PlanState, RefreshSource, TaskState};
-use devscope::progress::GitFileStatus;
+use devscope::progress::{BuildTestKind, BuildTestState, BuildTestStatus, GitFileStatus};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -129,7 +129,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         );
     }
 
-    frame.render_widget(Paragraph::new("r: Reload  q / Esc: Quit"), footer_area);
+    frame.render_widget(
+        Paragraph::new("b:Build  t:Test  r:Reload  q/Esc:Quit"),
+        footer_area,
+    );
 }
 fn render_compact(frame: &mut Frame, area: Rect) {
     frame.render_widget(
@@ -177,7 +180,7 @@ fn project_progress(app: &App) -> Paragraph<'static> {
     Paragraph::new(vec![
         Line::from(format!("Plan       {}", plan(app.plan()))),
         Line::from(format!("Activity   {}", activity(app.activity()))),
-        Line::from("Evidence   Not available"),
+        Line::from(format!("Evidence   {}", evidence(app))),
         Line::from("Agent      Not available"),
     ])
     .block(
@@ -185,6 +188,32 @@ fn project_progress(app: &App) -> Paragraph<'static> {
             .borders(Borders::ALL)
             .title("Project Progress"),
     )
+}
+
+fn evidence(app: &App) -> String {
+    let build = app.build_test_state(BuildTestKind::Build);
+    let test = app.build_test_state(BuildTestKind::Test);
+    if matches!(build, BuildTestState::Unavailable) && matches!(test, BuildTestState::Unavailable) {
+        return "Not available".into();
+    }
+
+    format!(
+        "Build {} · Test {}",
+        build_test_status(build),
+        build_test_status(test)
+    )
+}
+
+fn build_test_status(state: &BuildTestState) -> &'static str {
+    match state.status() {
+        BuildTestStatus::Unavailable => "Unavailable",
+        BuildTestStatus::NotRun => "Not run",
+        BuildTestStatus::Running => "Running",
+        BuildTestStatus::Passed => "Passed",
+        BuildTestStatus::Failed => "Failed",
+        BuildTestStatus::Stale => "Stale",
+        BuildTestStatus::ExecutionError => "Error",
+    }
 }
 
 fn inner_height(area: Rect) -> usize {
@@ -346,8 +375,9 @@ mod tests {
     use crate::app::{ActivityState, PlanState, TaskState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use devscope::progress::{
-        ActivitySummary, GitActivity, GitChangedFile, GitCommit, GitFileStatus, PlanSummary,
-        TaskSummary, TaskSummaryItem,
+        ActivitySummary, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
+        BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, GitActivity,
+        GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary, TaskSummaryItem,
     };
     use devscope::project::ProjectSnapshot;
     use ratatui::{Terminal, backend::TestBackend};
@@ -380,6 +410,125 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| render(frame, app)).unwrap();
         text(&terminal)
+    }
+
+    fn completed_state(
+        kind: BuildTestKind,
+        outcome: BuildTestOutcome,
+        freshness: BuildTestFreshness,
+    ) -> BuildTestState {
+        BuildTestState::Completed(BuildTestResult::new(
+            kind,
+            outcome,
+            freshness,
+            "cargo",
+            "cargo command",
+            Some(1),
+            Duration::from_secs(42),
+            "detailed result summary",
+            None,
+        ))
+    }
+
+    fn execution_error_state(kind: BuildTestKind) -> BuildTestState {
+        BuildTestState::ExecutionError(BuildTestExecutionError::new(
+            kind,
+            "cargo",
+            "cargo command",
+            "a detailed execution error",
+        ))
+    }
+
+    #[test]
+    fn renders_evidence_unavailable_when_both_states_are_unavailable() {
+        let app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Evidence   Not available"));
+        assert!(!output.contains("Build Unavailable"));
+    }
+
+    #[test]
+    fn renders_evidence_not_run_states() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        assert!(draw(&app, 80, 30).contains("Evidence   Build Not run · Test Not run"));
+    }
+
+    #[test]
+    fn renders_evidence_running_state() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+            )),
+        );
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        assert!(draw(&app, 80, 30).contains("Evidence   Build Running · Test Not run"));
+    }
+
+    #[test]
+    fn renders_evidence_passed_and_failed_states() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            completed_state(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        assert!(draw(&app, 80, 30).contains("Evidence   Build Passed · Test Failed"));
+    }
+
+    #[test]
+    fn renders_evidence_stale_and_mixed_states() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Stale,
+            ),
+        );
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
+        assert!(draw(&app, 80, 30).contains("Evidence   Build Stale · Test Unavailable"));
+    }
+
+    #[test]
+    fn renders_evidence_execution_errors_without_details() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            execution_error_state(BuildTestKind::Build),
+        );
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Evidence   Build Error · Test Not run"));
+        assert!(!output.contains("a detailed execution error"));
+        assert!(!output.contains("detailed result summary"));
+    }
+
+    #[test]
+    fn renders_manual_evidence_controls_in_the_footer() {
+        let app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("b:Build"));
+        assert!(output.contains("t:Test"));
+        assert!(output.contains("r:Reload"));
+        assert!(output.contains("q/Esc:Quit"));
     }
 
     #[test]

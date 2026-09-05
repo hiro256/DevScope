@@ -267,9 +267,9 @@ and a full log viewer are outside the MVP.
 verification is runtime state rather than snapshot collection, so snapshot, Markdown,
 and Git refreshes preserve it.
 
-The App retains independent Build and Test lifecycle states. This round does not render
-those states in the TUI. Manual execution state remains separate from the existing
-Markdown/Git `RefreshStatus`; it does not add an Evidence refresh source.
+The App retains independent Build and Test lifecycle states. Manual execution state
+remains separate from the existing Markdown/Git `RefreshStatus`; it does not add an
+Evidence refresh source.
 
 After a completed Build or Test run, application integration captures the corresponding
 freshness baseline independently. Starting a replacement run or receiving an execution
@@ -279,6 +279,26 @@ mark results stale after project changes.
 Evidence execution remains agent-independent. An agent may request a verification run
 in the future, but DevScope's observed process result remains the source of truth.
 
+## TUI state integration
+
+Project Progress keeps a single Evidence row. The row presents Build and Test
+lifecycle status only, using the display status derived by `BuildTestState::status()`.
+For example:
+
+```text
+Evidence   Build Not run · Test Not run
+Evidence   Build Running · Test Not run
+Evidence   Build Passed · Test Failed
+Evidence   Build Stale · Test Passed
+```
+
+When both Build and Test are unavailable, the row displays `Not available` for
+compatibility with the earlier reserved Evidence row. A mixed state remains explicit,
+such as `Build Passed · Test Unavailable`.
+
+Detailed command, result, duration, exit-code, summary, and diagnostic presentation
+belongs to the later Evidence summary display task. The state row does not present
+those details.
 ## Configuration boundary
 
 A general configuration system is scheduled after Evidence work and must not be
