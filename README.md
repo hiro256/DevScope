@@ -11,12 +11,17 @@ Build/Test = Evidence
 Agent      = Current activity
 ```
 
-The latest released milestone is v0.2.0, **Live Observation**, which observes
-Markdown-based Plan progress and Git-based Activity while DevScope remains open.
-The v0.3.0 Build/Test Evidence implementation is complete on `main`.
+The latest release is v0.3.0, **Build/Test Evidence**. It extends v0.2.0 Live
+Observation with DevScope-observed Cargo verification execution and outcome.
 
-The completed v0.3.0 work on `main` includes Cargo project detection, manual
-`cargo check` and `cargo test` execution, non-blocking process observation, automatic Evidence stale updates after relevant project changes, and Build/Test lifecycle-state display with an Evidence Details pane. Evidence history and diagnostic scrolling are not implemented yet.
+## v0.3.0 features
+
+- Cargo project detection
+- Manual `cargo check` Build and `cargo test` Test execution
+- Non-blocking process observation and Build/Test lifecycle states
+- Evidence Details for commands, outcomes, and bounded diagnostics
+- Automatic Fresh/Stale tracking, including relevant input changes while a run is active
+- Windows Build/Test Evidence verification
 
 ## v0.2.0 features
 
@@ -81,7 +86,7 @@ q / Esc     Quit
 - Git must be available on `PATH` for Git Activity collection.
 - A Rust toolchain is required to build from source.
 - Cargo must be available on `PATH` to execute Cargo Build/Test Evidence.
-- Windows is the primary verified platform for v0.2.0.
+- Windows is the primary verified platform for v0.3.0.
 
 ## Build and run
 
@@ -102,11 +107,12 @@ cargo build --release
 ## Not yet implemented
 
 - Scrollable, full-screen Evidence diagnostics and history
+- Minimal read-only CLI experiment
 - Agent adapters, including a Codex adapter
 - Configuration files
 - Task editing and Git write operations
 - Task weighting, progress history, and IDE or Web/API frontends
 
-DevScope v0.2.0 is a source-only release; binary packaging is not provided. The completed v0.3.0 work remains on `main`.
+DevScope v0.3.0 is a source-only release; binary packaging is not provided.
 
 See [docs/roadmap.md](docs/roadmap.md) for the planned work.
