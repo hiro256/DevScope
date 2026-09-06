@@ -14,8 +14,8 @@ use terminal::TerminalSession;
 fn main() -> ExitCode {
     match cli::parse_args(env::args_os().skip(1)) {
         Ok(EntryMode::Tui) => run_tui().map_or_else(report_runtime_error, |_| ExitCode::SUCCESS),
-        Ok(EntryMode::Context) => run_cli(cli::render_context),
-        Ok(EntryMode::TaskList) => run_cli(cli::render_task_list),
+        Ok(EntryMode::Context) => run_context(),
+        Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::Help) => {
             print!("{}", cli::usage());
             ExitCode::SUCCESS
@@ -31,11 +31,22 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_cli(render: fn(&std::path::Path, &ProjectSnapshot) -> String) -> ExitCode {
+fn run_context() -> ExitCode {
     match env::current_dir() {
         Ok(root) => {
             let snapshot = collect_project_snapshot(&root);
-            print!("{}", render(&root, &snapshot));
+            print!("{}", cli::render_context(&root, &snapshot));
+            ExitCode::SUCCESS
+        }
+        Err(error) => report_runtime_error(error),
+    }
+}
+
+fn run_task_list() -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => {
+            let tasks = cli::collect_task_list_state(&root);
+            print!("{}", cli::render_task_list(&root, &tasks));
             ExitCode::SUCCESS
         }
         Err(error) => report_runtime_error(error),

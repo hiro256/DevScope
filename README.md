@@ -106,7 +106,8 @@ cargo build --release
 
 ## Experimental read-only CLI (main)
 
-Current main development includes an experimental read-only CLI alongside the TUI:
+The experimental read-only CLI is implemented on `main` and dogfooding is in progress.
+For development checks, use Cargo:
 
 ```powershell
 cargo run
@@ -115,14 +116,23 @@ cargo run -- task list
 cargo run -- --help
 ```
 
-`context` and `task list` print compact plain text without entering the TUI. The CLI
-currently reports Cargo Build/Test source availability only; Build/Test run results are
-runtime state owned by a running TUI session and are not exposed by a separate CLI run.
+For AI dogfooding or repeated use, invoke the built executable directly so Cargo build
+output is not mixed with compact CLI output:
+
+```powershell
+.\target\debug\devscope.exe context
+.\target\debug\devscope.exe task list
+```
+
+If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
+are equivalent. `context` and `task list` print compact plain text without entering the
+TUI. The CLI currently reports Cargo Build/Test source availability only; Build/Test run
+results are runtime state owned by a running TUI session and are not exposed by a
+separate CLI run.
 
 ## Not yet implemented
 
 - Scrollable, full-screen Evidence diagnostics and history
-- Minimal read-only CLI experiment
 - Agent adapters, including a Codex adapter
 - Configuration files
 - Task editing and Git write operations

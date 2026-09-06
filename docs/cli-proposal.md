@@ -156,6 +156,21 @@ Evidence: unavailable
 
 This is a hypothesis to measure, not an assumed benefit.
 
+## Initial dogfood finding
+
+In an initial DevScope repository comparison, `context` output was about 428 characters
+and `task list` about 426 characters: roughly 82% smaller than reading the current
+`docs/roadmap.md` directly. Ten native `context` invocations averaged about 262 ms.
+These are exploratory observations for the narrow project-orientation use case, not a
+benchmark contract or proof of overall AI token reduction.
+
+The next dogfood round should cover 3–5 real AI work items and record whether context
+alone was sufficient, whether task list was needed, how many additional documents were
+read, how often Markdown was reread, CLI output size, and whether task list became too
+large. A future `--limit`, list filtering, or short unavailable reason may be useful,
+but no syntax or implementation is selected until repeated dogfood demonstrates the
+need.
+
 ## Initial experiment
 
 Keep a first implementation deliberately small and primarily read-only:

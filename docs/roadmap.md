@@ -98,6 +98,7 @@
 ## Post-MVP
 
 - [ ] Minimal read-only CLI experiment
+  (implementation available; dogfood in progress)
 - [ ] Current Work CLI experiment
 - [ ] DevScope Skill experiment
 - [ ] Agent integration reassessment

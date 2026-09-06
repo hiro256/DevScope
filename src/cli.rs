@@ -5,7 +5,7 @@ use std::{
 
 use devscope::{
     progress::{ActivitySummary, is_cargo_project},
-    project::{ActivityState, PlanState, ProjectSnapshot, TaskState},
+    project::{ActivityState, PlanState, ProjectSnapshot, TaskState, collect_markdown_state},
 };
 
 const CONTEXT_TASK_LIMIT: usize = 5;
@@ -87,8 +87,15 @@ pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
     output
 }
 
-pub fn render_task_list(root: &Path, snapshot: &ProjectSnapshot) -> String {
-    let TaskState::Available(tasks) = snapshot.tasks() else {
+/// Collects only the Markdown-derived task state required by `task list`.
+pub fn collect_task_list_state(root: &Path) -> TaskState {
+    collect_markdown_state(root)
+        .map(|(_, tasks)| tasks)
+        .unwrap_or(TaskState::Unavailable)
+}
+
+pub fn render_task_list(root: &Path, tasks: &TaskState) -> String {
+    let TaskState::Available(tasks) = tasks else {
         return "Tasks: unavailable\n".to_owned();
     };
 
@@ -310,7 +317,7 @@ mod tests {
             ActivityState::NotRepository,
             TaskState::Available(summary),
         );
-        let output = render_task_list(root, &snapshot);
+        let output = render_task_list(root, snapshot.tasks());
         assert!(output.starts_with("Tasks: 2 remaining / 3 total\n"));
         assert!(
             output.contains(&(Path::new("docs").join("a.md").display().to_string() + ":2  First"))
@@ -328,9 +335,8 @@ mod tests {
             "- [x] Completed task\n- [ ] Remaining task",
         )
         .unwrap();
-        let snapshot = devscope::project::collect_project_snapshot(project.path());
 
-        let output = render_task_list(project.path(), &snapshot);
+        let output = render_task_list(project.path(), &collect_task_list_state(project.path()));
         assert!(output.contains("Tasks: 1 remaining / 2 total"));
         assert!(output.contains("Remaining task"));
         assert!(!output.contains("Completed task"));
@@ -344,11 +350,11 @@ mod tests {
             TaskState::Available(TaskSummary::new(2, vec![])),
         );
         assert_eq!(
-            render_task_list(root, &empty),
+            render_task_list(root, empty.tasks()),
             "Tasks: 0 remaining / 2 total\n"
         );
         assert_eq!(
-            render_task_list(root, &ProjectSnapshot::unavailable()),
+            render_task_list(root, &TaskState::Unavailable),
             "Tasks: unavailable\n"
         );
     }
