@@ -5,6 +5,10 @@
 This is an exploratory proposal. The exact UI layout, persistence mechanism, CLI
 shape, and lifecycle are intentionally undecided.
 
+The initial Current Work CLI experiment has completed. Its findings inform the next
+Skill experiment, but do not make the file format, persistence policy, or CLI syntax
+a stable contract.
+
 Its purpose is to define the conceptual distinction between persistent project tasks
 and the smaller temporary steps used while performing one of those tasks.
 
@@ -127,8 +131,9 @@ working context explicitly through ordinary DevScope-visible state.
 
 ## Session continuity
 
-Current Work may help a new AI session recover what was being done. A future compact
-context view could conceptually report:
+The completed experiment showed that Current Work can help a new AI session recover
+what was being done. `devscope context` now provides a compact orientation summary
+when Current Work exists; `work list` remains available for the detailed state:
 
 ```text
 Plan: 31/43
@@ -205,15 +210,11 @@ This terminology is provisional.
 
 ## Initial experiment
 
-A later small experiment could validate one parent Plan task, one Current Work
-breakdown, several checkbox-style work steps, progress such as 2/4, explicit
-parent-child association, safe exclusion from normal Plan counting, recovery through
-a new AI session, and explicit parent completion.
-
-Key questions include whether Current Work improves active-development clarity and
-session continuity, avoids over-expanding roadmap Markdown, creates acceptable
-overhead, should be local-only or Git-tracked, belongs on the overview, benefits
-from CLI helpers, and remains clearly distinct from Plan and Evidence.
+The completed small experiment validated one parent Plan task, a flat Current Work
+breakdown, checkbox progress, explicit parent-child association, exclusion from normal
+Plan counting, fresh-session recovery, and explicit parent completion. Its findings are
+recorded below; the remaining questions concern persistence, richer writes, TUI
+presentation, stable identity, and Handoff or Notes.
 
 ## Non-goals
 
@@ -266,3 +267,58 @@ previously required both `context` and `work list`. The experiment adds a compac
 Current Work summary to `context` when local Current Work exists. Its roles remain
 separate: `context` provides progress, parent, and next item; `work list` provides
 full items and display-order numbers; `work done` performs the narrow mutation.
+
+## Experiment conclusion
+
+The tested workflow showed that Current Work can represent temporary implementation
+progress while remaining separate from canonical Plan tasks and observed Evidence. A
+fresh AI session recovered the parent Plan task, Current Work progress, and next
+incomplete item through `devscope context` and `devscope work list`, without an
+additional source-Markdown read. No need for Agent-private state was observed in this
+experiment.
+
+The first experiment stored `.devscope/work/current.md` as local-only state, and the
+ignored file did not appear in `git status --short`. This was useful for the tested
+workflow, but it is not a permanent policy: a future Git-tracked mode remains an open
+question.
+
+## Dogfood findings
+
+`devscope work done <number>` was a sufficient minimum write surface for the tested
+workflow and was more natural and safer for an AI than direct Markdown editing. The
+tested workflow did not require `work add`, `work start`, `work clear`, reopen or
+undo, or persistent item IDs. These are not decisions to exclude them permanently.
+
+The one-based numbers printed by `work list` are display-order positions, not stable
+identities. The safe workflow is `work list`, confirm the current number, then run
+`work done N`. Repeating `work done N` for an already completed item returns
+`already complete` with exit code 0; this idempotency was useful for AI retries.
+
+The compact `context` summary reduced orientation to one command when Current Work
+exists. It reports completed/total progress, parent, and next incomplete item. It does
+not replace `work list`: detailed items and current display-order numbers are still
+needed before a mutation. Projects without Current Work receive no additional context
+line. When only Current Work is malformed, `context` remains a best-effort orientation
+view and reports it as unavailable, while `work list` returns a Current-Work-specific
+error.
+
+The command roles remain deliberately small:
+
+```text
+context              -> parent / progress / next item
+work list            -> detailed Current Work / item numbers
+work done <number>   -> selected item mutation
+```
+
+Current Work checkbox changes do not change Plan task counts or automatically
+complete the parent Plan task. Completing a Current Work item is also not Evidence,
+and Current Work changes do not make Build/Test Evidence stale.
+
+## Remaining open questions
+
+- Should Current Work ever be Git-tracked?
+- Should `work add` become useful?
+- Should `work clear` or archive support exist?
+- Should the TUI expose Current Work?
+- Should stable item identity ever be introduced?
+- How should Current Work relate to future Handoff or Notes?

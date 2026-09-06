@@ -223,11 +223,11 @@ CLI while developing DevScope, then evaluate whether it is reliably used, reduce
 repeated reads, reduces context usage, remains convenient for humans, and stays
 independent of a specific AI agent.
 
-After read-only dogfooding, a separate Current Work experiment may test narrow
-operations conceptually such as `devscope work list`, `devscope work add`, and
-`devscope work done`; exact syntax remains undecided. Only after that evidence should
-a small DevScope Skill be dogfooded. Direct Agent integration is not required for the
-first AI workflow experiment and can be reassessed after the CLI/Skill workflow.
+After read-only dogfooding, the separate Current Work experiment tested `devscope
+work list`, `devscope work done <number>`, and a compact `context` summary. The tested
+workflow did not require `work add`; further write syntax and persistence policy remain
+undecided. The next experiment is a small DevScope Skill. Direct Agent integration was
+not required for the tested workflow and can be reassessed after the CLI/Skill workflow.
 
 `devscope task done`, task addition, and other writes are later experiments, not part
 of the first CLI experiment. They must preserve the narrow-write boundary: explicit
@@ -258,3 +258,13 @@ one-based display-order number is intentionally not a persistent identifier.
 `devscope context` now includes a compact Current Work orientation summary only when
 local Current Work exists. This remains an experimental composition, not a stable CLI
 contract; `work list` retains detailed items and display-order numbers.
+
+## Current Work experiment conclusion
+
+Current Work dogfooding made the CLI principle **read broadly, write narrowly**
+concrete. `context` provides compact orientation (parent, progress, and next item),
+`work list` provides detailed items and current display-order numbers, and
+`work done <number>` performs the selected narrow mutation. The summary reduces
+orientation commands when Current Work exists, but does not replace `work list`
+before a mutation. These commands and the Current Work file format remain
+experimental rather than a permanent CLI contract.

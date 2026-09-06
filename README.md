@@ -104,9 +104,10 @@ cargo build --release
 .\target\release\devscope.exe
 ```
 
-## Experimental read-only CLI (main)
+## Experimental CLI (main)
 
-The initial read-only CLI experiment completed successfully; the commands remain experimental while later workflow work continues.
+The initial read-only and Current Work CLI experiments completed successfully. The
+commands remain experimental while the later Skill and workflow work continues.
 For development checks, use Cargo:
 
 ```powershell

@@ -98,7 +98,7 @@
 ## Post-MVP
 
 - [x] Minimal read-only CLI experiment
-- [ ] Current Work CLI experiment
+- [x] Current Work CLI experiment
 - [ ] DevScope Skill experiment
 - [ ] Agent integration reassessment
 - [ ] Config file

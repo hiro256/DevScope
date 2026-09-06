@@ -118,17 +118,45 @@ This is illustrative, not a committed Skill specification.
 ### Work start
 
 1. Read `devscope context`.
-2. Inspect the relevant Plan task and existing Current Work.
-3. Inspect current Git Activity and Evidence.
-4. Resume existing work or create a small Work Breakdown.
+2. Use the Current Work summary for orientation when it is present.
+3. Run `devscope work list` only when detailed items or current mutation numbers are
+   needed.
+4. Read source Markdown only when Plan or specification detail is needed.
+5. Inspect current Git Activity and Evidence.
+6. Resume existing work or create a small Work Breakdown.
 
 ### During implementation
 
 1. Perform one small work step.
-2. Update Current Work at logical boundaries.
+2. At a logical boundary, use `devscope work done N` when it is needed after
+   confirming `N` with `work list`.
 3. Observe Activity and run appropriate development-time tests.
 4. Avoid continually rewriting high-level Plan Markdown for temporary detail.
 
+## Current Work dogfood refinement
+
+The completed Current Work CLI experiment supports a context-first cycle:
+
+```text
+devscope context
+    ↓
+Current Work summary for orientation
+    ↓
+work list only when detailed items or numbers are needed
+    ↓
+implementation
+    ↓
+observable verification
+    ↓
+work done N when needed at a work boundary
+```
+
+This does not make Current Work authoritative Plan data or Evidence. The tested
+workflow used the CLI directly, so no direct Agent adapter was required; whether an
+adapter adds value remains a later reassessment. The next Skill experiment can teach
+this behavior: begin with context, inspect Current Work, use `work list` only when
+needed, record completion at work boundaries, and keep Evidence distinct from
+Current Work.
 ### Verification
 
 1. Inspect the parent task's acceptance intent and relevant test scenarios.
