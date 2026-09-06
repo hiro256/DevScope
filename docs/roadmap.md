@@ -97,7 +97,10 @@
 
 ## Post-MVP
 
-- [ ] Agent integration experiment
+- [ ] Minimal read-only CLI experiment
+- [ ] Current Work CLI experiment
+- [ ] DevScope Skill experiment
+- [ ] Agent integration reassessment
 - [ ] Config file
 - [ ] Task weighting
 - [ ] Progress history

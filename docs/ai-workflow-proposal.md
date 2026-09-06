@@ -229,18 +229,17 @@ focused translation worker, verify synchronization, and commit source and transl
 together. Translation remains derived human-readable content, not authoritative Plan
 state.
 
-## First implementation sequence
+## First Human/AI workflow implementation sequence
 
-Do not implement the entire workflow at once. The recommended sequence is:
+Do not implement the entire workflow at once. This sequence describes the Human/AI
+workflow track; it is not the only implementation sequence for DevScope:
 
-1. Finish v0.3 Build/Test Evidence.
-2. Dogfood Evidence in DevScope development.
-3. Implement a minimal read-oriented CLI.
-4. Validate `devscope context` and related queries with an AI agent.
-5. Experiment with Current Work through a narrow CLI.
-6. Write and dogfood a small DevScope Skill.
-7. Only then experiment with Handoff or Note recording.
-8. Reassess Agent integration after the CLI/Skill workflow is proven.
+1. Implement a minimal read-oriented CLI.
+2. Validate `devscope context` and related queries with an AI agent.
+3. Experiment with Current Work through a narrow CLI.
+4. Write and dogfood a small DevScope Skill.
+5. Only then experiment with Handoff or Note recording.
+6. Reassess Agent integration after the CLI/Skill workflow is proven.
 
 The first AI-oriented CLI experiment should primarily be read-only. Good initial
 candidates are `devscope context`, `devscope task list`, and `devscope evidence
@@ -253,6 +252,11 @@ After that, a small Skill can read context at work start, identify the parent ta
 inspect Evidence before completion, check Current Work when available, record only
 necessary state, avoid treating claims as Evidence, and leave a Handoff only when
 useful. Dogfood it on DevScope before generalizing.
+
+This workflow track does not replace the separate Evidence track in
+[evidence-design.md](evidence-design.md). Cargo Evidence may continue to be dogfooded
+and Artifact Evidence may be experimented with before a stable generic Evidence Source
+contract is defined. The relative timing of those tracks remains open.
 
 ## Non-goals
 

@@ -13,9 +13,9 @@ Agent      = Current activity
 
 The latest released milestone is v0.2.0, **Live Observation**, which observes
 Markdown-based Plan progress and Git-based Activity while DevScope remains open.
-The main branch is currently developing v0.3.0 Build/Test Evidence.
+The v0.3.0 Build/Test Evidence implementation is complete on `main`.
 
-Current v0.3.0 development on `main` includes Cargo project detection, manual
+The completed v0.3.0 work on `main` includes Cargo project detection, manual
 `cargo check` and `cargo test` execution, non-blocking process observation, automatic Evidence stale updates after relevant project changes, and Build/Test lifecycle-state display with an Evidence Details pane. Evidence history and diagnostic scrolling are not implemented yet.
 
 ## v0.2.0 features
@@ -107,6 +107,6 @@ cargo build --release
 - Task editing and Git write operations
 - Task weighting, progress history, and IDE or Web/API frontends
 
-DevScope v0.2.0 is a source-only release; binary packaging is not provided. v0.3.0 remains under development on `main`.
+DevScope v0.2.0 is a source-only release; binary packaging is not provided. The completed v0.3.0 work remains on `main`.
 
 See [docs/roadmap.md](docs/roadmap.md) for the planned work.

@@ -2,8 +2,10 @@
 
 ## Status
 
-This is a proposal for a possible future CLI. It is not a committed roadmap item or
-an adopted design decision, and DevScope must continue to work without it.
+This is a proposal for a possible future CLI contract. The roadmap accepts only a
+minimal read-only CLI experiment; its exact commands and all later capabilities remain
+exploratory rather than adopted design decisions. DevScope must continue to work
+without the CLI.
 
 ## Motivation
 
@@ -150,20 +152,28 @@ This is a hypothesis to measure, not an assumed benefit.
 
 ## Initial experiment
 
-Keep a first implementation deliberately small:
+Keep a first implementation deliberately small and primarily read-only:
 
 ```text
-devscope status
-devscope lists
+devscope context
 devscope task list
-devscope task done
+devscope evidence status
 ```
 
-Dogfood the CLI while developing DevScope, then evaluate whether it is reliably
-used, reduces missed Markdown updates and repeated reads, reduces context usage,
-remains convenient for humans, and stays independent of a specific AI agent. Only
-then should task addition, Evidence commands, or broader workflow features be
-considered for the roadmap.
+`devscope status` and `devscope lists` remain possible supporting read commands, but
+are not required for the first experiment. Dogfood the CLI while developing DevScope,
+then evaluate whether it is reliably used, reduces repeated reads, reduces context
+usage, remains convenient for humans, and stays independent of a specific AI agent.
+
+After read-only dogfooding, a separate Current Work experiment may test narrow
+operations conceptually such as `devscope work list`, `devscope work add`, and
+`devscope work done`; exact syntax remains undecided. Only after that evidence should
+a small DevScope Skill be dogfooded. Direct Agent integration is not required for the
+first AI workflow experiment and can be reassessed after the CLI/Skill workflow.
+
+`devscope task done`, task addition, and other writes are later experiments, not part
+of the first CLI experiment. They must preserve the narrow-write boundary: explicit
+targets, minimal Markdown edits, and safe failure for stale identifiers.
 
 ## Non-goals
 
