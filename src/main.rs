@@ -9,7 +9,7 @@ use std::{env, io, process::ExitCode};
 use app::App;
 use cli::EntryMode;
 use devscope::{
-    current_work::load_current_work,
+    current_work::{load_current_work, mark_current_work_done},
     project::{ProjectSnapshot, collect_project_snapshot},
 };
 use terminal::TerminalSession;
@@ -20,6 +20,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::Context) => run_context(),
         Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::WorkList) => run_work_list(),
+        Ok(EntryMode::WorkDone(number)) => run_work_done(number),
         Ok(EntryMode::Help) => {
             print!("{}", cli::usage());
             ExitCode::SUCCESS
@@ -66,6 +67,18 @@ fn run_work_list() -> ExitCode {
             }
             Ok(None) => {
                 print!("{}", cli::render_current_work_not_set());
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+fn run_work_done(number: usize) -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match mark_current_work_done(&root, number) {
+            Ok(result) => {
+                print!("{}", cli::render_work_done(&result));
                 ExitCode::SUCCESS
             }
             Err(error) => report_runtime_error(error),

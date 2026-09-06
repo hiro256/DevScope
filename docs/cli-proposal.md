@@ -245,4 +245,10 @@ The CLI must not become:
 ## Current Work read experiment
 
 The Current Work experiment adds the read-only `devscope work list` command for local
-working state. Write syntax and persistence policy remain unspecified.
+working state. Further write syntax and persistence policy remain unspecified.
+
+## Narrow Current Work write experiment
+
+`devscope work done <number>` is the first concrete example of reading broadly and
+writing narrowly: it completes only the selected Current Work checkbox. Its
+one-based display-order number is intentionally not a persistent identifier.

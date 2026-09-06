@@ -114,6 +114,7 @@ cargo run
 cargo run -- context
 cargo run -- task list
 cargo run -- work list
+cargo run -- work done 3
 cargo run -- --help
 ```
 
@@ -124,6 +125,7 @@ output is not mixed with compact CLI output:
 .\target\debug\devscope.exe context
 .\target\debug\devscope.exe task list
 .\target\debug\devscope.exe work list
+.\target\debug\devscope.exe work done 3
 ```
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`

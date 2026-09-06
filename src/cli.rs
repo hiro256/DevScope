@@ -17,6 +17,7 @@ pub enum EntryMode {
     Context,
     TaskList,
     WorkList,
+    WorkDone(usize),
     Help,
     Version,
 }
@@ -48,6 +49,17 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [argument] if matches!(argument.as_os_str(), value if value == OsStr::new("-V") || value == OsStr::new("--version")) => {
             Ok(EntryMode::Version)
         }
+        [first, second, number] if first == OsStr::new("work") && second == OsStr::new("done") => {
+            number
+                .to_string_lossy()
+                .parse::<usize>()
+                .ok()
+                .filter(|number| *number > 0)
+                .map(EntryMode::WorkDone)
+                .ok_or(UsageError {
+                    message: "expected `devscope work done <number>`",
+                })
+        }
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
@@ -55,7 +67,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
             message: "expected `devscope task list`",
         }),
         [first, ..] if first == OsStr::new("work") => Err(UsageError {
-            message: "expected `devscope work list`",
+            message: "expected `devscope work list` or `devscope work done <number>`",
         }),
         _ => Err(UsageError {
             message: "unrecognized command or arguments",
@@ -64,7 +76,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
@@ -128,11 +140,21 @@ pub fn render_work_list(work: &CurrentWork) -> String {
         work.completed(),
         work.total()
     );
-    for item in work.items() {
+    for (index, item) in work.items().iter().enumerate() {
         let marker = if item.completed() { "x" } else { " " };
-        output.push_str(&format!("[{marker}] {}\n", item.text()));
+        output.push_str(&format!("{}. [{marker}] {}\n", index + 1, item.text()));
     }
     output
+}
+pub fn render_work_done(result: &devscope::current_work::CurrentWorkDone) -> String {
+    match result {
+        devscope::current_work::CurrentWorkDone::Completed { number, text } => {
+            format!("Completed work item {number}: {text}\n")
+        }
+        devscope::current_work::CurrentWorkDone::AlreadyComplete { number, text } => {
+            format!("Work item {number} is already complete: {text}\n")
+        }
+    }
 }
 fn render_plan(snapshot: &ProjectSnapshot) -> String {
     match snapshot.plan() {
@@ -420,8 +442,40 @@ mod tests {
         let work = load_current_work(project.path()).unwrap().unwrap();
         assert_eq!(
             render_work_list(&work),
-            "Parent: docs/roadmap.md :: Current Work CLI experiment\nWork: 1/2 complete\n[x] Storage\n[ ] Dogfood\n"
+            "Parent: docs/roadmap.md :: Current Work CLI experiment\nWork: 1/2 complete\n1. [x] Storage\n2. [ ] Dogfood\n"
         );
+    }
+    #[test]
+    fn parses_work_done_and_rejects_invalid_numbers() {
+        assert_eq!(
+            parse_args([
+                OsString::from("work"),
+                OsString::from("done"),
+                OsString::from("3")
+            ]),
+            Ok(EntryMode::WorkDone(3))
+        );
+        for args in [
+            vec![OsString::from("work"), OsString::from("done")],
+            vec![
+                OsString::from("work"),
+                OsString::from("done"),
+                OsString::from("abc"),
+            ],
+            vec![
+                OsString::from("work"),
+                OsString::from("done"),
+                OsString::from("0"),
+            ],
+            vec![
+                OsString::from("work"),
+                OsString::from("done"),
+                OsString::from("3"),
+                OsString::from("extra"),
+            ],
+        ] {
+            assert!(parse_args(args).is_err());
+        }
     }
     struct TempProject {
         path: PathBuf,

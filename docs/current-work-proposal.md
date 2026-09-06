@@ -250,3 +250,11 @@ Task: Current Work CLI experiment
 This does not yet define a stable Current Work file format or permanent persistence
 policy. Current Work completion does not complete its Plan task automatically, and a
 Current Work checkbox is not Evidence.
+
+## Round 2 narrow write experiment
+
+After fresh-session recovery demonstrated that read-only Current Work supports
+checkpoint recovery, direct Markdown mutation proved more cumbersome than reading the
+state. The next dogfood slice adds `devscope work done <number>` as a narrow write.
+The number is the current display-order position, not a persistent identity; users
+should run `work list` before selecting an item.
