@@ -301,6 +301,15 @@ Current Work separate from Evidence, and did not introduce provider-specific pac
 The detailed findings and remaining packaging questions are in
 [skill-proposal.md](skill-proposal.md).
 
+## Agent integration reassessment
+
+The completed reassessment found no concrete adapter use case strong enough to
+prototype after the CLI and Skill dogfood. Agent telemetry remains a possible optional,
+best-effort supplement rather than project truth, Activity, Current Work, or Evidence.
+The strongest future trigger is multi-agent ownership or unexpected-stop ambiguity that
+existing agent-neutral surfaces cannot answer. See
+[agent-integration-reassessment.md](agent-integration-reassessment.md).
+
 ## Non-goals
 
 The initial Human/AI workflow must not become:

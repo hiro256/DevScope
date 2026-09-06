@@ -100,7 +100,7 @@
 - [x] Minimal read-only CLI experiment
 - [x] Current Work CLI experiment
 - [x] DevScope Skill experiment
-- [ ] Agent integration reassessment
+- [x] Agent integration reassessment
 - [ ] Config file
 - [ ] Task weighting
 - [ ] Progress history

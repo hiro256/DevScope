@@ -10,11 +10,11 @@ are not committed roadmap work. An item must be promoted to
   experiment completed successfully. Further read-oriented commands, task writes,
   filters, JSON, and Evidence state commands remain exploratory candidates. See
   [cli-proposal.md](cli-proposal.md) and [ai-workflow-proposal.md](ai-workflow-proposal.md).
-- **Human/AI workflow experiments.** The Current Work CLI and provider-neutral Skill
-  experiments completed with a narrow `work done` write and compact context summary.
-  Evaluate a possible Handoff / Notes experiment next. Reassess whether an Agent
-  adapter is useful after the CLI/Skill workflow. See
-  [ai-workflow-proposal.md](ai-workflow-proposal.md).
+- **Human/AI workflow experiments.** The Current Work CLI, provider-neutral Skill,
+  and Agent integration reassessment completed. Handoff / Notes remains a separate
+  later candidate. An adapter is deferred until multi-agent ownership or lifecycle
+  ambiguity exposes a concrete unmet question. See
+  [agent-integration-reassessment.md](agent-integration-reassessment.md).
 - **Pre-generated translated Markdown.** Explore English source documents with
   derived Japanese Markdown. Evaluate missing and stale detection, exclusion from
   Plan discovery, and AI/provider-independent synchronization. See
