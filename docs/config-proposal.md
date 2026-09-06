@@ -202,3 +202,17 @@ or Config mutation CLI commands in the first slice.
 - `plan.include` semantics are deferred until a concrete discovery need exists.
 - Glob support is a deferred future question; the initial slice accepts only literal paths.
 - Does an initial config schema need a version only after a second setting family?
+
+## Initial dogfood findings
+
+The DevScope repository was inspected from zero-config state. Plan discovery reported
+six remaining tasks: five explicit Post-MVP roadmap tasks and the existing Current
+Work CLI dogfood item. No `translations/` directory or other derived Markdown copy
+was present, so no duplicated or non-authoritative task checkbox was observed.
+
+No project-specific Config rule was justified. The repository remains zero-config:
+adding an exclusion would encode speculative policy rather than resolve an observed
+mismatch. The check confirmed that `context`, `task list`, and Current Work work
+normally without Config. This is one initial observation, not a universal rule; a
+future real derived or non-authoritative Markdown source should be evaluated through
+the same before-and-after workflow.
