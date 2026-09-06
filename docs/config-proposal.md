@@ -2,9 +2,9 @@
 
 ## Status
 
-The initial implementation slice now provides an optional project Config loader and a
-small `[plan].exclude` schema. It is not a generic configuration framework, global
-configuration system, or completed roadmap item.
+The first supported slice provides an optional project Config loader and a small
+`[plan].exclude` schema. It is complete as a roadmap experiment, but not a generic
+configuration framework or global configuration system.
 
 ## Purpose
 
@@ -216,3 +216,16 @@ mismatch. The check confirmed that `context`, `task list`, and Current Work work
 normally without Config. This is one initial observation, not a universal rule; a
 future real derived or non-authoritative Markdown source should be evaluated through
 the same before-and-after workflow.
+
+## First-slice conclusion
+
+The first supported Config slice is complete: optional `.devscope/config.toml` and
+`[plan].exclude` are implemented, while missing Config preserves default behavior.
+Config creation, modification, and deletion trigger live Plan recollection; malformed
+Config is explicit; and Config remains a Build/Test freshness-relevant input.
+
+The zero-config-first dogfood succeeded. The DevScope repository itself currently has
+no concrete mismatch that justifies Config, so it remains zero-config. Future rules
+must grow only from a concrete project mismatch. `plan.include`, glob syntax, global
+or environment layers, a generic Config framework, Config CLI or mutation commands,
+schema versioning, and other setting families remain deferred.

@@ -85,6 +85,25 @@ ambiguous             -> report and seek direction
 Existing authority can come from the current user request, `AGENTS.md`, repository
 instructions, or an explicit workflow instruction.
 
+## Config maintenance
+
+```text
+Config = project-specific observation policy
+       != Plan, Current Work, Evidence, or AI memory/notes
+```
+
+Start with defaults and inspect actual DevScope behavior. Consider Config only for a
+concrete mismatch; otherwise leave the project zero-config. Do not add exclusions
+merely to make Plan output cleaner or shorter. A justified reason is a derived,
+generated, duplicated, intentionally non-authoritative, or semantically irrelevant
+Plan source.
+
+When authorized to change the project file, make the smallest explicit rule that
+resolves the mismatch. Re-run the relevant DevScope behavior, confirm the mismatch is
+resolved and unrelated observations remain correct, then review the Config diff.
+Remove or simplify a rule that becomes obsolete. A Config change may legitimately make
+completed Build/Test Evidence stale because Config is a project-relevant input.
+
 ## Stop
 
 Before stopping, inspect `devscope context`, relevant verification, Current Work when

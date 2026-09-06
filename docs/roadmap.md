@@ -101,7 +101,7 @@
 - [x] Current Work CLI experiment
 - [x] DevScope Skill experiment
 - [x] Agent integration reassessment
-- [ ] Config file
+- [x] Config file
 - [ ] Task weighting
 - [ ] Progress history
 - [ ] VS Code integration
