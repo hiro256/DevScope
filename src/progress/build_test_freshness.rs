@@ -124,6 +124,10 @@ fn scan_directory(
         if is_excluded(root, &path, kind) {
             continue;
         }
+        if is_transparent_container(root, &path, kind) {
+            scan_directory(root, &path, entries)?;
+            continue;
+        }
 
         let relative_path = path
             .strip_prefix(root)
@@ -151,6 +155,12 @@ fn entry_kind(metadata: &fs::Metadata) -> BuildTestInputEntryKind {
     }
 }
 
+fn is_transparent_container(root: &Path, path: &Path, kind: BuildTestInputEntryKind) -> bool {
+    kind == BuildTestInputEntryKind::Directory
+        && path
+            .strip_prefix(root)
+            .is_ok_and(|relative| relative == Path::new(".devscope"))
+}
 fn is_excluded(root: &Path, path: &Path, kind: BuildTestInputEntryKind) -> bool {
     let Some(name) = path.file_name() else {
         return false;
@@ -376,6 +386,26 @@ mod tests {
     }
 
     #[test]
+    fn ignores_initial_current_work_creation_but_detects_initial_devscope_config() {
+        let project = TempProject::new();
+        project.write("src/lib.rs", "unchanged");
+        let baseline = project.capture();
+        project.write(".devscope/work/current.md", "# Current Work");
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        let project = TempProject::new();
+        project.write("src/lib.rs", "unchanged");
+        let baseline = project.capture();
+        project.write(".devscope/config", "relevant");
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+    #[test]
     fn ignores_root_current_work_but_not_other_devscope_files() {
         let project = TempProject::new();
         project.write(".devscope/work/current.md", "before");
@@ -392,6 +422,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ignores_current_work_deletion_and_keeps_devscope_file_relevant() {
+        let project = TempProject::new();
+        project.write(".devscope/work/current.md", "before");
+        let baseline = project.capture();
+        fs::remove_dir_all(project.0.join(".devscope/work")).unwrap();
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        let project = TempProject::new();
+        project.write(".devscope", "before");
+        let baseline = project.capture();
+        project.write(".devscope", "after");
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
     #[test]
     fn ignores_git_metadata_changes() {
         let project = TempProject::new();
