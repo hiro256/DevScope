@@ -113,6 +113,7 @@ For development checks, use Cargo:
 cargo run
 cargo run -- context
 cargo run -- task list
+cargo run -- work list
 cargo run -- --help
 ```
 
@@ -122,10 +123,11 @@ output is not mixed with compact CLI output:
 ```powershell
 .\target\debug\devscope.exe context
 .\target\debug\devscope.exe task list
+.\target\debug\devscope.exe work list
 ```
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
-are equivalent. `context` and `task list` print compact plain text without entering the
+are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
 TUI. The CLI currently reports Cargo Build/Test source availability only; Build/Test run
 results are runtime state owned by a running TUI session and are not exposed by a
 separate CLI run.

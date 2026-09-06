@@ -121,7 +121,7 @@ fn scan_directory(
             })?;
         let kind = entry_kind(&metadata);
 
-        if is_excluded(&path, kind) {
+        if is_excluded(root, &path, kind) {
             continue;
         }
 
@@ -151,12 +151,17 @@ fn entry_kind(metadata: &fs::Metadata) -> BuildTestInputEntryKind {
     }
 }
 
-fn is_excluded(path: &Path, kind: BuildTestInputEntryKind) -> bool {
+fn is_excluded(root: &Path, path: &Path, kind: BuildTestInputEntryKind) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };
 
-    name == ".git" || (name == "target" && kind == BuildTestInputEntryKind::Directory)
+    name == ".git"
+        || (name == "target" && kind == BuildTestInputEntryKind::Directory)
+        || (kind == BuildTestInputEntryKind::Directory
+            && path
+                .strip_prefix(root)
+                .is_ok_and(|relative| relative == Path::new(".devscope").join("work")))
 }
 
 fn build_test_input_entry(
@@ -367,6 +372,23 @@ mod tests {
         assert_eq!(
             baseline.check(&project.0).unwrap(),
             BuildTestInputChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn ignores_root_current_work_but_not_other_devscope_files() {
+        let project = TempProject::new();
+        project.write(".devscope/work/current.md", "before");
+        let baseline = project.capture();
+        project.write(".devscope/work/current.md", "after");
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+        project.write(".devscope/config", "relevant");
+        assert_eq!(
+            baseline.check(&project.0).unwrap(),
+            BuildTestInputChange::Changed
         );
     }
 

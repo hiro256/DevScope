@@ -8,7 +8,10 @@ use std::{env, io, process::ExitCode};
 
 use app::App;
 use cli::EntryMode;
-use devscope::project::{ProjectSnapshot, collect_project_snapshot};
+use devscope::{
+    current_work::load_current_work,
+    project::{ProjectSnapshot, collect_project_snapshot},
+};
 use terminal::TerminalSession;
 
 fn main() -> ExitCode {
@@ -16,6 +19,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::Tui) => run_tui().map_or_else(report_runtime_error, |_| ExitCode::SUCCESS),
         Ok(EntryMode::Context) => run_context(),
         Ok(EntryMode::TaskList) => run_task_list(),
+        Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::Help) => {
             print!("{}", cli::usage());
             ExitCode::SUCCESS
@@ -53,6 +57,22 @@ fn run_task_list() -> ExitCode {
     }
 }
 
+fn run_work_list() -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match load_current_work(&root) {
+            Ok(Some(work)) => {
+                print!("{}", cli::render_work_list(&work));
+                ExitCode::SUCCESS
+            }
+            Ok(None) => {
+                print!("{}", cli::render_current_work_not_set());
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
 fn run_tui() -> io::Result<()> {
     let project_root = env::current_dir().ok();
     let snapshot = project_root

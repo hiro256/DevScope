@@ -242,3 +242,7 @@ The CLI must not become:
 - A mandatory DevScope database format.
 - A dependency on one AI vendor or agent.
 - A replacement for normal Git and Markdown workflows.
+## Current Work read experiment
+
+The Current Work experiment adds the read-only `devscope work list` command for local
+working state. Write syntax and persistence policy remain unspecified.

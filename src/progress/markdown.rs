@@ -66,7 +66,7 @@ impl Error for MarkdownProgressError {
 
 pub fn discover_markdown_files(root: &Path) -> Result<Vec<PathBuf>, MarkdownProgressError> {
     let mut files = Vec::new();
-    discover(root, &mut files)?;
+    discover(root, root, &mut files)?;
     files.sort();
     Ok(files)
 }
@@ -83,7 +83,11 @@ pub fn analyze_markdown_progress(root: &Path) -> Result<MarkdownProgress, Markdo
     Ok(MarkdownProgress { tasks })
 }
 
-fn discover(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), MarkdownProgressError> {
+fn discover(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), MarkdownProgressError> {
     let entries = fs::read_dir(directory).map_err(|source| MarkdownProgressError {
         path: directory.to_path_buf(),
         source,
@@ -99,11 +103,8 @@ fn discover(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), MarkdownPr
             source,
         })?;
         if kind.is_dir() {
-            if !matches!(
-                path.file_name().and_then(|name| name.to_str()),
-                Some(".git" | "target")
-            ) {
-                discover(&path, files)?;
+            if !is_excluded_directory(root, &path) {
+                discover(root, &path, files)?;
             }
         } else if kind.is_file()
             && path
@@ -116,6 +117,14 @@ fn discover(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), MarkdownPr
     Ok(())
 }
 
+fn is_excluded_directory(root: &Path, path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".git" | "target")
+    ) || path
+        .strip_prefix(root)
+        .is_ok_and(|relative| relative == Path::new(".devscope").join("work"))
+}
 fn parse_tasks(path: &Path, content: &str) -> Vec<MarkdownTask> {
     content
         .lines()
@@ -211,10 +220,13 @@ mod tests {
         project.write("docs/nested.md", "- [ ] nested");
         project.write(".git/ignored.md", "- [ ] ignored");
         project.write("target/ignored.md", "- [ ] ignored");
+        project.write(".devscope/work/current.md", "- [ ] ignored");
+        project.write("docs/work/current.md", "- [ ] ordinary");
         assert_eq!(
             discover_markdown_files(project.path()).unwrap(),
             vec![
                 project.path().join("docs/nested.md"),
+                project.path().join("docs/work/current.md"),
                 project.path().join("root.md")
             ]
         );

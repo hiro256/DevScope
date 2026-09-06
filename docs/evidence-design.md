@@ -188,7 +188,7 @@ result becomes Stale
 The v0.3 Cargo Build/Test freshness baseline is a project filesystem fingerprint. It
 includes everything under the project root by default, represented by relative path,
 entry kind, file-content fingerprint, and symlink target where applicable. It excludes
-`.git/` and every `target/` directory subtree.
+`.git/` and every `target/` directory subtree. DevScope local Current Work state under root `.devscope/work/` is also excluded because it records workflow state rather than verification input.
 
 This policy is intentionally conservative: any non-excluded project filesystem change
 may make Build/Test Evidence stale. Documentation changes, such as `README.md` or

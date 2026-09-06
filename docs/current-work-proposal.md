@@ -229,3 +229,24 @@ The initial concept should not become:
 
 Keep the proposal small and compatible with DevScope's observation-first
 architecture.
+
+## Round 1 Current Work CLI experiment
+
+The first experiment uses `.devscope/work/current.md` as local-only working state.
+It associates one parent through a project-relative Plan Markdown path and task text,
+and contains one flat list of checkbox work items. The first read-only command is
+`devscope work list`.
+
+```text
+# Current Work
+
+Parent: docs/roadmap.md
+Task: Current Work CLI experiment
+
+- [x] Define storage
+- [ ] Dogfood the workflow
+```
+
+This does not yet define a stable Current Work file format or permanent persistence
+policy. Current Work completion does not complete its Plan task automatically, and a
+Current Work checkbox is not Evidence.

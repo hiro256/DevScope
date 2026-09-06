@@ -4,6 +4,7 @@ use std::{
 };
 
 use devscope::{
+    current_work::CurrentWork,
     progress::{ActivitySummary, is_cargo_project},
     project::{ActivityState, PlanState, ProjectSnapshot, TaskState, collect_markdown_state},
 };
@@ -15,6 +16,7 @@ pub enum EntryMode {
     Tui,
     Context,
     TaskList,
+    WorkList,
     Help,
     Version,
 }
@@ -46,8 +48,14 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [argument] if matches!(argument.as_os_str(), value if value == OsStr::new("-V") || value == OsStr::new("--version")) => {
             Ok(EntryMode::Version)
         }
+        [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
+            Ok(EntryMode::WorkList)
+        }
         [first, ..] if first == OsStr::new("task") => Err(UsageError {
             message: "expected `devscope task list`",
+        }),
+        [first, ..] if first == OsStr::new("work") => Err(UsageError {
+            message: "expected `devscope work list`",
         }),
         _ => Err(UsageError {
             message: "unrecognized command or arguments",
@@ -56,7 +64,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
@@ -108,6 +116,24 @@ pub fn render_task_list(root: &Path, tasks: &TaskState) -> String {
     output
 }
 
+pub const fn render_current_work_not_set() -> &'static str {
+    "Current Work: not set\n"
+}
+
+pub fn render_work_list(work: &CurrentWork) -> String {
+    let mut output = format!(
+        "Parent: {} :: {}\nWork: {}/{} complete\n",
+        work.parent_path().display(),
+        work.parent_task(),
+        work.completed(),
+        work.total()
+    );
+    for item in work.items() {
+        let marker = if item.completed() { "x" } else { " " };
+        output.push_str(&format!("[{marker}] {}\n", item.text()));
+    }
+    output
+}
 fn render_plan(snapshot: &ProjectSnapshot) -> String {
     match snapshot.plan() {
         PlanState::Available(plan) => format!("Plan: {}/{}", plan.completed(), plan.total()),
@@ -179,6 +205,7 @@ fn display_path(root: &Path, path: &Path) -> String {
 mod tests {
     use super::*;
     use devscope::{
+        current_work::load_current_work,
         progress::{
             GitActivity, GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary,
             TaskSummaryItem,
@@ -359,6 +386,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_work_list_and_rejects_other_work_syntax() {
+        assert_eq!(
+            parse_args([OsString::from("work"), OsString::from("list")]),
+            Ok(EntryMode::WorkList)
+        );
+        for args in [
+            vec![OsString::from("work")],
+            vec![OsString::from("work"), OsString::from("foo")],
+            vec![
+                OsString::from("work"),
+                OsString::from("list"),
+                OsString::from("extra"),
+            ],
+        ] {
+            assert!(parse_args(args).is_err());
+        }
+    }
+
+    #[test]
+    fn renders_work_list_and_not_set() {
+        let project = TempProject::new();
+        assert_eq!(load_current_work(project.path()).unwrap(), None);
+        assert_eq!(render_current_work_not_set(), "Current Work: not set\n");
+        let path = project.path().join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            "# Current Work\nParent: docs/roadmap.md\nTask: Current Work CLI experiment\n- [x] Storage\n- [ ] Dogfood\n",
+        )
+        .unwrap();
+        let work = load_current_work(project.path()).unwrap().unwrap();
+        assert_eq!(
+            render_work_list(&work),
+            "Parent: docs/roadmap.md :: Current Work CLI experiment\nWork: 1/2 complete\n[x] Storage\n[ ] Dogfood\n"
+        );
+    }
     struct TempProject {
         path: PathBuf,
     }
