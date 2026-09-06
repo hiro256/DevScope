@@ -292,6 +292,17 @@ and read source Markdown only for detail. This is an orientation and discovery s
 not a replacement for authoritative Plan Markdown. The initial result also shows that a
 direct Agent adapter is not required for this workflow today; reassessment remains later.
 
+## DevScope Skill experiment
+
+The next roadmap experiment is a small, agent-neutral Skill that packages the
+context-first workflow validated by the Current Work CLI dogfood. The Skill is a
+behavior layer, not project truth or an Evidence source: it should start with
+`devscope context`, use `work list` only for Current Work details or numbers, use
+`work done N` only after confirming the current number, and keep recorded work
+separate from observed Evidence. The complete proposed behavior, dogfood scenarios,
+and packaging options are in [skill-proposal.md](skill-proposal.md). This does not add
+a direct Agent adapter or implement a Skill file yet.
+
 ## Non-goals
 
 The initial Human/AI workflow must not become:
