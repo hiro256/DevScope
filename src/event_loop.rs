@@ -1274,13 +1274,32 @@ mod tests {
         let mut app = App::new(collect_project_snapshot(&root));
         let previous_plan = app.plan();
         let previous_tasks = app.tasks().clone();
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = None;
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut config = Some(ConfigChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(!requests.markdown);
         fs::create_dir_all(root.join(".devscope")).unwrap();
         fs::write(root.join(".devscope/config.toml"), "[plan").unwrap();
-        let mut requests = RefreshRequest {
-            markdown: true,
-            git: false,
-        };
-        let mut worktree = None;
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
         let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
         assert!(!outcome.markdown);
         assert!(!requests.markdown);
@@ -1295,14 +1314,22 @@ mod tests {
             "[plan]\nexclude = [\"translations\"]\n",
         )
         .unwrap();
-        requests.markdown = true;
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
         let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
         assert!(outcome.markdown);
         assert!(app.refresh_error().is_none());
         assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(0, 1)));
         let _ = fs::remove_dir_all(root);
     }
-
     #[test]
     fn git_refresh_does_not_clear_a_plan_error() {
         let root = git_root();
@@ -1451,6 +1478,66 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn config_changes_request_markdown_without_git() {
+        let root = temp_root();
+        let mut markdown = Some(MarkdownChangeDetector::new(&root));
+        let mut worktree = None;
+        let mut metadata = Some(GitMetadataChangeDetector::new(&root));
+        let mut config = Some(ConfigChangeDetector::new(&root));
+        let mut requests = RefreshRequest::default();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(!requests.markdown);
+        assert!(!requests.git);
+
+        let config_path = root.join(".devscope/config.toml");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(&config_path, "[plan]\nexclude = [\"alpha\"]\n").unwrap();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
+
+        requests.clear();
+        fs::write(&config_path, "[plan]\nexclude = [\"bravo\"]\n").unwrap();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
+
+        requests.clear();
+        fs::remove_file(config_path).unwrap();
+        collect_change_requests(
+            Some(&root),
+            &mut markdown,
+            &mut worktree,
+            &mut metadata,
+            &mut config,
+            &mut requests,
+        );
+        assert!(requests.markdown);
+        assert!(!requests.git);
+        let _ = fs::remove_dir_all(root);
+    }
     #[test]
     fn markdown_only_poll_refreshes_only_markdown_state() {
         let root = temp_root();

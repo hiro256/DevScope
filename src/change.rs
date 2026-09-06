@@ -530,6 +530,23 @@ mod tests {
     }
 
     #[test]
+    fn config_detector_tracks_creation_same_length_edit_and_deletion() {
+        let project = TempProject::new();
+        let mut detector = ConfigChangeDetector::new(&project.0);
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Unchanged);
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Unchanged);
+        project.write(CONFIG_PATH, "[plan]\nexclude = [\"alpha\"]\n");
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Changed);
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Unchanged);
+        project.write(CONFIG_PATH, "[plan]\nexclude = [\"bravo\"]\n");
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Changed);
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Unchanged);
+        fs::remove_file(project.0.join(CONFIG_PATH)).unwrap();
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Changed);
+        assert_eq!(detector.check(&project.0).unwrap(), ConfigChange::Unchanged);
+    }
+
+    #[test]
     fn detects_markdown_changes_and_updates_baseline() {
         let project = TempProject::new();
         project.write("a.md", "a");
