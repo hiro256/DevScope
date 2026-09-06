@@ -143,6 +143,22 @@ the rules an agent needs while working; this proposal retains rationale, packagi
 comparison, dogfood scenarios, and open questions. Provider-specific packaging has not
 been selected.
 
+## Config maintenance workflow
+
+When Config support exists, treat Config as machine-readable project-specific
+observation policy, not a Skill store or AI memory. Before changing it: inspect current
+DevScope state and Config when present, identify a concrete mismatch, prefer automatic
+detection and an existing rule, confirm semantic invariants remain intact, and make the
+smallest necessary change. Do not create comprehensive, empty, or default-valued Config
+without a specific rule to express.
+
+After changing Config: re-run the relevant DevScope behavior, confirm the original
+mismatch is resolved, check unrelated observations, review the Config diff, and decide
+whether the rule is genuinely project-persistent. Remove or simplify an obsolete rule.
+A stale Evidence transition after tracked Config changes is expected under the
+conservative freshness model, not itself a Config-maintenance failure. Durable rationale
+belongs in Markdown or decisions rather than in a comment-heavy Config schema.
+
 ## Dogfood scenarios
 
 ### Scenario A: fresh-session recovery

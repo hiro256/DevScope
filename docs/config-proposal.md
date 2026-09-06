@@ -8,10 +8,11 @@ global configuration system.
 
 ## Purpose
 
-Configuration expresses project-specific policy and preferences where DevScope's
-current defaults are not appropriate. It is not Plan, Activity, Evidence, Current
-Work, Agent state, or project progress. Defaults must continue to work without a
-configuration file.
+Configuration is machine-readable, project-specific observation policy: an explicit
+rule for how DevScope should observe and interpret a project within its configurable
+boundaries. It changes policy, not truth. It is not Plan, Activity, Evidence, Current
+Work, Handoff, AI memory, general notes, Agent state, or project progress. Defaults
+must continue to work without a configuration file.
 
 ## Configuration principles
 
@@ -21,12 +22,15 @@ configuration file.
 - Implementation tuning is not user config by default.
 - Future feature settings are not designed before the feature exists.
 - Config remains optional and provider-neutral.
+- Start with defaults, detect when possible, and configure only when necessary.
+- Change minimally, keep reasons understandable, verify behavior after a change, and
+  remove configuration that becomes obsolete.
 
 ## Candidate settings
 
 | Candidate | Project-specific? | Current need? | Semantic risk | First slice? |
 | --- | --- | --- | --- | --- |
-| `plan.include` paths | Yes | Projects can keep canonical Plan Markdown outside default discovery scope | Low if it only extends Plan discovery | Yes |
+| `plan.include` paths | Possibly | Root-recursive discovery already covers normal subdirectories | Low if it only extends Plan discovery | Defer |
 | `plan.exclude` paths | Yes | Projects can exclude generated or non-Plan Markdown | Medium; mandatory exclusions stay enforced | Yes |
 | Project name override | Sometimes | No demonstrated need beyond directory naming | Low | Defer |
 | Project root behavior | Rarely | Current root detection works | Medium | Defer |
@@ -44,7 +48,7 @@ configuration file.
 The following are semantic invariants rather than project preferences:
 
 - Current Work is not counted as Plan.
-- `.devscope/work/` remains a mandatory Plan-discovery exclusion.
+- `.git/`, `target/`, and `.devscope/work/` remain mandatory Plan-discovery exclusions.
 - Agent telemetry is not Evidence.
 - Current Work completion does not auto-complete a Plan task.
 - Failed verification is not treated as passed.
@@ -129,42 +133,72 @@ temporary workflow state, but a future config file is not excluded.
 A TOML config file does not enter Markdown Plan discovery. User Plan discovery rules
 can alter only configured policy; mandatory semantic exclusions continue to apply.
 
+## Config growth and maintenance
+
+Do not create comprehensive or empty Config up front. First ask whether DevScope can
+determine the behavior correctly through defaults or automatic detection. Add a rule
+only for a concrete observation mismatch, not merely to make output look cleaner.
+A possible justified case is a derived translation that duplicates authoritative task
+checkboxes: [translation-proposal.md](translation-proposal.md) treats translated
+Markdown as a derived human-readable view, so excluding that non-authoritative
+directory from Plan discovery can be appropriate.
+
+Valid exclusion reasons are derived, generated, duplicated, intentionally
+non-authoritative, or narrowly irrelevant to Plan semantics. Long-lived rationale
+belongs in Markdown or decisions; an obvious rule needs no comment, and at most a
+short TOML comment may clarify a non-obvious rule. Do not add `reason`, session,
+memory, or AI-authorship metadata to the machine-readable schema.
+
+After a Config change, verify before-versus-after behavior: confirm the mismatch is
+resolved, authoritative Plan files remain visible, and Activity, Evidence semantics,
+and Current Work did not change unexpectedly. A Config rule that no longer matters,
+for example after improved automatic detection, is a removal candidate.
+
 ## Minimal first slice
 
 The first implementation should contain one optional `.devscope/config.toml`, one
-loader, one small model, and two settings at most:
+loader, one small model, and one setting only:
 
 ```toml
 [plan]
-include = ["planning/**/*.md"]
-exclude = ["generated/**"]
+exclude = ["some-derived-directory"]
 ```
 
-The exact matching semantics should be specified and tested during implementation.
-`include` and `exclude` affect Plan discovery only; they do not alter Current Work,
-Activity, Evidence, or trust boundaries. No generic configuration framework, global
-config, provider config, or Evidence source registry is needed.
+Paths are project-root-relative and use `/` separators in Config. A directory path
+excludes that directory subtree; a file path excludes that exact Markdown file. The
+first slice has no glob syntax, negation, re-include, absolute paths, or paths outside
+the project root. Effective exclusions are mandatory exclusions plus configured
+`plan.exclude`; configuration never replaces mandatory exclusions.
+
+`plan.exclude` affects Plan discovery only; it does not alter Current Work, Activity,
+Evidence, or trust boundaries. `plan.include` is deferred because DevScope already
+recursively discovers ordinary Markdown below the project root. No generic
+configuration framework, global config, provider config, or Evidence source registry
+is needed. Support may exist before this DevScope repository itself needs a Config;
+do not invent a project-specific rule merely to dogfood Config.
 
 ## Deferred settings
 
-Defer project name/root overrides, task markers, context limits, diagnostic limits,
-refresh tuning, Cargo command overrides, generic command Evidence, Current Work
-persistence modes, Agent settings, Handoff settings, Artifact Evidence settings, JSON,
-and a config-show command. These lack a demonstrated current need or would preempt a
-separate design boundary.
+Defer `plan.include`, project name/root overrides, task markers, context limits,
+diagnostic limits, refresh tuning, Cargo command overrides, generic command Evidence,
+Current Work persistence modes, Agent settings, Handoff settings, Artifact Evidence
+settings, JSON, and a config-show command. These lack a demonstrated current need or
+would preempt a separate design boundary. Do not add config init/generate/default-dump
+or Config mutation CLI commands in the first slice.
 
 ## Implementation plan
 
-1. Confirm the include/exclude use case with one project fixture each.
-2. Choose the smallest TOML parsing approach consistent with dependency policy.
-3. Load optional `.devscope/config.toml` before Plan collection.
-4. Apply user Plan rules while preserving mandatory exclusions.
-5. Add focused tests for missing, malformed, unknown-key, include, exclude, and
-   Current Work exclusion behavior.
-6. Verify a config edit stales completed Build/Test Evidence.
+1. Implement optional `.devscope/config.toml`.
+2. Support only `[plan].exclude`.
+3. Preserve current behavior exactly when Config is missing.
+4. Add user exclusions to mandatory exclusions rather than replacing them.
+5. Use the simple project-relative file/directory semantics above.
+6. Reject malformed Config and unsupported keys explicitly.
+7. Verify exclusions with focused temporary-project tests.
+8. Verify `.devscope/work/` remains excluded and unrelated Plan files remain visible.
+9. Verify a Config edit remains relevant to Build/Test Evidence freshness.
 
 ## Open questions
-
 - Are include paths additive or an explicit replacement of default discovery?
 - Should glob syntax be supported in the first slice or only simple relative paths?
 - Does an initial config schema need a version only after a second setting family?

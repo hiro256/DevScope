@@ -310,6 +310,14 @@ The strongest future trigger is multi-agent ownership or unexpected-stop ambigui
 existing agent-neutral surfaces cannot answer. See
 [agent-integration-reassessment.md](agent-integration-reassessment.md).
 
+## Config maintenance direction
+
+AI agents may maintain project Config only when a concrete observation mismatch cannot
+be resolved by defaults or automatic detection. Apply **read broadly, write narrowly**:
+inspect the current behavior and Config, make a minimal explicit rule, verify the
+before-versus-after observation, and remove obsolete rules. Config remains separate
+project observation policy, not Plan, Current Work, Evidence, or AI memory.
+
 ## Non-goals
 
 The initial Human/AI workflow must not become:
