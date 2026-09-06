@@ -294,14 +294,12 @@ direct Agent adapter is not required for this workflow today; reassessment remai
 
 ## DevScope Skill experiment
 
-The next roadmap experiment is a small, agent-neutral Skill that packages the
-context-first workflow validated by the Current Work CLI dogfood. The Skill is a
-behavior layer, not project truth or an Evidence source: it should start with
-`devscope context`, use `work list` only for Current Work details or numbers, use
-`work done N` only after confirming the current number, and keep recorded work
-separate from observed Evidence. The complete proposed behavior, dogfood scenarios,
-and packaging options are in [skill-proposal.md](skill-proposal.md). This does not add
-a direct Agent adapter or implement a Skill file yet.
+The provider-neutral Skill prototype successfully guided a fresh AI session through the
+tested context-first Current Work workflow without a direct Agent adapter. It began
+with `devscope context`, used `work list` for current mutation numbers, kept recorded
+Current Work separate from Evidence, and did not introduce provider-specific packaging.
+The detailed findings and remaining packaging questions are in
+[skill-proposal.md](skill-proposal.md).
 
 ## Non-goals
 

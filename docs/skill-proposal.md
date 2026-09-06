@@ -209,3 +209,43 @@ clear existing authority, or ignore essential rules because the Skill is too lon
 - Does a provider-specific wrapper add value beyond the agent-neutral core?
 - Should a future Skill mention Handoff or Notes after those workflows are tested?
 - When, if ever, should Current Work creation or archival become a supported write?
+
+## Prototype dogfood results
+
+The provider-neutral prototype at [examples/devscope-skill.md](examples/devscope-skill.md)
+guided a fresh AI session through the tested context-first workflow. The session
+recovered the parent Plan task, Current Work progress, and next item from `context`,
+used `work list` only to obtain current mutation numbers, completed Current Work items
+3 and 4 with `work done`, and then ran `cargo test`.
+
+In this tested workflow, fresh-session recovery, context-first orientation, conditional
+`work list` use, and confirming the number before `work done` all succeeded. No
+nonexistent DevScope commands were attempted, and no Current Work/Plan or Current
+Work/Evidence confusion was observed. The prototype was short enough to be followed
+without additional detailed human workflow instruction. A direct Agent adapter was not
+required for this tested workflow.
+
+The direct `cargo test` execution reported 166 passing tests. It is an AI/session
+verification fact, not automatically DevScope Observed Evidence: Evidence remains
+verification information surfaced by DevScope, Observed Evidence is verification
+directly observed by DevScope, and AI assessment remains interpretation. `work done`
+remains a Recorded Current Work update, not Evidence. This wording does not define a
+stable provenance taxonomy.
+
+An `apply_patch` sandbox-initialization error occurred three times before a
+documentation update could be applied. This was an environment/editing-tool failure,
+not a DevScope or Skill workflow failure. The reported workflow did not switch editing
+methods without appropriate authority, so the event did not change the authority model.
+
+Scenario A (fresh-session recovery), Scenario B (active Current Work mutation), and
+Scenario E (verification boundary) succeeded in this dogfood round. Scenario C
+(Current Work absent) and Scenario D (malformed Current Work) were not exercised.
+
+## Experiment conclusion
+
+The dogfood demonstrated that the concise provider-neutral prototype can guide the
+tested workflow without a direct Agent adapter and can reduce repeated human workflow
+instructions. It does not establish a universal Skill format, a stable packaging
+standard, or that Agent adapters are unnecessary. Provider-specific packaging remains
+open, including whether a Codex-native wrapper, another provider wrapper, or a
+repository-local convention improves reliability.
