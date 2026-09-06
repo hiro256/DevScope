@@ -252,3 +252,9 @@ working state. Further write syntax and persistence policy remain unspecified.
 `devscope work done <number>` is the first concrete example of reading broadly and
 writing narrowly: it completes only the selected Current Work checkbox. Its
 one-based display-order number is intentionally not a persistent identifier.
+
+## Current Work context summary experiment
+
+`devscope context` now includes a compact Current Work orientation summary only when
+local Current Work exists. This remains an experimental composition, not a stable CLI
+contract; `work list` retains detailed items and display-order numbers.

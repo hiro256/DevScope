@@ -27,6 +27,9 @@ impl CurrentWork {
     pub fn completed(&self) -> usize {
         self.items.iter().filter(|item| item.completed).count()
     }
+    pub fn first_incomplete(&self) -> Option<&CurrentWorkItem> {
+        self.items.iter().find(|item| !item.completed)
+    }
     pub fn remaining(&self) -> usize {
         self.total() - self.completed()
     }

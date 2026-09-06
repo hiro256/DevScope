@@ -7,7 +7,7 @@ mod ui;
 use std::{env, io, process::ExitCode};
 
 use app::App;
-use cli::EntryMode;
+use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     current_work::{load_current_work, mark_current_work_done},
     project::{ProjectSnapshot, collect_project_snapshot},
@@ -40,7 +40,13 @@ fn run_context() -> ExitCode {
     match env::current_dir() {
         Ok(root) => {
             let snapshot = collect_project_snapshot(&root);
-            print!("{}", cli::render_context(&root, &snapshot));
+            let loaded_current_work = load_current_work(&root);
+            let current_work = match &loaded_current_work {
+                Ok(Some(work)) => CurrentWorkContext::Available(work),
+                Ok(None) => CurrentWorkContext::NotSet,
+                Err(_) => CurrentWorkContext::Unavailable,
+            };
+            print!("{}", cli::render_context(&root, &snapshot, current_work));
             ExitCode::SUCCESS
         }
         Err(error) => report_runtime_error(error),

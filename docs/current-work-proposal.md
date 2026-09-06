@@ -258,3 +258,11 @@ checkpoint recovery, direct Markdown mutation proved more cumbersome than readin
 state. The next dogfood slice adds `devscope work done <number>` as a narrow write.
 The number is the current display-order position, not a persistent identity; users
 should run `work list` before selecting an item.
+
+## Round 3 context summary experiment
+
+Fresh-session recovery and the narrow `work done` write succeeded, but orientation
+previously required both `context` and `work list`. The experiment adds a compact
+Current Work summary to `context` when local Current Work exists. Its roles remain
+separate: `context` provides progress, parent, and next item; `work list` provides
+full items and display-order numbers; `work done` performs the narrow mutation.

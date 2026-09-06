@@ -4,12 +4,17 @@ use std::{
 };
 
 use devscope::{
-    current_work::CurrentWork,
+    current_work::{CurrentWork, CurrentWorkItem},
     progress::{ActivitySummary, is_cargo_project},
     project::{ActivityState, PlanState, ProjectSnapshot, TaskState, collect_markdown_state},
 };
 
 const CONTEXT_TASK_LIMIT: usize = 5;
+pub enum CurrentWorkContext<'a> {
+    NotSet,
+    Available(&'a CurrentWork),
+    Unavailable,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryMode {
@@ -79,7 +84,11 @@ pub const fn usage() -> &'static str {
     "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope --help\n  devscope --version\n"
 }
 
-pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
+pub fn render_context(
+    root: &Path,
+    snapshot: &ProjectSnapshot,
+    current_work: CurrentWorkContext<'_>,
+) -> String {
     let mut output = format!(
         "Project: {}\n{}\n{}\n{}\n{}\n",
         project_name(root),
@@ -88,6 +97,8 @@ pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
         render_activity(snapshot),
         render_evidence(root),
     );
+
+    append_current_work_summary(&mut output, current_work);
 
     if let TaskState::Available(tasks) = snapshot.tasks() {
         output.push_str("Next tasks:\n");
@@ -107,6 +118,24 @@ pub fn render_context(root: &Path, snapshot: &ProjectSnapshot) -> String {
     output
 }
 
+fn append_current_work_summary(output: &mut String, current_work: CurrentWorkContext<'_>) {
+    match current_work {
+        CurrentWorkContext::NotSet => {}
+        CurrentWorkContext::Unavailable => output.push_str("Current Work: unavailable\n"),
+        CurrentWorkContext::Available(work) => {
+            output.push_str(&format!(
+                "Current Work: {}/{}\n",
+                work.completed(),
+                work.total()
+            ));
+            output.push_str(&format!("Parent: {}\n", work.parent_task()));
+            let next = work
+                .first_incomplete()
+                .map_or("none", CurrentWorkItem::text);
+            output.push_str(&format!("Next: {next}\n"));
+        }
+    }
+}
 /// Collects only the Markdown-derived task state required by `task list`.
 pub fn collect_task_list_state(root: &Path) -> TaskState {
     collect_markdown_state(root)
@@ -299,7 +328,7 @@ mod tests {
             TaskState::Available(TaskSummary::new(7, items)),
         );
 
-        let output = render_context(project.path(), &snapshot);
+        let output = render_context(project.path(), &snapshot, CurrentWorkContext::NotSet);
         assert!(output.contains("Plan: 1/7"));
         assert!(output.contains("Tasks: 6 remaining"));
         assert!(output.contains("Activity: not a Git repository"));
@@ -311,6 +340,7 @@ mod tests {
         assert!(output.contains(":1  Task 1"));
         assert!(output.contains("... 1 more"));
         assert!(!output.contains("Task 6"));
+        assert!(!output.contains("Current Work:"));
     }
 
     #[test]
@@ -332,11 +362,15 @@ mod tests {
             TaskState::Available(TaskSummary::new(0, vec![])),
         );
         assert!(
-            render_context(root, &available)
+            render_context(root, &available, CurrentWorkContext::NotSet)
                 .contains("Activity: 1 changed files, 1 recent commits")
         );
 
-        let unavailable = render_context(root, &ProjectSnapshot::unavailable());
+        let unavailable = render_context(
+            root,
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
         assert!(unavailable.contains("Plan: unavailable"));
         assert!(unavailable.contains("Tasks: unavailable"));
         assert!(unavailable.contains("Activity: unavailable"));
@@ -476,6 +510,43 @@ mod tests {
         ] {
             assert!(parse_args(args).is_err());
         }
+    }
+    #[test]
+    fn renders_compact_current_work_context_states() {
+        let project = TempProject::new();
+        let path = project.path().join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# Current Work\nParent: docs/roadmap.md\nTask: 日本語 Parent\n- [x] Done\n- [ ] 次の作業\n",
+        )
+        .unwrap();
+        let work = load_current_work(project.path()).unwrap().unwrap();
+        let output = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::Available(&work),
+        );
+        assert!(output.contains("Current Work: 1/2\nParent: 日本語 Parent\nNext: 次の作業\n"));
+        assert!(!output.contains("1. [x] Done"));
+        assert!(!output.contains(".devscope/work/current.md"));
+
+        fs::write(&path, "# Current Work\nParent: a.md\nTask: Empty\n").unwrap();
+        let empty = load_current_work(project.path()).unwrap().unwrap();
+        let empty_output = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::Available(&empty),
+        );
+        assert!(empty_output.contains("Current Work: 0/0\nParent: Empty\nNext: none\n"));
+
+        let unavailable = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::Unavailable,
+        );
+        assert!(unavailable.contains("Current Work: unavailable\n"));
+        assert!(unavailable.contains("Plan: unavailable"));
     }
     struct TempProject {
         path: PathBuf,
