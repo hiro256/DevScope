@@ -10,7 +10,7 @@ use app::App;
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     current_work::{load_current_work, mark_current_work_done},
-    project::{ProjectSnapshot, collect_project_snapshot},
+    project::{ProjectSnapshot, try_collect_project_snapshot},
 };
 use terminal::TerminalSession;
 
@@ -39,7 +39,10 @@ fn main() -> ExitCode {
 fn run_context() -> ExitCode {
     match env::current_dir() {
         Ok(root) => {
-            let snapshot = collect_project_snapshot(&root);
+            let snapshot = match try_collect_project_snapshot(&root) {
+                Ok(snapshot) => snapshot,
+                Err(error) => return report_runtime_error(error),
+            };
             let loaded_current_work = load_current_work(&root);
             let current_work = match &loaded_current_work {
                 Ok(Some(work)) => CurrentWorkContext::Available(work),
@@ -55,11 +58,13 @@ fn run_context() -> ExitCode {
 
 fn run_task_list() -> ExitCode {
     match env::current_dir() {
-        Ok(root) => {
-            let tasks = cli::collect_task_list_state(&root);
-            print!("{}", cli::render_task_list(&root, &tasks));
-            ExitCode::SUCCESS
-        }
+        Ok(root) => match cli::collect_task_list_state(&root) {
+            Ok(tasks) => {
+                print!("{}", cli::render_task_list(&root, &tasks));
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
         Err(error) => report_runtime_error(error),
     }
 }
@@ -94,10 +99,10 @@ fn run_work_done(number: usize) -> ExitCode {
 }
 fn run_tui() -> io::Result<()> {
     let project_root = env::current_dir().ok();
-    let snapshot = project_root
-        .as_deref()
-        .map(collect_project_snapshot)
-        .unwrap_or_else(ProjectSnapshot::unavailable);
+    let snapshot = match project_root.as_deref() {
+        Some(root) => try_collect_project_snapshot(root).map_err(io::Error::other)?,
+        None => ProjectSnapshot::unavailable(),
+    };
 
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);

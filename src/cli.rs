@@ -6,7 +6,10 @@ use std::{
 use devscope::{
     current_work::{CurrentWork, CurrentWorkItem},
     progress::{ActivitySummary, is_cargo_project},
-    project::{ActivityState, PlanState, ProjectSnapshot, TaskState, collect_markdown_state},
+    project::{
+        ActivityState, PlanState, ProjectCollectionError, ProjectSnapshot, TaskState,
+        collect_markdown_state,
+    },
 };
 
 const CONTEXT_TASK_LIMIT: usize = 5;
@@ -137,10 +140,8 @@ fn append_current_work_summary(output: &mut String, current_work: CurrentWorkCon
     }
 }
 /// Collects only the Markdown-derived task state required by `task list`.
-pub fn collect_task_list_state(root: &Path) -> TaskState {
-    collect_markdown_state(root)
-        .map(|(_, tasks)| tasks)
-        .unwrap_or(TaskState::Unavailable)
+pub fn collect_task_list_state(root: &Path) -> Result<TaskState, ProjectCollectionError> {
+    collect_markdown_state(root).map(|(_, tasks)| tasks)
 }
 
 pub fn render_task_list(root: &Path, tasks: &TaskState) -> String {
@@ -419,7 +420,10 @@ mod tests {
         )
         .unwrap();
 
-        let output = render_task_list(project.path(), &collect_task_list_state(project.path()));
+        let output = render_task_list(
+            project.path(),
+            &collect_task_list_state(project.path()).unwrap(),
+        );
         assert!(output.contains("Tasks: 1 remaining / 2 total"));
         assert!(output.contains("Remaining task"));
         assert!(!output.contains("Completed task"));

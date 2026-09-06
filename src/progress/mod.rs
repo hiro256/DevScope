@@ -23,7 +23,8 @@ pub use git::{
 };
 pub use markdown::{
     MarkdownProgress, MarkdownProgressError, MarkdownTask, analyze_markdown_progress,
-    discover_markdown_files,
+    analyze_markdown_progress_with_exclusions, discover_markdown_files,
+    discover_markdown_files_with_exclusions,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivitySummary {

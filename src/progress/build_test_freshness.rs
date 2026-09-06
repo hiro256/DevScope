@@ -399,7 +399,7 @@ mod tests {
         let project = TempProject::new();
         project.write("src/lib.rs", "unchanged");
         let baseline = project.capture();
-        project.write(".devscope/config", "relevant");
+        project.write(".devscope/config.toml", "relevant");
         assert_eq!(
             baseline.check(&project.0).unwrap(),
             BuildTestInputChange::Changed
@@ -415,7 +415,7 @@ mod tests {
             baseline.check(&project.0).unwrap(),
             BuildTestInputChange::Unchanged
         );
-        project.write(".devscope/config", "relevant");
+        project.write(".devscope/config.toml", "relevant");
         assert_eq!(
             baseline.check(&project.0).unwrap(),
             BuildTestInputChange::Changed

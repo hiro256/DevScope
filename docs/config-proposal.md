@@ -2,9 +2,9 @@
 
 ## Status
 
-This is a docs-first proposal for the roadmap Config file item. It defines a small
-project-configuration direction, not a parser, schema contract, dependency choice, or
-global configuration system.
+The initial implementation slice now provides an optional project Config loader and a
+small `[plan].exclude` schema. It is not a generic configuration framework, global
+configuration system, or completed roadmap item.
 
 ## Purpose
 
@@ -104,8 +104,8 @@ only the work subtree, not the entire directory.
 | YAML | Human-friendly but more flexible and edge-case-prone; it would add parsing complexity without a current benefit. |
 | JSON | Strict and common, but lacks comments and is less pleasant for hand-maintained project policy. |
 
-TOML is the recommended format candidate, but this proposal adds neither a TOML parser
-nor Serde. Parser and dependency choices remain a separate implementation decision.
+TOML is used by the initial implementation. It uses the `toml` crate to parse a TOML
+value table and validates the small schema explicitly, without a direct Serde dependency.
 
 ## Error handling
 
@@ -114,10 +114,8 @@ produce an explicit error rather than silently changing policy. Unknown keys sho
 initially be explicit errors to catch misspellings; a warning policy can be revisited
 only if real compatibility needs appear.
 
-The initial implementation should avoid a broad fail-closed system. Commands that use
-config-aware project collection should report the config error clearly, while an
-unrelated Current Work command can remain independently usable when it does not need
-config parsing. Exact command-level behavior belongs to the implementation slice.
+Config-aware `context`, `task list`, and TUI startup report Config errors explicitly.
+Unrelated Current Work commands remain independently usable without Config parsing.
 
 A schema version field is deferred. The first deliberately small schema does not yet
 need a compatibility mechanism, and adding one now could imply a stable contract too
@@ -199,7 +197,6 @@ or Config mutation CLI commands in the first slice.
 9. Verify a Config edit remains relevant to Build/Test Evidence freshness.
 
 ## Open questions
-- Are include paths additive or an explicit replacement of default discovery?
-- Should glob syntax be supported in the first slice or only simple relative paths?
+- `plan.include` semantics are deferred until a concrete discovery need exists.
+- Glob support is a deferred future question; the initial slice accepts only literal paths.
 - Does an initial config schema need a version only after a second setting family?
-- When a config error affects `context`, what concise error presentation is best?
