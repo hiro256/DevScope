@@ -93,7 +93,7 @@
 ### Quality
 
 - [x] Evidence model/source tests
-- [ ] Windows Build/Test evidence verification
+- [x] Windows Build/Test evidence verification
 
 ## Post-MVP
 
