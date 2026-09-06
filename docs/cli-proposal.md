@@ -127,6 +127,12 @@ from an agent's textual claim. For example, an agent could request a configured
 test run, DevScope could execute and observe the result, and the TUI could display
 that Evidence. This is future work, outside the initial CLI experiment.
 
+Build/Test results are currently runtime state owned by one running TUI process. A
+separate one-shot CLI cannot truthfully expose a previous TUI session's Passed, Failed,
+Stale, or Running state without a sharing or persistence mechanism. Therefore
+`devscope evidence status` is deferred until `context` and `task list` have been
+dogfooded and truthful state-sharing semantics are understood.
+
 ## Skill integration
 
 A DevScope-oriented AI skill could teach agents to use `devscope context` or
@@ -157,13 +163,14 @@ Keep a first implementation deliberately small and primarily read-only:
 ```text
 devscope context
 devscope task list
-devscope evidence status
 ```
 
 `devscope status` and `devscope lists` remain possible supporting read commands, but
-are not required for the first experiment. Dogfood the CLI while developing DevScope,
-then evaluate whether it is reliably used, reduces repeated reads, reduces context
-usage, remains convenient for humans, and stays independent of a specific AI agent.
+are not required for the first experiment. `devscope evidence status` is a later
+candidate after truthful session-state sharing semantics are understood. Dogfood the
+CLI while developing DevScope, then evaluate whether it is reliably used, reduces
+repeated reads, reduces context usage, remains convenient for humans, and stays
+independent of a specific AI agent.
 
 After read-only dogfooding, a separate Current Work experiment may test narrow
 operations conceptually such as `devscope work list`, `devscope work add`, and

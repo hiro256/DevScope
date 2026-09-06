@@ -104,6 +104,21 @@ cargo build --release
 .\target\release\devscope.exe
 ```
 
+## Experimental read-only CLI (main)
+
+Current main development includes an experimental read-only CLI alongside the TUI:
+
+```powershell
+cargo run
+cargo run -- context
+cargo run -- task list
+cargo run -- --help
+```
+
+`context` and `task list` print compact plain text without entering the TUI. The CLI
+currently reports Cargo Build/Test source availability only; Build/Test run results are
+runtime state owned by a running TUI session and are not exposed by a separate CLI run.
+
 ## Not yet implemented
 
 - Scrollable, full-screen Evidence diagnostics and history

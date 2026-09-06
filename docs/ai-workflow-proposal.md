@@ -241,12 +241,12 @@ workflow track; it is not the only implementation sequence for DevScope:
 5. Only then experiment with Handoff or Note recording.
 6. Reassess Agent integration after the CLI/Skill workflow is proven.
 
-The first AI-oriented CLI experiment should primarily be read-only. Good initial
-candidates are `devscope context`, `devscope task list`, and `devscope evidence
-status`; `devscope work list` and `devscope evidence tests` may follow. Evaluate
-whether an AI can reconstruct state reliably, whether output reduces context use,
-whether it distinguishes Plan, Activity, Current Work, and Evidence, and which writes
-are actually necessary.
+The first implementation slice of the AI-oriented CLI is read-only: `devscope context`
+and `devscope task list`. `devscope evidence status` is a later candidate after
+truthful session-state sharing semantics are understood; `devscope work list` and
+`devscope evidence tests` may follow. Evaluate whether an AI can reconstruct state
+reliably, whether output reduces context use, whether it distinguishes Plan, Activity,
+Current Work, and Evidence, and which writes are actually necessary.
 
 After that, a small Skill can read context at work start, identify the parent task,
 inspect Evidence before completion, check Current Work when available, record only
