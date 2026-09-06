@@ -128,6 +128,8 @@ completed Build/Test Evidence stale under the existing conservative freshness mo
 The root `.devscope/` directory remains transparent: `.devscope/work/` is excluded as
 temporary workflow state, but a future config file is not excluded.
 
+Config creation, modification, and deletion are Plan-observation inputs and trigger Plan recollection. Malformed Config is surfaced explicitly rather than converted to Plan unavailable.
+
 A TOML config file does not enter Markdown Plan discovery. User Plan discovery rules
 can alter only configured policy; mandatory semantic exclusions continue to apply.
 

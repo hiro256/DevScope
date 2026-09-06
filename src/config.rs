@@ -8,7 +8,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const CONFIG_PATH: &str = ".devscope/config.toml";
+pub const CONFIG_PATH: &str = ".devscope/config.toml";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectConfig {

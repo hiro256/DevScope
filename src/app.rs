@@ -56,6 +56,7 @@ pub struct App {
     evidence_detail_kind: Option<BuildTestKind>,
     selected_task: Option<usize>,
     refresh_status: RefreshStatus,
+    refresh_error: Option<String>,
 }
 
 impl App {
@@ -70,6 +71,7 @@ impl App {
             evidence_detail_kind: None,
             selected_task: None,
             refresh_status: RefreshStatus::initial(),
+            refresh_error: None,
         };
         app.apply_snapshot(snapshot);
         app
@@ -89,6 +91,16 @@ impl App {
 
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
+    }
+
+    pub fn set_refresh_error(&mut self, error: impl Into<String>) {
+        self.refresh_error = Some(error.into());
+    }
+    pub fn clear_refresh_error(&mut self) {
+        self.refresh_error = None;
+    }
+    pub fn refresh_error(&self) -> Option<&str> {
+        self.refresh_error.as_deref()
     }
 
     pub fn record_refresh(&mut self, source: RefreshSource, elapsed: Duration) {

@@ -7,7 +7,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::progress::{MarkdownProgressError, discover_markdown_files};
+use crate::{
+    config::CONFIG_PATH,
+    progress::{MarkdownProgressError, discover_markdown_files},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkdownChange {
@@ -437,6 +440,58 @@ fn validate_ref(reference: &str) -> Result<(), GitMetadataChangeError> {
         });
     }
     Ok(())
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigChange {
+    Changed,
+    Unchanged,
+}
+#[derive(Debug)]
+pub enum ConfigChangeError {
+    Read { path: PathBuf, source: io::Error },
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigStamp(Option<u64>);
+pub struct ConfigChangeDetector {
+    baseline: Option<ConfigStamp>,
+}
+impl ConfigChangeDetector {
+    pub fn new(root: &Path) -> Self {
+        Self {
+            baseline: config_fingerprint(root).ok(),
+        }
+    }
+    pub fn check(&mut self, root: &Path) -> Result<ConfigChange, ConfigChangeError> {
+        let current = config_fingerprint(root)?;
+        let changed = self
+            .baseline
+            .as_ref()
+            .is_some_and(|baseline| baseline != &current);
+        self.baseline = Some(current);
+        Ok(if changed {
+            ConfigChange::Changed
+        } else {
+            ConfigChange::Unchanged
+        })
+    }
+    pub fn sync(&mut self, root: &Path) {
+        if let Ok(current) = config_fingerprint(root) {
+            self.baseline = Some(current);
+        }
+    }
+}
+fn config_fingerprint(root: &Path) -> Result<ConfigStamp, ConfigChangeError> {
+    let path = root.join(CONFIG_PATH);
+    match fs::read(&path) {
+        Ok(bytes) => {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            Ok(ConfigStamp(Some(hasher.finish())))
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(ConfigStamp(None)),
+        Err(source) => Err(ConfigChangeError::Read { path, source }),
+    }
 }
 #[cfg(test)]
 mod tests {

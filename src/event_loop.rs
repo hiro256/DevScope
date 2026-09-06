@@ -8,15 +8,15 @@ use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     change::{
-        GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
-        MarkdownChange, MarkdownChangeDetector,
+        ConfigChange, ConfigChangeDetector, GitMetadataChange, GitMetadataChangeDetector,
+        GitWorktreeChange, GitWorktreeChangeDetector, MarkdownChange, MarkdownChangeDetector,
     },
     progress::{
         BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
         cargo_build_test_command, is_cargo_project,
     },
-    project::{collect_activity_state, collect_markdown_state, collect_project_snapshot},
+    project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
 
 use crate::{
@@ -76,6 +76,15 @@ fn check_markdown_changes(
     matches!(detector.check(root), Ok(MarkdownChange::Changed))
 }
 
+fn check_config_changes(
+    project_root: Option<&Path>,
+    config_changes: &mut Option<ConfigChangeDetector>,
+) -> bool {
+    let (Some(root), Some(detector)) = (project_root, config_changes) else {
+        return false;
+    };
+    matches!(detector.check(root), Ok(ConfigChange::Changed))
+}
 fn check_git_worktree_changes(
     project_root: Option<&Path>,
     worktree_changes: &mut Option<GitWorktreeChangeDetector>,
@@ -101,9 +110,11 @@ fn collect_change_requests(
     markdown_changes: &mut Option<MarkdownChangeDetector>,
     worktree_changes: &mut Option<GitWorktreeChangeDetector>,
     metadata_changes: &mut Option<GitMetadataChangeDetector>,
+    config_changes: &mut Option<ConfigChangeDetector>,
     requests: &mut RefreshRequest,
 ) {
     requests.markdown |= check_markdown_changes(project_root, markdown_changes);
+    requests.markdown |= check_config_changes(project_root, config_changes);
     let worktree_changed = check_git_worktree_changes(project_root, worktree_changes);
     let metadata_changed = check_git_metadata_changes(project_root, metadata_changes);
     requests.git |= worktree_changed || metadata_changed;
@@ -435,6 +446,7 @@ pub fn run(
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
     let mut worktree_changes = new_git_worktree_detector(project_root, app);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
+    let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut requests = RefreshRequest::default();
     let mut build_test_runtime = BuildTestRuntime::default();
     initialize_build_test_availability(project_root, app);
@@ -451,12 +463,21 @@ pub fn run(
                     if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('r') =>
                 {
                     if let Some(root) = project_root {
-                        app.apply_snapshot(collect_project_snapshot(root));
+                        match try_collect_project_snapshot(root) {
+                            Ok(snapshot) => {
+                                app.apply_snapshot(snapshot);
+                                app.clear_refresh_error();
+                            }
+                            Err(error) => app.set_refresh_error(error.to_string()),
+                        }
                         if let Some(detector) = &mut markdown_changes {
                             detector.sync(root);
                         }
                         sync_git_worktree_detector(project_root, app, &mut worktree_changes);
                         if let Some(detector) = &mut metadata_changes {
+                            detector.sync(root);
+                        }
+                        if let Some(detector) = &mut config_changes {
                             detector.sync(root);
                         }
                         requests.clear();
@@ -488,6 +509,7 @@ pub fn run(
                 &mut markdown_changes,
                 &mut worktree_changes,
                 &mut metadata_changes,
+                &mut config_changes,
                 &mut requests,
             );
             if let Some(root) = project_root {
@@ -1090,6 +1112,7 @@ mod tests {
             &mut markdown_detector,
             &mut worktree_detector,
             &mut metadata_detector,
+            &mut None,
             &mut requests,
         );
         assert!(requests.markdown);
@@ -1107,6 +1130,7 @@ mod tests {
             &mut markdown_detector,
             &mut worktree_detector,
             &mut metadata_detector,
+            &mut None,
             &mut requests,
         );
         assert!(!requests.markdown);
@@ -1350,6 +1374,7 @@ mod tests {
             &mut markdown,
             &mut worktree,
             &mut metadata,
+            &mut None,
             &mut requests,
         );
         assert!(!requests.markdown);
@@ -1385,6 +1410,7 @@ mod tests {
             &mut markdown,
             &mut worktree,
             &mut metadata,
+            &mut None,
             &mut requests,
         );
         assert!(requests.markdown);
@@ -1420,6 +1446,7 @@ mod tests {
             &mut markdown,
             &mut worktree,
             &mut metadata,
+            &mut None,
             &mut requests,
         );
         assert!(!requests.markdown);
