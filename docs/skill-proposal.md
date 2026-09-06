@@ -40,8 +40,7 @@ The Skill must not become:
 - A Codex-only, Claude-only, or other provider-specific integration.
 - A direct Markdown editor for Current Work in the normal workflow.
 - A Handoff or Notes feature.
-- An authority to complete Plan tasks, rewrite a roadmap, start unrelated work,
-  commit, or push without user direction.
+- An authority source for Plan changes, commits, or pushes.
 
 ## Core workflow
 
@@ -87,16 +86,19 @@ but the Skill should not perform redundant retries without a reason.
 ## Trust boundaries
 
 ```text
-Plan          = canonical project intent
-Current Work  = temporary recorded work state
-Evidence      = DevScope-observed verification result
-AI assessment = interpretation, not observed truth
+Plan              = canonical project intent
+Current Work      = temporary recorded work state
+Evidence          = verification information surfaced by DevScope
+Observed Evidence = verification directly observed by DevScope
+AI assessment     = interpretation, not observed truth
 ```
 
-A completed Current Work item does not complete its parent Plan task. A successful
-`work done` command is not Evidence, and an AI statement that tests passed is not
-Observed Evidence. The Skill should request or inspect appropriate verification, then
-report the difference between observed results and its own assessment.
+Evidence remains broader than the current Cargo source; this does not establish a
+stable provenance taxonomy. A completed Current Work item does not complete its parent
+Plan task, and a successful `work done` command is not Evidence. An AI running a test
+or reporting that tests passed is not, by itself, Observed Evidence. The Skill should
+request or inspect appropriate verification, then report the difference between what
+DevScope surfaced, what it directly observed where applicable, and its own assessment.
 
 Git Activity is an observation of what changed, not proof that a requirement is
 complete. `context` is an orientation surface, not a replacement for source Markdown
@@ -105,9 +107,16 @@ when details are necessary.
 ## Stop behavior
 
 At a stopping boundary, the Skill should inspect `devscope context`, relevant
-verification, Current Work state when active, and `git status`. It should report those
-facts clearly, preserve the Plan/Evidence distinction, and request direction for any
-Plan-level mutation. It must not automatically commit, push, or create a Handoff.
+verification, Current Work state when active, and `git status`, then report those
+facts clearly while preserving the Plan/Evidence distinction. For a Plan-level
+mutation, it follows explicit authority already supplied by the current user request,
+repository instructions such as `AGENTS.md`, or an explicit workflow instruction. With
+no authority, it does not mutate the Plan; with ambiguous authority, it reports the
+situation and seeks direction. The Skill is not itself an authority source.
+
+The same rule applies to commit and push: do not perform either autonomously, but
+follow explicit user or project authorization when it exists. The Skill does not create
+a Handoff.
 
 ## Agent neutrality and packaging candidates
 
@@ -152,7 +161,8 @@ the explicit error and does not silently accept the state.
 ### Scenario E: verification boundary
 
 After tests run, the agent explains separately what Current Work was recorded, what
-DevScope observed as Evidence, and what it interprets from those facts.
+verification information DevScope surfaced (including directly observed results when
+applicable), and what it interprets from those facts.
 
 ## Measurements
 
@@ -170,16 +180,19 @@ Dogfooding should record, without requiring a formal benchmark:
 The experiment is successful when a fresh agent can begin with `context` without extra
 human workflow instruction, recover active work, use `work list` only when detail or
 numbers are needed, confirm a number before `work done`, and avoid nonexistent write
-commands. It must keep Current Work distinct from Plan and Evidence, avoid inventing
-verification results, and function without a direct Agent adapter. The guidance should
-also remain short enough for agents to follow consistently.
+commands. It must keep Current Work distinct from Plan and Evidence, avoid promoting
+self-reported verification to Observed Evidence, respect existing explicit authority
+for Plan mutations without requesting redundant confirmation, and function without a
+direct Agent adapter. The guidance should also remain short enough for agents to follow
+consistently.
 
 ## Failure signals
 
 The Skill needs revision if agents routinely read all documents before `context`, skip
 context, guess `work done` numbers, treat Current Work completion as Plan completion,
-treat self-reported tests as Observed Evidence, invoke nonexistent `work add` or
-`work start`, or ignore essential rules because the Skill is too long.
+treat any test command they ran as DevScope-observed Evidence, invoke nonexistent
+`work add` or `work start`, mutate a Plan without authority, request permission despite
+clear existing authority, or ignore essential rules because the Skill is too long.
 
 ## Open questions
 
