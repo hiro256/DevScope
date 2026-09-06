@@ -168,7 +168,7 @@ fn render_compact(frame: &mut Frame, area: Rect) {
 
 fn refresh_status(app: &App) -> String {
     if let Some(error) = app.refresh_error() {
-        return format!("Config error: {error}");
+        return error.to_owned();
     }
     let status = app.refresh_status();
     let watching = if status.retry_pending() {

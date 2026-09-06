@@ -183,12 +183,16 @@ fn apply_pending_refreshes(
 ) -> RefreshOutcome {
     let mut outcome = RefreshOutcome::default();
 
-    if requests.markdown
-        && let Ok((plan, tasks)) = collect_markdown_state(root)
-    {
-        app.apply_markdown_state(plan, tasks);
+    if requests.markdown {
+        match collect_markdown_state(root) {
+            Ok((plan, tasks)) => {
+                app.apply_markdown_state(plan, tasks);
+                app.clear_refresh_error();
+                outcome.markdown = true;
+            }
+            Err(error) => app.set_refresh_error(error.to_string()),
+        }
         requests.markdown = false;
-        outcome.markdown = true;
     }
 
     if requests.git
@@ -1246,10 +1250,10 @@ mod tests {
         let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
         assert!(!outcome.markdown);
         assert!(!outcome.git);
-        assert!(requests.markdown);
+        assert!(!requests.markdown);
         assert!(!requests.git);
         assert_eq!(app.activity(), &activity);
-        assert!(apply_refresh_status(
+        assert!(!apply_refresh_status(
             &mut app,
             &requests,
             &outcome,
@@ -1257,7 +1261,7 @@ mod tests {
         ));
         assert_eq!(app.refresh_status().last_source(), status.last_source());
         assert_eq!(app.refresh_status().last_update(), status.last_update());
-        assert!(app.refresh_status().retry_pending());
+        assert!(!app.refresh_status().retry_pending());
         let _ = fs::remove_file(root);
     }
 
