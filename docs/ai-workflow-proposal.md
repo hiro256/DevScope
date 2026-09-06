@@ -258,6 +258,12 @@ This workflow track does not replace the separate Evidence track in
 and Artifact Evidence may be experimented with before a stable generic Evidence Source
 contract is defined. The relative timing of those tracks remains open.
 
+Follow-up dogfooding validated a context-first Human/AI workflow: use `devscope context`
+for orientation, add `devscope task list` only when broader task discovery is needed,
+and read source Markdown only for detail. This is an orientation and discovery surface,
+not a replacement for authoritative Plan Markdown. The initial result also shows that a
+direct Agent adapter is not required for this workflow today; reassessment remains later.
+
 ## Non-goals
 
 The initial Human/AI workflow must not become:

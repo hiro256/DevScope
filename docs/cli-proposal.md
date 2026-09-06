@@ -164,12 +164,48 @@ and `task list` about 426 characters: roughly 82% smaller than reading the curre
 These are exploratory observations for the narrow project-orientation use case, not a
 benchmark contract or proof of overall AI token reduction.
 
-The next dogfood round should cover 3–5 real AI work items and record whether context
-alone was sufficient, whether task list was needed, how many additional documents were
-read, how often Markdown was reread, CLI output size, and whether task list became too
-large. A future `--limit`, list filtering, or short unavailable reason may be useful,
-but no syntax or implementation is selected until repeated dogfood demonstrates the
-need.
+## Follow-up workflow dogfood
+
+Four representative AI workflows confirmed distinct command roles:
+
+1. Identifying the highest-priority remaining task needed `context` only, with no
+   additional documents or raw Markdown reread.
+2. Understanding that task's specification used `context` to identify it, then one
+   source document (`docs/cli-proposal.md`) for detail, without raw Markdown reread.
+3. Choosing from all remaining tasks, including those beyond the context limit, needed
+   `task list` after `context`, with no additional documents or raw Markdown reread.
+4. Checking Evidence execution results used `context` to learn that run state is not
+   exposed by the one-shot CLI; this truthfully communicated the observation boundary.
+
+In this Windows DevScope observation, `context` was 428 characters across 12 lines and
+averaged 259.3 ms. `task list` was 426 characters across 10 lines for 9 remaining tasks
+and averaged 28.8 ms, about 89% faster than `context`. The standard orientation flow was
+`context` only (428 characters); full task discovery used `context` plus `task list`
+(854 characters). These measurements are experimental observations, not performance
+guarantees or a claim of overall AI token reduction.
+
+The observed operating rule is:
+
+```text
+Run devscope context once.
+If its shown tasks select the work target, do not run task list.
+If selection needs tasks behind "... N more", run devscope task list.
+Read source Markdown only for specification, acceptance intent, or other detail.
+```
+
+The CLI is therefore an orientation and discovery surface, not a replacement for
+Markdown as the authoritative Plan source. Nine remaining tasks did not demonstrate a
+need for `--limit`, filtering, `lists`, or JSON. Those remain future candidates; no
+syntax or implementation is selected. Evidence run-state sharing, persistence, IPC, and
+a daemon likewise remain deferred.
+
+## Experiment conclusion
+
+The minimal read-only CLI experiment is successful enough to conclude. `context` was
+sufficient for common orientation, `task list` was needed only for broader discovery,
+and raw Markdown reads became selective rather than default. Output stayed compact, and
+Codex used the CLI directly without requiring an Agent adapter. The findings do not
+adopt a stable CLI contract or decide that an Agent adapter will never be useful.
 
 ## Initial experiment
 

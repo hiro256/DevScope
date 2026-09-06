@@ -106,7 +106,7 @@ cargo build --release
 
 ## Experimental read-only CLI (main)
 
-The experimental read-only CLI is implemented on `main` and dogfooding is in progress.
+The initial read-only CLI experiment completed successfully; the commands remain experimental while later workflow work continues.
 For development checks, use Cargo:
 
 ```powershell
