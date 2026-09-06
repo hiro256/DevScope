@@ -135,6 +135,14 @@ Candidate locations remain undecided:
 DevScope must not depend on any one of these conventions. The experiment should first
 validate the concise core behavior; any provider wrapper can be added later.
 
+## Provider-neutral core prototype
+
+The concise runtime-guidance prototype is now available at
+[examples/devscope-skill.md](examples/devscope-skill.md). It intentionally keeps only
+the rules an agent needs while working; this proposal retains rationale, packaging
+comparison, dogfood scenarios, and open questions. Provider-specific packaging has not
+been selected.
+
 ## Dogfood scenarios
 
 ### Scenario A: fresh-session recovery
