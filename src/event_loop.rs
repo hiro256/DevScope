@@ -1266,6 +1266,60 @@ mod tests {
     }
 
     #[test]
+    fn automatic_config_error_is_consumed_and_recovers_with_exclusion() {
+        let root = temp_root();
+        fs::write(root.join("tasks.md"), "- [ ] Root").unwrap();
+        fs::create_dir_all(root.join("translations")).unwrap();
+        fs::write(root.join("translations/ja.md"), "- [ ] Translation").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let previous_plan = app.plan();
+        let previous_tasks = app.tasks().clone();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(root.join(".devscope/config.toml"), "[plan").unwrap();
+        let mut requests = RefreshRequest {
+            markdown: true,
+            git: false,
+        };
+        let mut worktree = None;
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(!outcome.markdown);
+        assert!(!requests.markdown);
+        assert!(
+            app.refresh_error()
+                .is_some_and(|error| error.contains("Config error"))
+        );
+        assert_eq!(app.plan(), previous_plan);
+        assert_eq!(app.tasks(), &previous_tasks);
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[plan]\nexclude = [\"translations\"]\n",
+        )
+        .unwrap();
+        requests.markdown = true;
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.markdown);
+        assert!(app.refresh_error().is_none());
+        assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(0, 1)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn git_refresh_does_not_clear_a_plan_error() {
+        let root = git_root();
+        let mut app = App::new(collect_project_snapshot(&root));
+        app.set_refresh_error("Config error: invalid Config");
+        let mut requests = RefreshRequest {
+            markdown: false,
+            git: true,
+        };
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(!outcome.markdown);
+        assert!(app.refresh_error().is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
     fn refresh_status_tracks_markdown_and_git_successes() {
         let mut app = App::new(ProjectSnapshot::unavailable());
         let requests = RefreshRequest::default();
