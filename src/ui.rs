@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::app::{ActivityState, App, PlanState, RefreshSource, TaskState};
+use crate::app::{ActivityState, App, FocusedPanel, PlanState, RefreshSource, TaskState};
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
     BuildTestStatus, GitFileStatus,
@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 const COMPACT_WIDTH: u16 = 20;
@@ -116,15 +116,17 @@ pub fn render(frame: &mut Frame, app: &App) {
             app.selected_task(),
             inner_height(task_area),
         ))
-        .block(Block::default().borders(Borders::ALL).title("Task Summary")),
+        .block(panel_block(
+            "Task Summary",
+            app.focused_panel() == FocusedPanel::Tasks,
+        )),
         task_area,
     );
     frame.render_widget(
-        Paragraph::new(evidence_details(app, inner_height(details_area))).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(evidence_detail_title(app)),
-        ),
+        Paragraph::new(evidence_details(app, inner_height(details_area))).block(panel_block(
+            evidence_detail_title(app),
+            app.focused_panel() == FocusedPanel::Evidence,
+        )),
         details_area,
     );
 
@@ -155,9 +157,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     frame.render_widget(
-        Paragraph::new("b:Build  t:Test  r:Reload  q/Esc:Quit"),
+        Paragraph::new("Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit"),
         footer_area,
     );
+}
+fn panel_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(if focused {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        })
+        .title(title)
 }
 fn render_compact(frame: &mut Frame, area: Rect) {
     frame.render_widget(
@@ -609,7 +621,7 @@ mod tests {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Build and Test have not been run yet."));
+        assert!(draw(&app, 80, 30).contains("Details: Build"));
         app.select_evidence_detail(BuildTestKind::Build);
         app.apply_build_test_state(
             BuildTestKind::Build,
@@ -767,7 +779,7 @@ mod tests {
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
         let output = draw(&app, 80, 30);
         assert!(output.contains("Evidence   Build Error · Test Not run"));
-        assert!(!output.contains("a detailed execution error"));
+        assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
     }
 
@@ -1052,5 +1064,21 @@ mod tests {
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
         assert!(draw(&app, 80, 30).contains("Changed Files"));
         assert!(draw(&app, 80, 30).contains("Unavailable"));
+    }
+    #[test]
+    fn renders_focus_border_for_tasks_and_evidence() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(1, task_items(1))),
+            ActivityState::Unavailable,
+        );
+        let tasks_focused = draw(&app, 80, 30);
+        assert!(tasks_focused.contains("Task Summary"));
+        assert!(tasks_focused.contains("Details: Build"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let evidence_focused = draw(&app, 80, 30);
+        assert!(evidence_focused.contains("Task Summary"));
+        assert!(evidence_focused.contains("Details: Build"));
+        assert_ne!(tasks_focused, evidence_focused);
     }
 }

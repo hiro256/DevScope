@@ -38,3 +38,14 @@ extension, Web UI, or JSON/API to use the same progress model.
 
 Agent integrations are adapters. They may enrich the observed state, but must not
 become a dependency of the core model.
+## TUI interaction model
+
+The TUI supports human-oriented project understanding, while the CLI remains the
+precise interface for AI and automation. A focused panel identifies the visible
+interaction surface that receives navigation; selection identifies an item within that
+panel. Project Progress remains an overview rather than a focus target. A future Detail
+View may provide optional human drill-down.
+
+This follows lazygit's separation of focus and local selection without copying its UI:
+DevScope remains observation- and understanding-centered, and avoids accumulating
+context-dependent shortcuts.

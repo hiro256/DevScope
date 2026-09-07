@@ -46,6 +46,12 @@ impl RefreshStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusedPanel {
+    Tasks,
+    Evidence,
+}
+
 pub struct App {
     running: bool,
     plan: PlanState,
@@ -54,6 +60,7 @@ pub struct App {
     build_test_build: BuildTestState,
     build_test_test: BuildTestState,
     evidence_detail_kind: Option<BuildTestKind>,
+    focused_panel: FocusedPanel,
     selected_task: Option<usize>,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -68,7 +75,8 @@ impl App {
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
-            evidence_detail_kind: None,
+            evidence_detail_kind: Some(BuildTestKind::Build),
+            focused_panel: FocusedPanel::Tasks,
             selected_task: None,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -163,6 +171,10 @@ impl App {
         self.evidence_detail_kind = Some(kind);
     }
 
+    pub const fn focused_panel(&self) -> FocusedPanel {
+        self.focused_panel
+    }
+
     pub const fn selected_task(&self) -> Option<usize> {
         self.selected_task
     }
@@ -177,13 +189,33 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
-            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
+            KeyCode::Tab => self.focus_next_panel(),
+            KeyCode::BackTab => self.focus_previous_panel(),
+            KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(1),
+            KeyCode::Up | KeyCode::Char('k') => self.move_focused_selection(-1),
             _ => {}
         }
     }
 
-    fn move_selection(&mut self, delta: isize) {
+    fn focus_next_panel(&mut self) {
+        self.focused_panel = match self.focused_panel {
+            FocusedPanel::Tasks => FocusedPanel::Evidence,
+            FocusedPanel::Evidence => FocusedPanel::Tasks,
+        };
+    }
+
+    fn focus_previous_panel(&mut self) {
+        self.focus_next_panel();
+    }
+
+    fn move_focused_selection(&mut self, delta: isize) {
+        match self.focused_panel {
+            FocusedPanel::Tasks => self.move_task_selection(delta),
+            FocusedPanel::Evidence => self.move_evidence_selection(delta),
+        }
+    }
+
+    fn move_task_selection(&mut self, delta: isize) {
         let TaskState::Available(summary) = &self.tasks else {
             return;
         };
@@ -192,6 +224,15 @@ impl App {
         };
         let last = summary.remaining().saturating_sub(1);
         self.selected_task = Some((current as isize + delta).clamp(0, last as isize) as usize);
+    }
+
+    fn move_evidence_selection(&mut self, delta: isize) {
+        let current = self.evidence_detail_kind.unwrap_or(BuildTestKind::Build);
+        self.evidence_detail_kind = Some(match (current, delta.is_positive()) {
+            (BuildTestKind::Build, true) => BuildTestKind::Test,
+            (BuildTestKind::Test, false) => BuildTestKind::Build,
+            (kind, _) => kind,
+        });
     }
 }
 
@@ -321,9 +362,9 @@ mod tests {
     }
 
     #[test]
-    fn evidence_detail_selection_starts_empty_and_survives_state_and_snapshot_updates() {
+    fn evidence_selection_starts_at_build_and_survives_state_and_snapshot_updates() {
         let mut app = app(2);
-        assert_eq!(app.evidence_detail_kind(), None);
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
         app.select_evidence_detail(BuildTestKind::Build);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
         app.apply_snapshot(snapshot(1));
@@ -488,5 +529,42 @@ mod tests {
         let mut second_app = app(1);
         second_app.handle_key(key(KeyCode::Esc));
         assert!(!second_app.is_running());
+    }
+    #[test]
+    fn panel_focus_wraps_and_routes_selection_locally() {
+        let mut app = app(3);
+        assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected_task(), Some(1));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+        assert_eq!(app.selected_task(), Some(1));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+
+        app.handle_key(key(KeyCode::BackTab));
+        assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+        assert_eq!(app.selected_task(), Some(1));
+        app.handle_key(key(KeyCode::BackTab));
+        assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
+    }
+
+    #[test]
+    fn snapshot_preserves_focus_and_evidence_selection() {
+        let mut app = app(3);
+        app.handle_key(key(KeyCode::Tab));
+        app.handle_key(key(KeyCode::Char('j')));
+        app.apply_snapshot(snapshot(1));
+        assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
     }
 }
