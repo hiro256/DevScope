@@ -23,19 +23,35 @@ enum LayoutVariant {
     Small,
 }
 
+pub fn focusable_panels(width: u16, height: u16) -> &'static [FocusedPanel] {
+    match layout_variant(width, height) {
+        Some(LayoutVariant::Large | LayoutVariant::Medium) => &[
+            FocusedPanel::Tasks,
+            FocusedPanel::Evidence,
+            FocusedPanel::ChangedFiles,
+        ],
+        Some(LayoutVariant::Small) => &[FocusedPanel::Tasks, FocusedPanel::Evidence],
+        None => &[],
+    }
+}
+
+fn layout_variant(width: u16, height: u16) -> Option<LayoutVariant> {
+    if width < COMPACT_WIDTH || height < COMPACT_HEIGHT {
+        None
+    } else if height >= 30 {
+        Some(LayoutVariant::Large)
+    } else if height >= 25 {
+        Some(LayoutVariant::Medium)
+    } else {
+        Some(LayoutVariant::Small)
+    }
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    if area.width < COMPACT_WIDTH || area.height < COMPACT_HEIGHT {
+    let Some(layout) = layout_variant(area.width, area.height) else {
         render_compact(frame, area);
         return;
-    }
-
-    let layout = if area.height >= 30 {
-        LayoutVariant::Large
-    } else if area.height >= 25 {
-        LayoutVariant::Medium
-    } else {
-        LayoutVariant::Small
     };
     let (
         title_area,
@@ -109,10 +125,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]),
         title_area,
     );
-    frame.render_widget(
-        project_progress(app, usize::from(progress_area.width.saturating_sub(2))),
-        progress_area,
-    );
+    frame.render_widget(project_progress(app, progress_area.width), progress_area);
     frame.render_widget(
         Paragraph::new(tasks(
             app.tasks(),
@@ -137,13 +150,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(changed_files(
                 app.activity(),
+                app.selected_changed_file(),
                 inner_height(changed_files_area),
             ))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(padded_title("Changed Files")),
-            ),
+            .block(panel_block(
+                "Changed Files",
+                app.focused_panel() == FocusedPanel::ChangedFiles,
+            )),
             changed_files_area,
         );
     }
@@ -219,20 +232,6 @@ fn format_timestamp(duration: Duration) -> String {
         format!("+{hours}:{minutes:02}:{seconds:02}")
     }
 }
-fn project_progress(app: &App, width: usize) -> Paragraph<'static> {
-    Paragraph::new(vec![
-        Line::from(format!("Plan       {}", plan(app.plan(), width))),
-        Line::from(format!("Activity   {}", activity(app.activity()))),
-        Line::from(format!("Evidence   {}", evidence(app))),
-        Line::from("Agent      Not available"),
-    ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(padded_title("Project Progress")),
-    )
-}
-
 fn evidence(app: &App) -> String {
     let build = app.build_test_state(BuildTestKind::Build);
     let test = app.build_test_state(BuildTestKind::Test);
@@ -403,6 +402,28 @@ fn padded_title(title: impl AsRef<str>) -> String {
     format!(" {} ", title.as_ref())
 }
 
+fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
+    Paragraph::new(vec![
+        Line::from(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
+        Line::from(format!("Activity   {}", activity(app.activity()))),
+        Line::from(format!("Evidence   {}", evidence(app))),
+        Line::from("Agent      Not available"),
+    ])
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(padded_title("Project Progress")),
+    )
+}
+
+fn plan_line(plan_state: PlanState, width: usize) -> String {
+    const LABEL: &str = "Plan       ";
+    format!(
+        "{LABEL}{}",
+        plan(plan_state, width.saturating_sub(LABEL.len()))
+    )
+}
+
 fn plan(plan: PlanState, width: usize) -> String {
     match plan {
         PlanState::Available(summary) if summary.total() == 0 => "No tasks found".into(),
@@ -417,17 +438,26 @@ fn plan_progress(completed: usize, total: usize, width: usize) -> String {
     }
 
     let completed = completed.min(total);
-    let percent = completed / total * 100 + completed % total * 100 / total;
-    let bar_width = width.saturating_sub(18).min(14);
-    if bar_width == 0 {
-        return format!("{completed}/{total}");
+    let percent = ((completed as u128 * 100) / total as u128) as usize;
+    let count = format!("{completed}/{total}");
+    if width < count.len() + 1 {
+        return String::new();
+    }
+    if width < count.len() + percent.to_string().len() + 2 {
+        return count;
     }
 
-    let filled = completed / total * bar_width + completed % total * bar_width / total;
-    let bar = format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled));
-    format!("{bar} {percent}% {completed}/{total}")
-}
+    let percentage = format!("{percent}%");
+    let reserved = percentage.len() + count.len() + 2;
+    let bar_width = width.saturating_sub(reserved).min(14);
+    if bar_width == 0 {
+        return format!("{percentage} {count}");
+    }
 
+    let filled = ((completed as u128 * bar_width as u128) / total as u128) as usize;
+    let bar = format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled));
+    format!("{bar} {percentage} {count}")
+}
 fn activity(activity: &ActivityState) -> String {
     match activity {
         ActivityState::Available(summary) if summary.changed_files() == 0 => "Clean".into(),
@@ -495,7 +525,11 @@ fn task_lines(
     lines
 }
 
-fn changed_files(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
+fn changed_files(
+    activity: &ActivityState,
+    selected: Option<usize>,
+    rows: usize,
+) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
     }
@@ -506,27 +540,31 @@ fn changed_files(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
         }
         ActivityState::Available(summary) => {
             let files = summary.changed_file_items();
+            let selected = selected.unwrap_or(0).min(files.len() - 1);
             let file_rows = if files.len() > rows && rows > 1 {
                 rows - 1
             } else {
                 rows
             };
-            let mut lines = files
+            let start = selected
+                .saturating_sub(file_rows.saturating_sub(1))
+                .min(files.len().saturating_sub(file_rows));
+            let end = (start + file_rows).min(files.len());
+            let mut lines = files[start..end]
                 .iter()
-                .take(file_rows)
-                .map(|file| {
+                .enumerate()
+                .map(|(offset, file)| {
+                    let index = start + offset;
                     Line::from(format!(
-                        "{}  {}",
+                        "{} {}  {}",
+                        if index == selected { ">" } else { " " },
                         git_file_status(&file.status),
                         file.path.display()
                     ))
                 })
                 .collect::<Vec<_>>();
-            if files.len() > file_rows && rows > 1 {
-                lines.push(Line::from(format!(
-                    "... and {} more",
-                    files.len() - file_rows
-                )));
+            if end < files.len() && lines.len() < rows {
+                lines.push(Line::from(format!("... and {} more", files.len() - end)));
             }
             lines
         }
@@ -535,7 +573,6 @@ fn changed_files(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
         }
     }
 }
-
 fn git_file_status(status: &GitFileStatus) -> &'static str {
     match status {
         GitFileStatus::Modified => "M",
@@ -1100,13 +1137,93 @@ mod tests {
         assert_ne!(tasks_focused, evidence_focused);
     }
     #[test]
-    fn plan_progress_handles_zero_partial_complete_and_narrow_widths() {
-        assert_eq!(plan_progress(0, 0, 40), "No tasks found");
-        assert!(plan_progress(0, 5, 40).contains("0% 0/5"));
-        assert!(plan_progress(53, 59, 40).contains("89% 53/59"));
-        assert!(plan_progress(5, 5, 40).contains("100% 5/5"));
-        assert_eq!(plan_progress(3, 5, 18), "3/5");
+    fn plan_progress_degrades_without_exceeding_the_available_line_width() {
+        for width in [80, 32, 18] {
+            let line = plan_line(PlanState::Available(PlanSummary::new(53, 59)), width);
+            assert!(line.chars().count() <= width, "{line:?} exceeds {width}");
+        }
+
+        let wide = plan_line(PlanState::Available(PlanSummary::new(53, 59)), 80);
+        assert!(wide.contains("━━━━━━━━"));
+        assert!(wide.contains("89% 53/59"));
+        let medium = plan_line(PlanState::Available(PlanSummary::new(53, 59)), 32);
+        assert!(medium.contains("89% 53/59"));
+        assert!(medium.contains('━'));
+        assert_eq!(
+            plan_line(PlanState::Available(PlanSummary::new(53, 59)), 18),
+            "Plan       53/59"
+        );
+        assert_eq!(
+            plan(PlanState::Available(PlanSummary::new(0, 0)), 40),
+            "No tasks found"
+        );
+        assert!(plan(PlanState::Available(PlanSummary::new(0, 5)), 40).contains("0% 0/5"));
+        assert!(plan(PlanState::Available(PlanSummary::new(5, 5)), 40).contains("100% 5/5"));
         assert_eq!(plan(PlanState::Unavailable, 40), "Unavailable");
+    }
+
+    #[test]
+    fn focusable_panels_follow_the_responsive_layout() {
+        assert_eq!(
+            focusable_panels(80, 30),
+            &[
+                FocusedPanel::Tasks,
+                FocusedPanel::Evidence,
+                FocusedPanel::ChangedFiles
+            ]
+        );
+        assert_eq!(
+            focusable_panels(80, 25),
+            &[
+                FocusedPanel::Tasks,
+                FocusedPanel::Evidence,
+                FocusedPanel::ChangedFiles
+            ]
+        );
+        assert_eq!(
+            focusable_panels(40, 18),
+            &[FocusedPanel::Tasks, FocusedPanel::Evidence]
+        );
+        assert!(focusable_panels(19, 18).is_empty());
+    }
+
+    #[test]
+    fn renders_changed_file_selection_and_hides_its_focus_on_small_layouts() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(2, task_items(2))),
+            activity_with_files(vec![
+                GitChangedFile {
+                    path: "src/a.rs".into(),
+                    status: GitFileStatus::Modified,
+                },
+                GitChangedFile {
+                    path: "src/b.rs".into(),
+                    status: GitFileStatus::Added,
+                },
+            ]),
+        );
+        let panels = focusable_panels(80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            panels,
+        );
+        let large = draw(&app, 80, 30);
+        assert!(large.contains("  M  src/a.rs"));
+        assert!(large.contains("> A  src/b.rs"));
+
+        app.reconcile_focus(focusable_panels(40, 18));
+        assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+        let small = draw(&app, 40, 18);
+        assert!(!small.contains("Changed Files"));
+        assert!(!small.contains("src/a.rs"));
     }
 
     #[test]

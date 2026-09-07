@@ -50,6 +50,7 @@ impl RefreshStatus {
 pub enum FocusedPanel {
     Tasks,
     Evidence,
+    ChangedFiles,
 }
 
 pub struct App {
@@ -62,6 +63,7 @@ pub struct App {
     evidence_detail_kind: Option<BuildTestKind>,
     focused_panel: FocusedPanel,
     selected_task: Option<usize>,
+    selected_changed_file: Option<usize>,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
 }
@@ -78,6 +80,7 @@ impl App {
             evidence_detail_kind: Some(BuildTestKind::Build),
             focused_panel: FocusedPanel::Tasks,
             selected_task: None,
+            selected_changed_file: None,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
         };
@@ -99,6 +102,7 @@ impl App {
 
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
+        self.reconcile_selected_changed_file();
     }
 
     pub fn set_refresh_error(&mut self, error: impl Into<String>) {
@@ -129,6 +133,17 @@ impl App {
             TaskState::Available(summary) if summary.remaining() > 0 => {
                 Some(self.selected_task.unwrap_or(0).min(summary.remaining() - 1))
             }
+            _ => None,
+        };
+    }
+
+    fn reconcile_selected_changed_file(&mut self) {
+        self.selected_changed_file = match &self.activity {
+            ActivityState::Available(summary) if summary.changed_files() > 0 => Some(
+                self.selected_changed_file
+                    .unwrap_or(0)
+                    .min(summary.changed_files() - 1),
+            ),
             _ => None,
         };
     }
@@ -179,39 +194,63 @@ impl App {
         self.selected_task
     }
 
+    pub const fn selected_changed_file(&self) -> Option<usize> {
+        self.selected_changed_file
+    }
+
     pub const fn refresh_status(&self) -> RefreshStatus {
         self.refresh_status
     }
 
+    #[cfg(test)]
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.handle_key_with_focusable_panels(key, &[FocusedPanel::Tasks, FocusedPanel::Evidence]);
+    }
+
+    pub fn handle_key_with_focusable_panels(
+        &mut self,
+        key: KeyEvent,
+        focusable_panels: &[FocusedPanel],
+    ) {
         if key.kind != KeyEventKind::Press {
             return;
         }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
-            KeyCode::Tab => self.focus_next_panel(),
-            KeyCode::BackTab => self.focus_previous_panel(),
-            KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_focused_selection(-1),
+            KeyCode::Tab => self.focus_panel(focusable_panels, 1),
+            KeyCode::BackTab => self.focus_panel(focusable_panels, -1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(focusable_panels, 1),
+            KeyCode::Up | KeyCode::Char('k') => self.move_focused_selection(focusable_panels, -1),
             _ => {}
         }
     }
 
-    fn focus_next_panel(&mut self) {
-        self.focused_panel = match self.focused_panel {
-            FocusedPanel::Tasks => FocusedPanel::Evidence,
-            FocusedPanel::Evidence => FocusedPanel::Tasks,
+    pub fn reconcile_focus(&mut self, focusable_panels: &[FocusedPanel]) {
+        if !focusable_panels.is_empty() && !focusable_panels.contains(&self.focused_panel) {
+            self.focused_panel = focusable_panels[0];
+        }
+    }
+
+    fn focus_panel(&mut self, focusable_panels: &[FocusedPanel], delta: isize) {
+        let Some(current) = focusable_panels
+            .iter()
+            .position(|panel| *panel == self.focused_panel)
+        else {
+            self.reconcile_focus(focusable_panels);
+            return;
         };
+        let next = (current as isize + delta).rem_euclid(focusable_panels.len() as isize) as usize;
+        self.focused_panel = focusable_panels[next];
     }
 
-    fn focus_previous_panel(&mut self) {
-        self.focus_next_panel();
-    }
-
-    fn move_focused_selection(&mut self, delta: isize) {
+    fn move_focused_selection(&mut self, focusable_panels: &[FocusedPanel], delta: isize) {
+        if !focusable_panels.contains(&self.focused_panel) {
+            return;
+        }
         match self.focused_panel {
             FocusedPanel::Tasks => self.move_task_selection(delta),
             FocusedPanel::Evidence => self.move_evidence_selection(delta),
+            FocusedPanel::ChangedFiles => self.move_changed_file_selection(delta),
         }
     }
 
@@ -234,6 +273,18 @@ impl App {
             (kind, _) => kind,
         });
     }
+
+    fn move_changed_file_selection(&mut self, delta: isize) {
+        let ActivityState::Available(summary) = &self.activity else {
+            return;
+        };
+        let Some(current) = self.selected_changed_file else {
+            return;
+        };
+        let last = summary.changed_files().saturating_sub(1);
+        self.selected_changed_file =
+            Some((current as isize + delta).clamp(0, last as isize) as usize);
+    }
 }
 
 #[cfg(test)]
@@ -242,9 +293,9 @@ mod tests {
     use crossterm::event::KeyModifiers;
     use devscope::{
         progress::{
-            BuildTestExecutionError, BuildTestFreshness, BuildTestKind, BuildTestOutcome,
-            BuildTestResult, BuildTestRun, BuildTestState, PlanSummary, TaskSummary,
-            TaskSummaryItem,
+            ActivitySummary, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
+            BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, GitActivity,
+            GitChangedFile, GitFileStatus, PlanSummary, TaskSummary, TaskSummaryItem,
         },
         project::{ProjectSnapshot, collect_project_snapshot},
     };
@@ -520,6 +571,82 @@ mod tests {
         assert!(app.refresh_status().retry_pending());
         assert!(app.set_refresh_pending(false));
         assert!(!app.refresh_status().retry_pending());
+    }
+    fn activity_with_files(count: usize) -> ActivityState {
+        ActivityState::Available(ActivitySummary::from(&GitActivity {
+            changed_files: (0..count)
+                .map(|index| GitChangedFile {
+                    path: format!("file-{index}.rs").into(),
+                    status: GitFileStatus::Modified,
+                })
+                .collect(),
+            recent_commits: Vec::new(),
+        }))
+    }
+
+    const ALL_PANELS: &[FocusedPanel] = &[
+        FocusedPanel::Tasks,
+        FocusedPanel::Evidence,
+        FocusedPanel::ChangedFiles,
+    ];
+    const TASKS_AND_EVIDENCE: &[FocusedPanel] = &[FocusedPanel::Tasks, FocusedPanel::Evidence];
+
+    #[test]
+    fn changed_file_selection_starts_clamps_and_reconciles_after_activity_refresh() {
+        let mut app = app(2);
+        app.apply_activity_state(activity_with_files(3));
+        assert_eq!(app.selected_changed_file(), Some(0));
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        app.handle_key_with_focusable_panels(key(KeyCode::Up), ALL_PANELS);
+        assert_eq!(app.selected_changed_file(), Some(0));
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('j')), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        assert_eq!(app.selected_changed_file(), Some(2));
+
+        app.apply_activity_state(activity_with_files(1));
+        assert_eq!(app.selected_changed_file(), Some(0));
+        app.apply_activity_state(ActivityState::NotRepository);
+        assert_eq!(app.selected_changed_file(), None);
+    }
+
+    #[test]
+    fn three_panel_focus_wraps_and_changed_file_navigation_is_local() {
+        let mut app = app(3);
+        app.apply_activity_state(activity_with_files(3));
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        let selected_task = app.selected_task();
+        let selected_evidence = app.evidence_detail_kind();
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('j')), ALL_PANELS);
+        assert_eq!(app.selected_changed_file(), Some(1));
+        assert_eq!(app.selected_task(), selected_task);
+        assert_eq!(app.evidence_detail_kind(), selected_evidence);
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+        app.handle_key_with_focusable_panels(key(KeyCode::BackTab), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+    }
+
+    #[test]
+    fn focus_reconciles_when_changed_files_becomes_hidden() {
+        let mut app = app(1);
+        app.apply_activity_state(activity_with_files(1));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+
+        app.reconcile_focus(TASKS_AND_EVIDENCE);
+        assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), TASKS_AND_EVIDENCE);
+        assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
     }
     #[test]
     fn q_and_escape_exit() {

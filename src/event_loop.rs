@@ -495,10 +495,17 @@ pub fn run(
                         start_manual_build_test(project_root, app, &mut build_test_runtime, kind);
                 }
                 Event::Key(key) => {
-                    app.handle_key(key);
+                    let size = terminal.size()?;
+                    app.handle_key_with_focusable_panels(
+                        key,
+                        ui::focusable_panels(size.width, size.height),
+                    );
                     needs_render = true;
                 }
-                Event::Resize(_, _) => needs_render = true,
+                Event::Resize(width, height) => {
+                    app.reconcile_focus(ui::focusable_panels(width, height));
+                    needs_render = true;
+                }
                 _ => {}
             }
         }

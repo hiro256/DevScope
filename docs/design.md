@@ -49,3 +49,6 @@ View may provide optional human drill-down.
 This follows lazygit's separation of focus and local selection without copying its UI:
 DevScope remains observation- and understanding-centered, and avoids accumulating
 context-dependent shortcuts.
+
+Visual hierarchy should prefer spacing, borders, and restrained progress marks before decorative
+color or additional widgets. Hidden panels must not retain interactive focus.
