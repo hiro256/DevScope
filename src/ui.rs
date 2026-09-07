@@ -109,7 +109,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]),
         title_area,
     );
-    frame.render_widget(project_progress(app), progress_area);
+    frame.render_widget(
+        project_progress(app, usize::from(progress_area.width.saturating_sub(2))),
+        progress_area,
+    );
     frame.render_widget(
         Paragraph::new(tasks(
             app.tasks(),
@@ -139,7 +142,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Changed Files"),
+                    .title(padded_title("Changed Files")),
             ),
             changed_files_area,
         );
@@ -150,7 +153,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Paragraph::new(commits(app.activity(), inner_height(commits_area))).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Recent Commits"),
+                    .title(padded_title("Recent Commits")),
             ),
             commits_area,
         );
@@ -161,7 +164,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer_area,
     );
 }
-fn panel_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
+fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(if focused {
@@ -169,7 +172,7 @@ fn panel_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static>
         } else {
             BorderType::Plain
         })
-        .title(title)
+        .title(padded_title(title))
 }
 fn render_compact(frame: &mut Frame, area: Rect) {
     frame.render_widget(
@@ -216,9 +219,9 @@ fn format_timestamp(duration: Duration) -> String {
         format!("+{hours}:{minutes:02}:{seconds:02}")
     }
 }
-fn project_progress(app: &App) -> Paragraph<'static> {
+fn project_progress(app: &App, width: usize) -> Paragraph<'static> {
     Paragraph::new(vec![
-        Line::from(format!("Plan       {}", plan(app.plan()))),
+        Line::from(format!("Plan       {}", plan(app.plan(), width))),
         Line::from(format!("Activity   {}", activity(app.activity()))),
         Line::from(format!("Evidence   {}", evidence(app))),
         Line::from("Agent      Not available"),
@@ -226,7 +229,7 @@ fn project_progress(app: &App) -> Paragraph<'static> {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Project Progress"),
+            .title(padded_title("Project Progress")),
     )
 }
 
@@ -396,18 +399,33 @@ fn inner_height(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2))
 }
 
-fn plan(plan: PlanState) -> String {
+fn padded_title(title: impl AsRef<str>) -> String {
+    format!(" {} ", title.as_ref())
+}
+
+fn plan(plan: PlanState, width: usize) -> String {
     match plan {
         PlanState::Available(summary) if summary.total() == 0 => "No tasks found".into(),
-        PlanState::Available(summary) => {
-            format!(
-                "{} / {} tasks complete",
-                summary.completed(),
-                summary.total()
-            )
-        }
+        PlanState::Available(summary) => plan_progress(summary.completed(), summary.total(), width),
         PlanState::Unavailable => "Unavailable".into(),
     }
+}
+
+fn plan_progress(completed: usize, total: usize, width: usize) -> String {
+    if total == 0 {
+        return "No tasks found".into();
+    }
+
+    let completed = completed.min(total);
+    let percent = completed / total * 100 + completed % total * 100 / total;
+    let bar_width = width.saturating_sub(18).min(14);
+    if bar_width == 0 {
+        return format!("{completed}/{total}");
+    }
+
+    let filled = completed / total * bar_width + completed % total * bar_width / total;
+    let bar = format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled));
+    format!("{bar} {percent}% {completed}/{total}")
 }
 
 fn activity(activity: &ActivityState) -> String {
@@ -833,7 +851,7 @@ mod tests {
             ActivityState::Available(ActivitySummary::from(&activity)),
         );
         let output = draw(&app, 80, 30);
-        assert!(output.contains("3 / 5 tasks complete"));
+        assert!(output.contains("60% 3/5"));
         assert!(output.contains("Activity   Clean"));
         assert!(output.contains("newest"));
     }
@@ -1080,5 +1098,35 @@ mod tests {
         assert!(evidence_focused.contains("Task Summary"));
         assert!(evidence_focused.contains("Details: Build"));
         assert_ne!(tasks_focused, evidence_focused);
+    }
+    #[test]
+    fn plan_progress_handles_zero_partial_complete_and_narrow_widths() {
+        assert_eq!(plan_progress(0, 0, 40), "No tasks found");
+        assert!(plan_progress(0, 5, 40).contains("0% 0/5"));
+        assert!(plan_progress(53, 59, 40).contains("89% 53/59"));
+        assert!(plan_progress(5, 5, 40).contains("100% 5/5"));
+        assert_eq!(plan_progress(3, 5, 18), "3/5");
+        assert_eq!(plan(PlanState::Unavailable, 40), "Unavailable");
+    }
+
+    #[test]
+    fn renders_padded_titles_for_all_visible_panels() {
+        let app = app(
+            TaskState::Available(TaskSummary::new(1, task_items(1))),
+            activity_with_files(vec![GitChangedFile {
+                path: "src/a.rs".into(),
+                status: GitFileStatus::Modified,
+            }]),
+        );
+        let output = draw(&app, 80, 30);
+        for title in [
+            " Project Progress ",
+            " Task Summary ",
+            " Details: Build ",
+            " Changed Files ",
+            " Recent Commits ",
+        ] {
+            assert!(output.contains(title));
+        }
     }
 }
