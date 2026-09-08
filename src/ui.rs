@@ -440,7 +440,7 @@ fn plan_progress(completed: usize, total: usize, width: usize) -> String {
     let completed = completed.min(total);
     let percent = ((completed as u128 * 100) / total as u128) as usize;
     let count = format!("{completed}/{total}");
-    if width < count.len() + 1 {
+    if width < count.len() {
         return String::new();
     }
     if width < count.len() + percent.to_string().len() + 2 {
@@ -1153,6 +1153,8 @@ mod tests {
             plan_line(PlanState::Available(PlanSummary::new(53, 59)), 18),
             "Plan       53/59"
         );
+        assert_eq!(plan_progress(53, 59, "53/59".len()), "53/59");
+        assert_eq!(plan_progress(53, 59, "53/59".len() - 1), "");
         assert_eq!(
             plan(PlanState::Available(PlanSummary::new(0, 0)), 40),
             "No tasks found"

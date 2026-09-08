@@ -52,3 +52,6 @@ context-dependent shortcuts.
 
 Visual hierarchy should prefer spacing, borders, and restrained progress marks before decorative
 color or additional widgets. Hidden panels must not retain interactive focus.
+
+The initial panel-focus experiment validated Tasks, Evidence, and Changed Files as a small focus cycle.
+Hidden panels are excluded from navigation, and panel-local selection persists independently.

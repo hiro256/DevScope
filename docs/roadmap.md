@@ -102,7 +102,7 @@
 - [x] DevScope Skill experiment
 - [x] Agent integration reassessment
 - [x] Config file
-- [ ] TUI panel focus experiment
+- [x] TUI panel focus experiment
 - [ ] Task weighting
 - [ ] Progress history
 - [ ] VS Code integration
