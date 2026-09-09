@@ -520,11 +520,17 @@ impl CurrentWorkChangeDetector {
     }
 
     pub fn check(&mut self, root: &Path) -> Result<CurrentWorkChange, CurrentWorkChangeError> {
-        let current = current_work_fingerprint(root)?;
-        let changed = self
-            .baseline
-            .as_ref()
-            .is_some_and(|baseline| baseline != &current);
+        let current = match current_work_fingerprint(root) {
+            Ok(current) => current,
+            Err(error) => {
+                self.baseline = None;
+                return Err(error);
+            }
+        };
+        let changed = match &self.baseline {
+            Some(baseline) => baseline != &current,
+            None => true,
+        };
         self.baseline = Some(current);
         Ok(if changed {
             CurrentWorkChange::Changed
@@ -534,9 +540,7 @@ impl CurrentWorkChangeDetector {
     }
 
     pub fn sync(&mut self, root: &Path) {
-        if let Ok(current) = current_work_fingerprint(root) {
-            self.baseline = Some(current);
-        }
+        self.baseline = current_work_fingerprint(root).ok();
     }
 }
 
@@ -625,6 +629,54 @@ mod tests {
         assert_eq!(
             detector.check(&project.0).unwrap(),
             CurrentWorkChange::Unchanged
+        );
+    }
+    #[test]
+    fn current_work_detector_invalidates_the_baseline_after_a_read_error() {
+        let project = TempProject::new();
+        let path = project.0.join(".devscope/work/current.md");
+        project.write(
+            ".devscope/work/current.md",
+            "# Current Work\nParent: a.md\nTask: One\n- [ ] Alpha\n",
+        );
+        let mut detector = CurrentWorkChangeDetector::new(&project.0);
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Unchanged
+        );
+
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(matches!(
+            detector.check(&project.0),
+            Err(CurrentWorkChangeError::Read { .. })
+        ));
+
+        fs::remove_dir(&path).unwrap();
+        project.write(
+            ".devscope/work/current.md",
+            "# Current Work\nParent: a.md\nTask: One\n- [ ] Alpha\n",
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Changed
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Unchanged
+        );
+
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        detector.sync(&project.0);
+        fs::remove_dir(&path).unwrap();
+        project.write(
+            ".devscope/work/current.md",
+            "# Current Work\nParent: a.md\nTask: One\n- [ ] Alpha\n",
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Changed
         );
     }
     #[test]

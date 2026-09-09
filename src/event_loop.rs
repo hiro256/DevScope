@@ -94,7 +94,7 @@ fn check_current_work_changes(
     let (Some(root), Some(detector)) = (project_root, current_work_changes) else {
         return false;
     };
-    matches!(detector.check(root), Ok(CurrentWorkChange::Changed))
+    !matches!(detector.check(root), Ok(CurrentWorkChange::Unchanged))
 }
 
 fn load_current_work_state(root: &Path) -> CurrentWorkState {
@@ -674,6 +674,40 @@ mod tests {
         fs::remove_file(path).unwrap();
         assert!(refresh_current_work(Some(&root), &mut app));
         assert_eq!(app.current_work(), &CurrentWorkState::NotSet);
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn current_work_read_error_is_unavailable_and_same_content_recovers() {
+        let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let plan = app.plan();
+        let activity = app.activity().clone();
+        let path = root.join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let contents = "# Current Work\nParent: docs/roadmap.md\nTask: Work\n- [ ] First\n";
+        fs::write(&path, contents).unwrap();
+        let mut detector = Some(CurrentWorkChangeDetector::new(&root));
+
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert!(matches!(app.current_work(), CurrentWorkState::Available(_)));
+
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(check_current_work_changes(Some(&root), &mut detector));
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert_eq!(app.current_work(), &CurrentWorkState::Unavailable);
+        assert_eq!(app.plan(), plan);
+        assert_eq!(app.activity(), &activity);
+        assert!(check_current_work_changes(Some(&root), &mut detector));
+        assert!(!refresh_current_work(Some(&root), &mut app));
+
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, contents).unwrap();
+        assert!(check_current_work_changes(Some(&root), &mut detector));
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert!(matches!(app.current_work(), CurrentWorkState::Available(_)));
+        assert_eq!(app.plan(), plan);
+        assert_eq!(app.activity(), &activity);
         let _ = fs::remove_dir_all(root);
     }
     #[test]
