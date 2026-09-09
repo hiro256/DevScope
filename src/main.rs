@@ -6,7 +6,7 @@ mod ui;
 
 use std::{env, io, process::ExitCode};
 
-use app::App;
+use app::{App, CurrentWorkState};
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     current_work::{load_current_work, mark_current_work_done},
@@ -106,10 +106,21 @@ fn run_tui() -> io::Result<()> {
 
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);
+    app.apply_current_work(load_tui_current_work(project_root.as_deref()));
     event_loop::run(terminal.terminal_mut(), project_root.as_deref(), &mut app)
         .and(terminal.restore())
 }
 
+fn load_tui_current_work(root: Option<&std::path::Path>) -> CurrentWorkState {
+    let Some(root) = root else {
+        return CurrentWorkState::Unavailable;
+    };
+    match load_current_work(root) {
+        Ok(Some(work)) => CurrentWorkState::Available(work),
+        Ok(None) => CurrentWorkState::NotSet,
+        Err(_) => CurrentWorkState::Unavailable,
+    }
+}
 fn report_runtime_error(error: impl std::fmt::Display) -> ExitCode {
     eprintln!("error: {error}");
     ExitCode::FAILURE

@@ -9,6 +9,7 @@ use std::{
 
 use crate::{
     config::CONFIG_PATH,
+    current_work::current_work_path,
     progress::{MarkdownProgressError, discover_markdown_files},
 };
 
@@ -493,6 +494,65 @@ fn config_fingerprint(root: &Path) -> Result<ConfigStamp, ConfigChangeError> {
         Err(source) => Err(ConfigChangeError::Read { path, source }),
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentWorkChange {
+    Changed,
+    Unchanged,
+}
+
+#[derive(Debug)]
+pub enum CurrentWorkChangeError {
+    Read { path: PathBuf, source: io::Error },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CurrentWorkStamp(Option<u64>);
+
+pub struct CurrentWorkChangeDetector {
+    baseline: Option<CurrentWorkStamp>,
+}
+
+impl CurrentWorkChangeDetector {
+    pub fn new(root: &Path) -> Self {
+        Self {
+            baseline: current_work_fingerprint(root).ok(),
+        }
+    }
+
+    pub fn check(&mut self, root: &Path) -> Result<CurrentWorkChange, CurrentWorkChangeError> {
+        let current = current_work_fingerprint(root)?;
+        let changed = self
+            .baseline
+            .as_ref()
+            .is_some_and(|baseline| baseline != &current);
+        self.baseline = Some(current);
+        Ok(if changed {
+            CurrentWorkChange::Changed
+        } else {
+            CurrentWorkChange::Unchanged
+        })
+    }
+
+    pub fn sync(&mut self, root: &Path) {
+        if let Ok(current) = current_work_fingerprint(root) {
+            self.baseline = Some(current);
+        }
+    }
+}
+
+fn current_work_fingerprint(root: &Path) -> Result<CurrentWorkStamp, CurrentWorkChangeError> {
+    let path = current_work_path(root);
+    match fs::read(&path) {
+        Ok(bytes) => {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            Ok(CurrentWorkStamp(Some(hasher.finish())))
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(CurrentWorkStamp(None)),
+        Err(source) => Err(CurrentWorkChangeError::Read { path, source }),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +589,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn current_work_detector_tracks_creation_same_length_edit_and_deletion() {
+        let project = TempProject::new();
+        let mut detector = CurrentWorkChangeDetector::new(&project.0);
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Unchanged
+        );
+        project.write(
+            ".devscope/work/current.md",
+            "# Current Work\nParent: a.md\nTask: One\n- [ ] Alpha\n",
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Changed
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Unchanged
+        );
+        project.write(
+            ".devscope/work/current.md",
+            "# Current Work\nParent: a.md\nTask: One\n- [ ] Bravo\n",
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Changed
+        );
+        fs::remove_file(project.0.join(".devscope/work/current.md")).unwrap();
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Changed
+        );
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            CurrentWorkChange::Unchanged
+        );
+    }
     #[test]
     fn config_detector_tracks_creation_same_length_edit_and_deletion() {
         let project = TempProject::new();

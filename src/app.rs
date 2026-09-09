@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
+    current_work::CurrentWork,
     progress::{BuildTestKind, BuildTestState},
     project::ProjectSnapshot,
 };
@@ -46,6 +47,12 @@ impl RefreshStatus {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CurrentWorkState {
+    NotSet,
+    Available(CurrentWork),
+    Unavailable,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusedPanel {
     Tasks,
@@ -64,6 +71,7 @@ pub struct App {
     focused_panel: FocusedPanel,
     selected_task: Option<usize>,
     selected_changed_file: Option<usize>,
+    current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
 }
@@ -81,6 +89,7 @@ impl App {
             focused_panel: FocusedPanel::Tasks,
             selected_task: None,
             selected_changed_file: None,
+            current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
         };
@@ -103,6 +112,9 @@ impl App {
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
         self.reconcile_selected_changed_file();
+    }
+    pub fn apply_current_work(&mut self, current_work: CurrentWorkState) {
+        self.current_work = current_work;
     }
 
     pub fn set_refresh_error(&mut self, error: impl Into<String>) {
@@ -162,6 +174,9 @@ impl App {
 
     pub fn tasks(&self) -> &TaskState {
         &self.tasks
+    }
+    pub fn current_work(&self) -> &CurrentWorkState {
+        &self.current_work
     }
 
     pub fn build_test_state(&self, kind: BuildTestKind) -> &BuildTestState {

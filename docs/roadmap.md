@@ -103,6 +103,7 @@
 - [x] Agent integration reassessment
 - [x] Config file
 - [x] TUI panel focus experiment
+- [ ] Current Work TUI experiment
 - [ ] Task weighting
 - [ ] Progress history
 - [ ] VS Code integration

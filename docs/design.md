@@ -55,3 +55,8 @@ color or additional widgets. Hidden panels must not retain interactive focus.
 
 The initial panel-focus experiment validated Tasks, Evidence, and Changed Files as a small focus cycle.
 Hidden panels are excluded from navigation, and panel-local selection persists independently.
+
+Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
+Current Work changes update independently from Plan and Activity observation.
+
+The overview-first slice validated Work progress as a compact recorded-state signal. A separate Current Work panel and focus are not needed before a concrete drill-down need is observed.

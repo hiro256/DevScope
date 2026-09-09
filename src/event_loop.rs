@@ -8,9 +8,11 @@ use crate::terminal::AppTerminal;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     change::{
-        ConfigChange, ConfigChangeDetector, GitMetadataChange, GitMetadataChangeDetector,
-        GitWorktreeChange, GitWorktreeChangeDetector, MarkdownChange, MarkdownChangeDetector,
+        ConfigChange, ConfigChangeDetector, CurrentWorkChange, CurrentWorkChangeDetector,
+        GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
+        MarkdownChange, MarkdownChangeDetector,
     },
+    current_work::load_current_work,
     progress::{
         BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
@@ -20,7 +22,7 @@ use devscope::{
 };
 
 use crate::{
-    app::{ActivityState, App, RefreshSource},
+    app::{ActivityState, App, CurrentWorkState, RefreshSource},
     ui,
 };
 
@@ -84,6 +86,35 @@ fn check_config_changes(
         return false;
     };
     matches!(detector.check(root), Ok(ConfigChange::Changed))
+}
+fn check_current_work_changes(
+    project_root: Option<&Path>,
+    current_work_changes: &mut Option<CurrentWorkChangeDetector>,
+) -> bool {
+    let (Some(root), Some(detector)) = (project_root, current_work_changes) else {
+        return false;
+    };
+    matches!(detector.check(root), Ok(CurrentWorkChange::Changed))
+}
+
+fn load_current_work_state(root: &Path) -> CurrentWorkState {
+    match load_current_work(root) {
+        Ok(Some(work)) => CurrentWorkState::Available(work),
+        Ok(None) => CurrentWorkState::NotSet,
+        Err(_) => CurrentWorkState::Unavailable,
+    }
+}
+
+fn refresh_current_work(root: Option<&Path>, app: &mut App) -> bool {
+    let Some(root) = root else {
+        return false;
+    };
+    let current_work = load_current_work_state(root);
+    if app.current_work() == &current_work {
+        return false;
+    }
+    app.apply_current_work(current_work);
+    true
 }
 fn check_git_worktree_changes(
     project_root: Option<&Path>,
@@ -451,6 +482,7 @@ pub fn run(
     let mut worktree_changes = new_git_worktree_detector(project_root, app);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
+    let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
     let mut requests = RefreshRequest::default();
     let mut build_test_runtime = BuildTestRuntime::default();
     initialize_build_test_availability(project_root, app);
@@ -484,6 +516,10 @@ pub fn run(
                         if let Some(detector) = &mut config_changes {
                             detector.sync(root);
                         }
+                        if let Some(detector) = &mut current_work_changes {
+                            detector.sync(root);
+                        }
+                        refresh_current_work(Some(root), app);
                         requests.clear();
                         app.record_refresh(RefreshSource::Manual, session_start.elapsed());
                         app.set_refresh_pending(false);
@@ -523,6 +559,9 @@ pub fn run(
                 &mut config_changes,
                 &mut requests,
             );
+            if check_current_work_changes(project_root, &mut current_work_changes) {
+                needs_render |= refresh_current_work(project_root, app);
+            }
             if let Some(root) = project_root {
                 let outcome =
                     apply_pending_refreshes(root, app, &mut worktree_changes, &mut requests);
@@ -601,6 +640,42 @@ mod tests {
         assert_eq!(manual_build_test_kind(repeat), None);
     }
 
+    #[test]
+    fn current_work_refresh_is_independent_and_recovers_from_malformed_content() {
+        let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let plan = app.plan();
+        let activity = app.activity().clone();
+        let path = root.join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# Current Work\nParent: docs/roadmap.md\nTask: Work\n- [ ] First\n",
+        )
+        .unwrap();
+
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert!(matches!(app.current_work(), CurrentWorkState::Available(_)));
+        assert_eq!(app.plan(), plan);
+        assert_eq!(app.activity(), &activity);
+
+        fs::write(&path, "broken").unwrap();
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert_eq!(app.current_work(), &CurrentWorkState::Unavailable);
+
+        fs::write(
+            &path,
+            "# Current Work\nParent: docs/roadmap.md\nTask: Work\n- [x] First\n",
+        )
+        .unwrap();
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert!(matches!(app.current_work(), CurrentWorkState::Available(_)));
+
+        fs::remove_file(path).unwrap();
+        assert!(refresh_current_work(Some(&root), &mut app));
+        assert_eq!(app.current_work(), &CurrentWorkState::NotSet);
+        let _ = fs::remove_dir_all(root);
+    }
     #[test]
     fn initializes_build_test_availability_from_the_project_root() {
         let cargo_root = temp_root();

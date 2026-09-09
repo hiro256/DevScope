@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crate::app::{ActivityState, App, FocusedPanel, PlanState, RefreshSource, TaskState};
+use crate::app::{
+    ActivityState, App, CurrentWorkState, FocusedPanel, PlanState, RefreshSource, TaskState,
+};
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
     BuildTestStatus, GitFileStatus,
@@ -405,9 +407,12 @@ fn padded_title(title: impl AsRef<str>) -> String {
 fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(vec![
         Line::from(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
+        Line::from(work_line(
+            app.current_work(),
+            usize::from(width.saturating_sub(2)),
+        )),
         Line::from(format!("Activity   {}", activity(app.activity()))),
         Line::from(format!("Evidence   {}", evidence(app))),
-        Line::from("Agent      Not available"),
     ])
     .block(
         Block::default()
@@ -424,15 +429,30 @@ fn plan_line(plan_state: PlanState, width: usize) -> String {
     )
 }
 
+fn work_line(current_work: &CurrentWorkState, width: usize) -> String {
+    const LABEL: &str = "Work       ";
+    let value_width = width.saturating_sub(LABEL.len());
+    let value = match current_work {
+        CurrentWorkState::NotSet => "Not set".into(),
+        CurrentWorkState::Unavailable => "Unavailable".into(),
+        CurrentWorkState::Available(work) if work.total() == 0 => "No items".into(),
+        CurrentWorkState::Available(work) => {
+            progress_value(work.completed(), work.total(), value_width)
+        }
+    };
+    format!("{LABEL}{value}")
+}
 fn plan(plan: PlanState, width: usize) -> String {
     match plan {
         PlanState::Available(summary) if summary.total() == 0 => "No tasks found".into(),
-        PlanState::Available(summary) => plan_progress(summary.completed(), summary.total(), width),
+        PlanState::Available(summary) => {
+            progress_value(summary.completed(), summary.total(), width)
+        }
         PlanState::Unavailable => "Unavailable".into(),
     }
 }
 
-fn plan_progress(completed: usize, total: usize, width: usize) -> String {
+fn progress_value(completed: usize, total: usize, width: usize) -> String {
     if total == 0 {
         return "No tasks found".into();
     }
@@ -605,6 +625,7 @@ mod tests {
     use super::*;
     use crate::app::{ActivityState, PlanState, TaskState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use devscope::current_work::load_current_work;
     use devscope::progress::{
         ActivitySummary, BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness,
         BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState,
@@ -613,7 +634,30 @@ mod tests {
     };
     use devscope::project::ProjectSnapshot;
     use ratatui::{Terminal, backend::TestBackend};
+    use std::{
+        fs,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
+    static WORK_ID: AtomicUsize = AtomicUsize::new(0);
+
+    fn work_state(items: &str) -> CurrentWorkState {
+        let root = std::env::temp_dir().join(format!(
+            "devscope-ui-work-{}-{}",
+            std::process::id(),
+            WORK_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let path = root.join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!("# Current Work\nParent: docs/roadmap.md\nTask: Work\n{items}"),
+        )
+        .unwrap();
+        let work = load_current_work(&root).unwrap().unwrap();
+        let _ = fs::remove_dir_all(root);
+        CurrentWorkState::Available(work)
+    }
     fn app(tasks: TaskState, activity: ActivityState) -> App {
         App::new(ProjectSnapshot::new(
             PlanState::Available(PlanSummary::new(3, 5)),
@@ -1137,6 +1181,26 @@ mod tests {
         assert_ne!(tasks_focused, evidence_focused);
     }
     #[test]
+    fn renders_current_work_states_with_the_shared_progress_visual() {
+        assert_eq!(
+            work_line(&CurrentWorkState::NotSet, 80),
+            "Work       Not set"
+        );
+        assert_eq!(
+            work_line(&CurrentWorkState::Unavailable, 80),
+            "Work       Unavailable"
+        );
+        assert_eq!(work_line(&work_state(""), 80), "Work       No items");
+        let partial = work_line(&work_state("- [x] Done\n- [ ] Next\n"), 80);
+        assert!(partial.contains("50% 1/2"));
+        assert!(partial.contains('━'));
+        assert!(work_line(&work_state("- [x] Done\n"), 80).contains("100% 1/1"));
+        assert_eq!(
+            work_line(&work_state("- [x] Done\n- [ ] Next\n"), 17),
+            "Work       1/2"
+        );
+    }
+    #[test]
     fn plan_progress_degrades_without_exceeding_the_available_line_width() {
         for width in [80, 32, 18] {
             let line = plan_line(PlanState::Available(PlanSummary::new(53, 59)), width);
@@ -1153,8 +1217,8 @@ mod tests {
             plan_line(PlanState::Available(PlanSummary::new(53, 59)), 18),
             "Plan       53/59"
         );
-        assert_eq!(plan_progress(53, 59, "53/59".len()), "53/59");
-        assert_eq!(plan_progress(53, 59, "53/59".len() - 1), "");
+        assert_eq!(progress_value(53, 59, "53/59".len()), "53/59");
+        assert_eq!(progress_value(53, 59, "53/59".len() - 1), "");
         assert_eq!(
             plan(PlanState::Available(PlanSummary::new(0, 0)), 40),
             "No tasks found"
