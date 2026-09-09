@@ -97,16 +97,27 @@
 
 ## Post-MVP
 
+### Completed experiments
+
 - [x] Minimal read-only CLI experiment
 - [x] Current Work CLI experiment
 - [x] DevScope Skill experiment
 - [x] Agent integration reassessment
 - [x] Config file
 - [x] TUI panel focus experiment
-- [ ] Current Work TUI experiment
-- [ ] Task weighting
-- [ ] Progress history
+- [x] Current Work TUI experiment
+
+### TUI
+
+- [ ] Detail View experiment
+
+### Core observation
+
+- [ ] Artifact Evidence experiment
+- [ ] Progress history experiment
+
+### External surfaces
+
 - [ ] VS Code integration
 - [ ] Web/API frontend
-
 Exploratory implementation candidates are tracked in [backlog.md](backlog.md).

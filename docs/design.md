@@ -59,4 +59,9 @@ Hidden panels are excluded from navigation, and panel-local selection persists i
 Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
 Current Work changes update independently from Plan and Activity observation.
 
-The overview-first slice validated Work progress as a compact recorded-state signal. A separate Current Work panel and focus are not needed before a concrete drill-down need is observed.
+The Current Work TUI experiment validated overview-only Work progress as sufficient for
+the current workflow. A dedicated Current Work panel remains deferred until a concrete
+drill-down need appears.
+
+The primary TUI screen should remain stable and compact. New information should prefer
+optional drill-down over additional permanent overview panels.

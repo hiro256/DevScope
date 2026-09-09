@@ -19,10 +19,14 @@ are not committed roadmap work. An item must be promoted to
   derived Japanese Markdown. Evaluate missing and stale detection, exclusion from
   Plan discovery, and AI/provider-independent synchronization. See
   [translation-proposal.md](translation-proposal.md).
-- **Artifact Evidence experiment.** After Cargo Build/Test Evidence is working,
-  explore a small filesystem-based Evidence source for expected artifacts such as
-  `reports/final-report.pdf`. Use it to compare process observation with filesystem
-  observation before defining a stable generic Evidence Source extension contract.
+- **Task weighting.** Reconsider only if equal-weight Markdown task counting creates
+  a concrete progress-reporting problem. The current Plan + Current Work split
+  reduces the need for weighting.
+- **TUI visual polish.** Explore spacing, footer density, responsive balance, subtle
+  focus refinement, and symbols or typography without adding permanent overview
+  panels, a theme system, or decorative dashboard widgets.
+- **Current Work dedicated panel.** Reconsider only when overview-only Work progress
+  is insufficient for a concrete drill-down need.
 
 ## Promotion flow
 
