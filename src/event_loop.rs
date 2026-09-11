@@ -216,6 +216,9 @@ fn refresh_open_detail(root: Option<&Path>, app: &mut App) -> bool {
     app.apply_detail_diff(diff);
     true
 }
+fn refresh_detail_after_git_refresh(root: &Path, app: &mut App, outcome: &RefreshOutcome) -> bool {
+    outcome.git && refresh_open_detail(Some(root), app)
+}
 fn apply_pending_refreshes(
     root: &Path,
     app: &mut App,
@@ -595,6 +598,7 @@ pub fn run(
             if let Some(root) = project_root {
                 let outcome =
                     apply_pending_refreshes(root, app, &mut worktree_changes, &mut requests);
+                needs_render |= refresh_detail_after_git_refresh(root, app, &outcome);
                 needs_render |=
                     apply_refresh_status(app, &requests, &outcome, session_start.elapsed());
             }
@@ -1833,5 +1837,74 @@ mod tests {
         git(&root, &["add", "."]);
         git(&root, &["commit", "-m", "initial"]);
         root
+    }
+    #[test]
+    fn automatic_git_refresh_reloads_open_detail_and_resets_scroll() {
+        let root = git_root();
+        fs::write(root.join("tracked.txt"), "first").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let panels = [
+            crate::app::FocusedPanel::Tasks,
+            crate::app::FocusedPanel::Evidence,
+            crate::app::FocusedPanel::ChangedFiles,
+        ];
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), &panels);
+        assert!(refresh_open_detail(Some(&root), &mut app));
+        app.scroll_detail(9, 9);
+
+        let markdown_only = RefreshOutcome {
+            markdown: true,
+            ..RefreshOutcome::default()
+        };
+        assert!(!refresh_detail_after_git_refresh(
+            &root,
+            &mut app,
+            &markdown_only
+        ));
+        assert_eq!(app.detail_scroll(), 9);
+
+        fs::write(root.join("tracked.txt"), "second").unwrap();
+        let mut requests = RefreshRequest {
+            markdown: false,
+            git: true,
+        };
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(refresh_detail_after_git_refresh(&root, &mut app, &outcome));
+        assert_eq!(app.detail_scroll(), 0);
+        assert!(format!("{:?}", app.detail_diff()).contains("second"));
+
+        fs::write(root.join("tracked.txt"), "tracked").unwrap();
+        requests.git = true;
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(!app.has_detail_view());
+        assert!(!refresh_detail_after_git_refresh(&root, &mut app, &outcome));
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn failed_open_detail_refresh_replaces_cached_diff_with_error() {
+        let root = git_root();
+        fs::write(root.join("tracked.txt"), "changed").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let panels = [
+            crate::app::FocusedPanel::Tasks,
+            crate::app::FocusedPanel::Evidence,
+            crate::app::FocusedPanel::ChangedFiles,
+        ];
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), &panels);
+        assert!(refresh_open_detail(Some(&root), &mut app));
+        fs::remove_dir_all(root.join(".git")).unwrap();
+        assert!(refresh_open_detail(Some(&root), &mut app));
+        assert!(matches!(
+            app.detail_diff(),
+            Some(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error))
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 }
