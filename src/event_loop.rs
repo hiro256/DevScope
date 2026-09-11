@@ -216,8 +216,23 @@ fn refresh_open_detail(root: Option<&Path>, app: &mut App) -> bool {
     app.apply_detail_diff(diff);
     true
 }
+fn refresh_changed_file_preview(root: Option<&Path>, app: &mut App) -> bool {
+    let (Some(root), Some((path, status))) = (root, app.selected_changed_file_request()) else {
+        return false;
+    };
+    let diff = collect_git_file_diff(root, &path, &status)
+        .unwrap_or(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error));
+    app.apply_preview_diff(diff);
+    true
+}
+
 fn refresh_detail_after_git_refresh(root: &Path, app: &mut App, outcome: &RefreshOutcome) -> bool {
-    outcome.git && refresh_open_detail(Some(root), app)
+    if !outcome.git {
+        return false;
+    }
+    let detail_changed = refresh_open_detail(Some(root), app);
+    let preview_changed = refresh_changed_file_preview(Some(root), app);
+    detail_changed || preview_changed
 }
 fn apply_pending_refreshes(
     root: &Path,
@@ -499,6 +514,10 @@ pub fn run(
     let mut requests = RefreshRequest::default();
     let mut build_test_runtime = BuildTestRuntime::default();
     initialize_build_test_availability(project_root, app);
+    let initial_size = terminal.size()?;
+    if ui::has_changed_file_preview(initial_size.width, initial_size.height) {
+        refresh_changed_file_preview(project_root, app);
+    }
 
     while app.is_running() {
         if needs_render {
@@ -535,6 +554,7 @@ pub fn run(
                             detector.sync(root);
                         }
                         refresh_open_detail(Some(root), app);
+                        refresh_changed_file_preview(Some(root), app);
                         refresh_current_work(Some(root), app);
                         requests.clear();
                         app.record_refresh(RefreshSource::Manual, session_start.elapsed());
@@ -552,6 +572,7 @@ pub fn run(
                 Event::Key(key) => {
                     let size = terminal.size()?;
                     let was_detail = app.has_detail_view();
+                    let selected_before = app.selected_changed_file();
                     app.handle_key_with_focusable_panels(
                         key,
                         ui::focusable_panels(size.width, size.height),
@@ -568,11 +589,18 @@ pub fn run(
                         if !was_detail {
                             refresh_open_detail(project_root, app);
                         }
+                    } else if selected_before != app.selected_changed_file()
+                        && ui::has_changed_file_preview(size.width, size.height)
+                    {
+                        refresh_changed_file_preview(project_root, app);
                     }
                     needs_render = true;
                 }
                 Event::Resize(width, height) => {
                     app.reconcile_focus(ui::focusable_panels(width, height));
+                    if ui::has_changed_file_preview(width, height) {
+                        refresh_changed_file_preview(project_root, app);
+                    }
                     needs_render = true;
                 }
                 _ => {}
@@ -1883,6 +1911,68 @@ mod tests {
         assert!(outcome.git);
         assert!(!app.has_detail_view());
         assert!(!refresh_detail_after_git_refresh(&root, &mut app, &outcome));
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn passive_preview_follows_selection_and_refreshes_after_git_changes() {
+        let root = git_root();
+        fs::write(root.join("second.txt"), "original").unwrap();
+        git(&root, &["add", "second.txt"]);
+        git(&root, &["commit", "-m", "add second"]);
+        fs::write(root.join("tracked.txt"), "first preview").unwrap();
+        fs::write(root.join("second.txt"), "second preview").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+
+        assert!(refresh_changed_file_preview(Some(&root), &mut app));
+        let first_path = app.selected_changed_file_request().unwrap().0;
+        let first_diff = format!("{:?}", app.preview_diff());
+        app.handle_key_with_focusable_panels(
+            key(KeyCode::Tab),
+            &[
+                crate::app::FocusedPanel::Tasks,
+                crate::app::FocusedPanel::Evidence,
+                crate::app::FocusedPanel::ChangedFiles,
+            ],
+        );
+        app.handle_key_with_focusable_panels(
+            key(KeyCode::Tab),
+            &[
+                crate::app::FocusedPanel::Tasks,
+                crate::app::FocusedPanel::Evidence,
+                crate::app::FocusedPanel::ChangedFiles,
+            ],
+        );
+        app.handle_key_with_focusable_panels(
+            key(KeyCode::Char('j')),
+            &[
+                crate::app::FocusedPanel::Tasks,
+                crate::app::FocusedPanel::Evidence,
+                crate::app::FocusedPanel::ChangedFiles,
+            ],
+        );
+        assert!(refresh_changed_file_preview(Some(&root), &mut app));
+        let selected_path = app.selected_changed_file_request().unwrap().0;
+        assert_ne!(selected_path, first_path);
+        assert_ne!(format!("{:?}", app.preview_diff()), first_diff);
+
+        fs::write(root.join(selected_path), "preview refreshed").unwrap();
+        let mut requests = RefreshRequest {
+            markdown: false,
+            git: true,
+        };
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(refresh_detail_after_git_refresh(&root, &mut app, &outcome));
+        assert!(format!("{:?}", app.preview_diff()).contains("refreshed"));
+
+        fs::write(root.join("tracked.txt"), "tracked").unwrap();
+        fs::write(root.join("second.txt"), "original").unwrap();
+        requests.git = true;
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(!refresh_detail_after_git_refresh(&root, &mut app, &outcome));
+        assert!(app.preview_diff().is_none());
         let _ = fs::remove_dir_all(root);
     }
     #[test]

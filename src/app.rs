@@ -83,6 +83,7 @@ pub struct App {
     detail_target: Option<DetailTarget>,
     detail_diff: Option<GitFileDiff>,
     detail_scroll: usize,
+    preview_diff: Option<GitFileDiff>,
     current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -104,6 +105,7 @@ impl App {
             detail_target: None,
             detail_diff: None,
             detail_scroll: 0,
+            preview_diff: None,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -127,6 +129,7 @@ impl App {
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
         self.reconcile_selected_changed_file();
+        self.preview_diff = None;
         self.reconcile_detail_target();
     }
     pub fn apply_current_work(&mut self, current_work: CurrentWorkState) {
@@ -254,6 +257,16 @@ impl App {
         self.detail_diff.as_ref()
     }
 
+    pub fn preview_diff(&self) -> Option<&GitFileDiff> {
+        self.preview_diff.as_ref()
+    }
+
+    pub fn apply_preview_diff(&mut self, diff: GitFileDiff) {
+        if self.selected_changed_file_request().is_some() {
+            self.preview_diff = Some(diff);
+        }
+    }
+
     pub const fn detail_scroll(&self) -> usize {
         self.detail_scroll
     }
@@ -274,6 +287,16 @@ impl App {
         match self.detail_target.as_ref()? {
             DetailTarget::ChangedFile { path, status, .. } => Some((path.clone(), status.clone())),
         }
+    }
+
+    pub fn selected_changed_file_request(&self) -> Option<(PathBuf, GitFileStatus)> {
+        let (Some(selected), ActivityState::Available(summary)) =
+            (self.selected_changed_file, &self.activity)
+        else {
+            return None;
+        };
+        let file = summary.changed_file_items().get(selected)?;
+        Some((file.path.clone(), file.status.clone()))
     }
 
     pub fn detail_target(&self) -> Option<&DetailTarget> {

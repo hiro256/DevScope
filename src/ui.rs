@@ -21,12 +21,20 @@ const COMPACT_WIDTH: u16 = 20;
 const COMPACT_HEIGHT: u16 = 18;
 const CHANGE_COUNTS_GAP: usize = 2;
 const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
+const MIN_SPLIT_PREVIEW_WIDTH: u16 = 72;
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
     Large,
     Medium,
     Small,
+}
+
+pub fn has_changed_file_preview(width: u16, height: u16) -> bool {
+    matches!(
+        layout_variant(width, height),
+        Some(LayoutVariant::Large | LayoutVariant::Medium)
+    ) && width >= MIN_SPLIT_PREVIEW_WIDTH
 }
 
 pub fn focusable_panels(width: u16, height: u16) -> &'static [FocusedPanel] {
@@ -157,19 +165,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 
     if let Some(changed_files_area) = changed_files_area {
-        frame.render_widget(
-            Paragraph::new(changed_files(
-                app.activity(),
-                app.selected_changed_file(),
-                inner_height(changed_files_area),
-                inner_width(changed_files_area),
-            ))
-            .block(panel_block(
-                "Changed Files",
-                app.focused_panel() == FocusedPanel::ChangedFiles,
-            )),
-            changed_files_area,
-        );
+        if has_changed_file_preview(area.width, area.height) {
+            render_changed_files_preview(frame, changed_files_area, app);
+        } else {
+            render_changed_files_list(frame, changed_files_area, app);
+        }
     }
 
     if let Some(commits_area) = commits_area {
@@ -188,6 +188,51 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer_area,
     );
 }
+fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
+    frame.render_widget(
+        Paragraph::new(changed_files(
+            app.activity(),
+            app.selected_changed_file(),
+            inner_height(area),
+            inner_width(area),
+        ))
+        .block(panel_block(
+            "Changed Files",
+            app.focused_panel() == FocusedPanel::ChangedFiles,
+        )),
+        area,
+    );
+}
+
+fn render_changed_files_preview(frame: &mut Frame, area: Rect, app: &App) {
+    let panes = Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]).split(area);
+    render_changed_files_list(frame, panes[0], app);
+    let title = selected_changed_file_path(app)
+        .map(|path| format!("Diff: {path}"))
+        .unwrap_or_else(|| "Diff".into());
+    let lines = if app.selected_changed_file().is_some() {
+        detail_diff_lines(app.preview_diff())
+    } else {
+        vec![Line::from("No file selected")]
+    };
+    frame.render_widget(
+        Paragraph::new(lines).block(panel_block(title, false)),
+        panes[1],
+    );
+}
+
+fn selected_changed_file_path(app: &App) -> Option<String> {
+    let (Some(selected), ActivityState::Available(summary)) =
+        (app.selected_changed_file(), app.activity())
+    else {
+        return None;
+    };
+    summary
+        .changed_file_items()
+        .get(selected)
+        .map(|file| file.path.display().to_string())
+}
+
 fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
     let header_height = 10;
     let areas = Layout::vertical([
@@ -1233,6 +1278,85 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn renders_passive_changed_file_preview_and_follows_selection() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![
+                GitChangedFile {
+                    path: "src/a.rs".into(),
+                    status: GitFileStatus::Modified,
+                    changes: Default::default(),
+                },
+                GitChangedFile {
+                    path: "src/b.rs".into(),
+                    status: GitFileStatus::Modified,
+                    changes: Default::default(),
+                },
+            ]),
+        );
+        app.apply_preview_diff(GitFileDiff::Available {
+            unstaged: Some(GitDiffText {
+                text: "+preview-a".into(),
+                truncated: false,
+            }),
+            staged: None,
+        });
+        let first = draw(&app, 90, 30);
+        assert!(first.contains("Changed Files"));
+        assert!(first.contains("Diff: src/a.rs"));
+        assert!(first.contains("+preview-a"));
+
+        let panels = focusable_panels(90, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        app.apply_preview_diff(GitFileDiff::Available {
+            unstaged: Some(GitDiffText {
+                text: "+preview-b".into(),
+                truncated: false,
+            }),
+            staged: None,
+        });
+        let second = draw(&app, 90, 30);
+        assert!(second.contains("Diff: src/b.rs"));
+        assert!(second.contains("+preview-b"));
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+    }
+
+    #[test]
+    fn split_preview_is_passive_and_falls_back_without_its_minimum_width() {
+        assert!(has_changed_file_preview(90, 30));
+        assert!(has_changed_file_preview(90, 25));
+        assert!(!has_changed_file_preview(71, 30));
+        assert!(!has_changed_file_preview(90, 24));
+        assert_eq!(
+            focusable_panels(90, 30),
+            &[
+                FocusedPanel::Tasks,
+                FocusedPanel::Evidence,
+                FocusedPanel::ChangedFiles
+            ]
+        );
+    }
+
+    #[test]
+    fn preview_handles_no_selection_and_resize_without_panicking() {
+        let app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let wide = draw(&app, 90, 30);
+        assert!(wide.contains("No file selected"));
+        assert!(!draw(&app, 71, 30).contains("No file selected"));
+        assert!(!draw(&app, 90, 24).contains("No file selected"));
+    }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {
         assert_eq!(git_file_status(&GitFileStatus::Modified), "M");
