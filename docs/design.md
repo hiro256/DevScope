@@ -70,3 +70,5 @@ whole-screen replacement to validate the interaction before introducing a split-
 layout; a later split-pane implementation should preserve the same target and
 interaction model. Enter opens the selected detail, Esc returns when detail is open,
 and q always quits.
+Changed File Detail may surface observed change magnitude in addition to path and status.
+Change magnitude remains Activity data, not Evidence.

@@ -351,6 +351,7 @@ mod tests {
             changed_files: vec![GitChangedFile {
                 path: PathBuf::from("a.txt"),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             }],
             recent_commits: vec![GitCommit {
                 id: "abc".to_owned(),

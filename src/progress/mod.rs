@@ -18,8 +18,8 @@ pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
 mod git;
 mod markdown;
 pub use git::{
-    GitActivity, GitActivityError, GitChangedFile, GitCommit, GitFileStatus, collect_git_activity,
-    is_git_repository,
+    GitActivity, GitActivityError, GitChangeCounts, GitChangedFile, GitCommit, GitFileStatus,
+    collect_git_activity, is_git_repository,
 };
 pub use markdown::{
     MarkdownProgress, MarkdownProgressError, MarkdownTask, analyze_markdown_progress,
@@ -182,10 +182,12 @@ mod activity_summary_tests {
                 GitChangedFile {
                     path: "src/a.rs".into(),
                     status: GitFileStatus::Modified,
+                    changes: Default::default(),
                 },
                 GitChangedFile {
                     path: "src/b.rs".into(),
                     status: GitFileStatus::Added,
+                    changes: Default::default(),
                 },
             ],
             recent_commits: vec![GitCommit {

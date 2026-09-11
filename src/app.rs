@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     current_work::CurrentWork,
-    progress::{BuildTestKind, BuildTestState, GitFileStatus},
+    progress::{BuildTestKind, BuildTestState, GitChangeCounts, GitFileStatus},
     project::ProjectSnapshot,
 };
 
@@ -65,6 +65,7 @@ pub enum DetailTarget {
     ChangedFile {
         path: PathBuf,
         status: GitFileStatus,
+        changes: GitChangeCounts,
     },
 }
 
@@ -184,6 +185,7 @@ impl App {
                 .map(|file| DetailTarget::ChangedFile {
                     path: file.path.clone(),
                     status: file.status.clone(),
+                    changes: file.changes,
                 }),
             ActivityState::NotRepository | ActivityState::Unavailable => None,
         };
@@ -330,6 +332,7 @@ impl App {
         self.detail_target = Some(DetailTarget::ChangedFile {
             path: file.path.clone(),
             status: file.status.clone(),
+            changes: file.changes,
         });
     }
 
@@ -657,6 +660,7 @@ mod tests {
                 .map(|index| GitChangedFile {
                     path: format!("file-{index}.rs").into(),
                     status: GitFileStatus::Modified,
+                    changes: Default::default(),
                 })
                 .collect(),
             recent_commits: Vec::new(),
@@ -743,6 +747,7 @@ mod tests {
             Some(&DetailTarget::ChangedFile {
                 path: "file-1.rs".into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             })
         );
         app.handle_key_with_focusable_panels(key(KeyCode::Char('j')), ALL_PANELS);
@@ -773,6 +778,39 @@ mod tests {
         assert!(!tasks.has_detail_view());
     }
 
+    #[test]
+    fn detail_target_refreshes_change_counts_from_activity() {
+        let mut app = app(1);
+        let activity = |additions, deletions| {
+            ActivityState::Available(ActivitySummary::from(&GitActivity {
+                changed_files: vec![GitChangedFile {
+                    path: "file-0.rs".into(),
+                    status: GitFileStatus::Modified,
+                    changes: GitChangeCounts {
+                        additions: Some(additions),
+                        deletions: Some(deletions),
+                    },
+                }],
+                recent_commits: Vec::new(),
+            }))
+        };
+        app.apply_activity_state(activity(12, 4));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.apply_activity_state(activity(20, 6));
+        assert_eq!(
+            app.detail_target(),
+            Some(&DetailTarget::ChangedFile {
+                path: "file-0.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: GitChangeCounts {
+                    additions: Some(20),
+                    deletions: Some(6),
+                },
+            })
+        );
+    }
     #[test]
     fn detail_quits_with_q_normal_escape_quits_and_refresh_disappearance_closes() {
         let mut detail = app(1);

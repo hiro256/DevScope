@@ -13,10 +13,43 @@ pub enum GitFileStatus {
     Deleted,
     Renamed,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GitChangeCounts {
+    pub additions: Option<u64>,
+    pub deletions: Option<u64>,
+}
+
+impl GitChangeCounts {
+    pub const fn unavailable() -> Self {
+        Self {
+            additions: None,
+            deletions: None,
+        }
+    }
+
+    fn combined_with(self, other: Self) -> Self {
+        match (
+            self.additions,
+            self.deletions,
+            other.additions,
+            other.deletions,
+        ) {
+            (Some(additions), Some(deletions), Some(other_additions), Some(other_deletions)) => {
+                Self {
+                    additions: additions.checked_add(other_additions),
+                    deletions: deletions.checked_add(other_deletions),
+                }
+            }
+            _ => Self::unavailable(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitChangedFile {
     pub path: PathBuf,
     pub status: GitFileStatus,
+    pub changes: GitChangeCounts,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommit {
@@ -65,7 +98,8 @@ pub fn collect_git_activity(root: &Path, limit: usize) -> Result<GitActivity, Gi
         return Err(GitActivityError::NotRepository);
     }
     let status = run_success(root, ["status", "--porcelain=v1", "-z"])?;
-    let changed_files = parse_status(&status)?;
+    let change_counts = collect_change_counts(root)?;
+    let changed_files = parse_status(&status, &change_counts)?;
     let head = run_git(root, ["rev-parse", "--verify", "HEAD"])?;
     let recent_commits = if head.status.success() {
         parse_commits(&run_success(
@@ -82,7 +116,10 @@ pub fn collect_git_activity(root: &Path, limit: usize) -> Result<GitActivity, Gi
         recent_commits,
     })
 }
-fn parse_status(bytes: &[u8]) -> Result<Vec<GitChangedFile>, GitActivityError> {
+fn parse_status(
+    bytes: &[u8],
+    change_counts: &BTreeMap<PathBuf, GitChangeCounts>,
+) -> Result<Vec<GitChangedFile>, GitActivityError> {
     let mut entries = BTreeMap::new();
     let mut parts = bytes.split(|b| *b == 0);
     while let Some(record) = parts.next() {
@@ -108,6 +145,10 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<GitChangedFile>, GitActivityError> {
         entries.insert(
             PathBuf::from(&path),
             GitChangedFile {
+                changes: change_counts
+                    .get(Path::new(&path))
+                    .copied()
+                    .unwrap_or_default(),
                 path: path.into(),
                 status,
             },
@@ -115,6 +156,59 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<GitChangedFile>, GitActivityError> {
     }
     Ok(entries.into_values().collect())
 }
+fn collect_change_counts(
+    root: &Path,
+) -> Result<BTreeMap<PathBuf, GitChangeCounts>, GitActivityError> {
+    let mut counts = parse_numstat(&run_success(root, ["diff", "--numstat", "-z"])?)?;
+    for (path, staged) in
+        parse_numstat(&run_success(root, ["diff", "--cached", "--numstat", "-z"])?)?
+    {
+        counts
+            .entry(path)
+            .and_modify(|unstaged| *unstaged = unstaged.combined_with(staged))
+            .or_insert(staged);
+    }
+    Ok(counts)
+}
+
+fn parse_numstat(bytes: &[u8]) -> Result<BTreeMap<PathBuf, GitChangeCounts>, GitActivityError> {
+    let mut counts = BTreeMap::new();
+    let mut records = bytes.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        let mut fields = record.splitn(3, |byte| *byte == b'\t');
+        let (Some(additions), Some(deletions), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(GitActivityError::InvalidOutput);
+        };
+        if path.is_empty() {
+            let _ = records.next();
+            let _ = records.next();
+            continue;
+        }
+        let path = String::from_utf8(path.to_vec()).map_err(|_| GitActivityError::InvalidOutput)?;
+        let changes = match (
+            std::str::from_utf8(additions)
+                .ok()
+                .and_then(|value| value.parse().ok()),
+            std::str::from_utf8(deletions)
+                .ok()
+                .and_then(|value| value.parse().ok()),
+        ) {
+            (Some(additions), Some(deletions)) => GitChangeCounts {
+                additions: Some(additions),
+                deletions: Some(deletions),
+            },
+            _ => GitChangeCounts::unavailable(),
+        };
+        counts.insert(path.into(), changes);
+    }
+    Ok(counts)
+}
+
 fn parse_commits(bytes: &[u8]) -> Result<Vec<GitCommit>, GitActivityError> {
     String::from_utf8(bytes.to_vec())
         .map_err(|_| GitActivityError::InvalidOutput)?
@@ -205,6 +299,71 @@ mod tests {
                 .unwrap()
                 .success()
         );
+    }
+    #[test]
+    fn parses_numstat_for_multiple_files_and_keeps_unknown_counts_safe() {
+        let counts =
+            parse_numstat(b"12\t4\tsrc/ui.rs\x003\t0\tdocs/design.md\x00-\t-\tassets/logo.png\x00")
+                .unwrap();
+        assert_eq!(
+            counts.get(Path::new("src/ui.rs")),
+            Some(&GitChangeCounts {
+                additions: Some(12),
+                deletions: Some(4),
+            })
+        );
+        assert_eq!(
+            counts.get(Path::new("docs/design.md")),
+            Some(&GitChangeCounts {
+                additions: Some(3),
+                deletions: Some(0),
+            })
+        );
+        assert_eq!(
+            counts.get(Path::new("assets/logo.png")),
+            Some(&GitChangeCounts::unavailable())
+        );
+    }
+
+    #[test]
+    fn keeps_renamed_status_and_treats_rename_numstat_paths_as_unavailable() {
+        let counts = parse_numstat(b"0\t0\t\0old.txt\0new.txt\0").unwrap();
+        assert!(counts.is_empty());
+        let changed = parse_status(b"R  new.txt\0old.txt\0", &counts).unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].path, Path::new("new.txt"));
+        assert_eq!(changed[0].status, GitFileStatus::Renamed);
+        assert_eq!(changed[0].changes, GitChangeCounts::unavailable());
+    }
+    #[test]
+    fn collects_staged_and_unstaged_counts_and_leaves_untracked_unknown() {
+        let repo = Repo::new(true);
+        repo.commit("one");
+        fs::write(repo.0.join("a.txt"), "staged\n").unwrap();
+        cmd(&repo.0, &["add", "a.txt"]);
+        fs::write(repo.0.join("a.txt"), "staged\nunstaged\n").unwrap();
+        fs::write(repo.0.join("new.txt"), "untracked\n").unwrap();
+
+        let activity = collect_git_activity(&repo.0, 5).unwrap();
+        let staged_and_unstaged = activity
+            .changed_files
+            .iter()
+            .find(|file| file.path == Path::new("a.txt"))
+            .unwrap();
+        assert_eq!(
+            staged_and_unstaged.changes,
+            GitChangeCounts {
+                additions: Some(2),
+                deletions: Some(1),
+            }
+        );
+        let untracked = activity
+            .changed_files
+            .iter()
+            .find(|file| file.path == Path::new("new.txt"))
+            .unwrap();
+        assert_eq!(untracked.status, GitFileStatus::Added);
+        assert_eq!(untracked.changes, GitChangeCounts::unavailable());
     }
     #[test]
     fn detection_and_zero_commits() {

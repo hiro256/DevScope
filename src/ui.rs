@@ -6,7 +6,7 @@ use crate::app::{
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
-    BuildTestStatus, GitFileStatus,
+    BuildTestStatus, GitChangeCounts, GitFileStatus,
 };
 use ratatui::{
     Frame,
@@ -186,12 +186,17 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 fn render_detail(frame: &mut Frame, area: Rect, target: &DetailTarget) {
     let areas = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    let DetailTarget::ChangedFile { path, status } = target;
+    let DetailTarget::ChangedFile {
+        path,
+        status,
+        changes,
+    } = target;
     frame.render_widget(
         Paragraph::new(format!(
-            "File\n  {}\n\nStatus\n  {}",
+            "File\n  {}\n\nStatus\n  {}\n\nChanges\n  {}",
             path.display(),
-            git_file_status_name(status)
+            git_file_status_name(status),
+            change_summary(*changes),
         ))
         .block(panel_block("Changed File Detail", false)),
         areas[0],
@@ -613,6 +618,13 @@ fn changed_files(
         }
     }
 }
+fn change_summary(changes: GitChangeCounts) -> String {
+    match (changes.additions, changes.deletions) {
+        (Some(additions), Some(deletions)) => format!("+{additions} -{deletions}"),
+        _ => "unavailable".into(),
+    }
+}
+
 fn git_file_status_name(status: &GitFileStatus) -> &'static str {
     match status {
         GitFileStatus::Modified => "Modified",
@@ -978,6 +990,7 @@ mod tests {
             changed_files: vec![GitChangedFile {
                 path: "a".into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             }],
             recent_commits: vec![],
         };
@@ -992,10 +1005,12 @@ mod tests {
                 GitChangedFile {
                     path: "a".into(),
                     status: GitFileStatus::Modified,
+                    changes: Default::default(),
                 },
                 GitChangedFile {
                     path: "b".into(),
                     status: GitFileStatus::Modified,
+                    changes: Default::default(),
                 },
             ],
             recent_commits: vec![],
@@ -1122,6 +1137,10 @@ mod tests {
             activity_with_files(vec![GitChangedFile {
                 path: "src/ui.rs".into(),
                 status: GitFileStatus::Modified,
+                changes: GitChangeCounts {
+                    additions: Some(12),
+                    deletions: Some(4),
+                },
             }]),
         );
         let panels = focusable_panels(80, 30);
@@ -1142,7 +1161,9 @@ mod tests {
         assert!(output.contains("Changed File Detail"));
         assert!(output.contains("src/ui.rs"));
         assert!(output.contains("Modified"));
+        assert!(output.contains("+12 -4"));
         assert!(output.contains("Esc: Back  q: Quit"));
+        assert_eq!(change_summary(Default::default()), "unavailable");
         for (width, height) in [(40, 18), (20, 5), (1, 1)] {
             let _ = draw(&app, width, height);
         }
@@ -1153,18 +1174,22 @@ mod tests {
             GitChangedFile {
                 path: "src/a.rs".into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             },
             GitChangedFile {
                 path: "src/b.rs".into(),
                 status: GitFileStatus::Added,
+                changes: Default::default(),
             },
             GitChangedFile {
                 path: "docs/old.md".into(),
                 status: GitFileStatus::Deleted,
+                changes: Default::default(),
             },
             GitChangedFile {
                 path: "docs/new.md".into(),
                 status: GitFileStatus::Renamed,
+                changes: Default::default(),
             },
         ]);
         let changed_app = app(TaskState::Unavailable, activity);
@@ -1185,6 +1210,7 @@ mod tests {
             .map(|index| GitChangedFile {
                 path: format!("src/file-{index}.rs").into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             })
             .collect();
         let app = app(TaskState::Unavailable, activity_with_files(files));
@@ -1201,6 +1227,7 @@ mod tests {
             activity_with_files(vec![GitChangedFile {
                 path: "src/a.rs".into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             }]),
         );
         let large = draw(&app, 80, 30);
@@ -1322,10 +1349,12 @@ mod tests {
                 GitChangedFile {
                     path: "src/a.rs".into(),
                     status: GitFileStatus::Modified,
+                    changes: Default::default(),
                 },
                 GitChangedFile {
                     path: "src/b.rs".into(),
                     status: GitFileStatus::Added,
+                    changes: Default::default(),
                 },
             ]),
         );
@@ -1360,6 +1389,7 @@ mod tests {
             activity_with_files(vec![GitChangedFile {
                 path: "src/a.rs".into(),
                 status: GitFileStatus::Modified,
+                changes: Default::default(),
             }]),
         );
         let output = draw(&app, 80, 30);
