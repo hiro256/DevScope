@@ -18,6 +18,8 @@ use ratatui::{
 
 const COMPACT_WIDTH: u16 = 20;
 const COMPACT_HEIGHT: u16 = 18;
+const CHANGE_COUNTS_GAP: usize = 2;
+const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -601,10 +603,14 @@ fn changed_files(
                 .saturating_sub(file_rows.saturating_sub(1))
                 .min(files.len().saturating_sub(file_rows));
             let end = (start + file_rows).min(files.len());
-            let mut lines = files[start..end]
+            let visible_files = &files[start..end];
+            let counts_column = change_counts_column(visible_files, width);
+            let mut lines = visible_files
                 .iter()
                 .enumerate()
-                .map(|(offset, file)| changed_file_line(file, start + offset == selected, width))
+                .map(|(offset, file)| {
+                    changed_file_line(file, start + offset == selected, width, counts_column)
+                })
                 .collect::<Vec<_>>();
             if end < files.len() && lines.len() < rows {
                 lines.push(Line::from(format!("... and {} more", files.len() - end)));
@@ -617,29 +623,50 @@ fn changed_files(
     }
 }
 
+fn change_counts_column(files: &[devscope::progress::GitChangedFile], width: usize) -> usize {
+    files
+        .iter()
+        .map(|file| Line::from(changed_file_prefix(file, false)).width())
+        .max()
+        .map(|prefix_width| {
+            prefix_width
+                .saturating_add(CHANGE_COUNTS_GAP)
+                .min(MAX_CHANGE_COUNTS_COLUMN)
+                .min(width)
+        })
+        .unwrap_or_default()
+}
+
 fn changed_file_line(
     file: &devscope::progress::GitChangedFile,
     selected: bool,
     width: usize,
+    counts_column: usize,
 ) -> Line<'static> {
-    let path = format!(
-        "{} {}  {}",
-        if selected { ">" } else { " " },
-        git_file_status(&file.status),
-        file.path.display()
-    );
+    let path = changed_file_prefix(file, selected);
     let Some(counts) = change_counts_summary(file.changes) else {
         return Line::from(path);
     };
     let path_width = Line::from(path.clone()).width();
     let counts_width = Line::from(counts.clone()).width();
-    if path_width + 2 + counts_width > width {
+    if path_width.saturating_add(CHANGE_COUNTS_GAP) > counts_column
+        || counts_column.saturating_add(counts_width) > width
+    {
         return Line::from(path);
     }
     Line::from(format!(
         "{path}{}{counts}",
-        " ".repeat(width - path_width - counts_width)
+        " ".repeat(counts_column - path_width)
     ))
+}
+
+fn changed_file_prefix(file: &devscope::progress::GitChangedFile, selected: bool) -> String {
+    format!(
+        "{} {}  {}",
+        if selected { ">" } else { " " },
+        git_file_status(&file.status),
+        file.path.display()
+    )
 }
 
 fn change_counts_summary(changes: GitChangeCounts) -> Option<String> {
@@ -1199,68 +1226,76 @@ mod tests {
         }
     }
     #[test]
-    fn shows_change_counts_in_changed_files_without_sacrificing_path_or_selection() {
+    fn aligns_change_counts_to_the_visible_path_column() {
+        let file = |path: &str, additions: Option<u64>, deletions: Option<u64>| GitChangedFile {
+            path: path.into(),
+            status: GitFileStatus::Modified,
+            changes: GitChangeCounts {
+                additions,
+                deletions,
+            },
+        };
         let files = vec![
-            GitChangedFile {
-                path: "src/ui.rs".into(),
-                status: GitFileStatus::Modified,
-                changes: GitChangeCounts {
-                    additions: Some(24),
-                    deletions: Some(8),
-                },
-            },
-            GitChangedFile {
-                path: "src/app.rs".into(),
-                status: GitFileStatus::Modified,
-                changes: GitChangeCounts {
-                    additions: Some(12),
-                    deletions: Some(3),
-                },
-            },
-            GitChangedFile {
-                path: "assets/new.bin".into(),
-                status: GitFileStatus::Added,
-                changes: GitChangeCounts::unavailable(),
-            },
+            file("short.rs", Some(1), Some(1)),
+            file("longer.rs", Some(2), Some(3)),
+            file("unknown.bin", None, None),
         ];
         let activity = activity_with_files(files.clone());
-        let wide = changed_files(&activity, Some(1), 3, 60);
-        assert!(wide[0].to_string().contains("M  src/ui.rs"));
-        assert!(wide[0].to_string().ends_with("+24 -8"));
-        assert!(wide[1].to_string().starts_with("> M  src/app.rs"));
-        assert!(wide[1].to_string().ends_with("+12 -3"));
-        assert!(wide[2].to_string().contains("A  assets/new.bin"));
+        let wide = changed_files(&activity, Some(1), 3, 80);
+        let first_counts = wide[0].to_string().find("+1 -1").unwrap();
+        let second_counts = wide[1].to_string().find("+2 -3").unwrap();
+        assert_eq!(first_counts, second_counts);
+        assert!(wide[1].to_string().starts_with("> M  longer.rs"));
+        assert!(wide[2].to_string().contains("M  unknown.bin"));
         assert!(!wide[2].to_string().contains('+'));
 
-        let narrow = changed_files(&activity, Some(1), 3, 16);
-        assert!(narrow[0].to_string().contains("M  src/ui.rs"));
-        assert!(!narrow[0].to_string().contains("+24 -8"));
-        assert!(narrow[1].to_string().starts_with("> M  src/app.rs"));
-        assert!(!narrow[1].to_string().contains("+12 -3"));
-
-        let exact_file = &files[0];
-        let path_width = changed_file_line(exact_file, true, 0).width();
-        let counts_width = Line::from("+24 -8").width();
-        let exact_width = path_width + 2 + counts_width;
-        assert!(
-            changed_file_line(exact_file, true, exact_width)
-                .to_string()
-                .ends_with("+24 -8")
-        );
-        assert!(
-            !changed_file_line(exact_file, true, exact_width - 1)
-                .to_string()
-                .contains("+24 -8")
+        let unicode = file("src/日本語.rs", Some(4), Some(2));
+        let unicode_prefix = Line::from(changed_file_prefix(&unicode, false)).width();
+        assert_eq!(
+            change_counts_column(std::slice::from_ref(&unicode), 80),
+            unicode_prefix + CHANGE_COUNTS_GAP
         );
 
-        let output = draw(
-            &app(TaskState::Unavailable, activity_with_files(files)),
-            80,
-            30,
+        let narrow = changed_files(&activity, Some(1), 3, 18);
+        assert!(narrow[0].to_string().contains("M  short.rs"));
+        assert!(!narrow[0].to_string().contains("+1 -1"));
+        assert!(narrow[1].to_string().starts_with("> M  longer.rs"));
+        assert!(!narrow[1].to_string().contains("+2 -3"));
+    }
+
+    #[test]
+    fn limits_change_counts_to_visible_paths_and_the_column_cap() {
+        let file = |path: &str| GitChangedFile {
+            path: path.into(),
+            status: GitFileStatus::Modified,
+            changes: GitChangeCounts {
+                additions: Some(1),
+                deletions: Some(1),
+            },
+        };
+        let visible = vec![file("a.rs"), file("longer-visible.rs"), file("b.rs")];
+        let mut all_files = visible.clone();
+        all_files.push(file(
+            "offscreen-path-that-must-not-move-the-counts-column.rs",
+        ));
+        all_files.push(file("another-offscreen-path.rs"));
+        let visible_lines = changed_files(&activity_with_files(all_files), Some(0), 4, 80);
+        let expected_column =
+            Line::from(changed_file_prefix(&visible[1], false)).width() + CHANGE_COUNTS_GAP;
+        assert_eq!(
+            visible_lines[0].to_string().find("+1 -1"),
+            Some(expected_column)
         );
-        assert!(output.contains("M  src/ui.rs"));
-        assert!(output.contains("+24 -8"));
-        assert!(output.contains("+12 -3"));
+        assert!(visible_lines[3].to_string().contains("... and 2 more"));
+
+        let capped = vec![file("short.rs"), file(&"very-long-path-".repeat(8))];
+        let capped_lines = changed_files(&activity_with_files(capped.clone()), Some(0), 2, 80);
+        assert_eq!(change_counts_column(&capped, 80), MAX_CHANGE_COUNTS_COLUMN);
+        assert_eq!(
+            capped_lines[0].to_string().find("+1 -1"),
+            Some(MAX_CHANGE_COUNTS_COLUMN)
+        );
+        assert!(!capped_lines[1].to_string().contains("+1 -1"));
     }
     #[test]
     fn renders_changed_files_and_clean_state() {
