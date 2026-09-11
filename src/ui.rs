@@ -159,6 +159,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 app.activity(),
                 app.selected_changed_file(),
                 inner_height(changed_files_area),
+                inner_width(changed_files_area),
             ))
             .block(panel_block(
                 "Changed Files",
@@ -425,6 +426,10 @@ fn inner_height(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2))
 }
 
+fn inner_width(area: Rect) -> usize {
+    usize::from(area.width.saturating_sub(2))
+}
+
 fn padded_title(title: impl AsRef<str>) -> String {
     format!(" {} ", title.as_ref())
 }
@@ -574,6 +579,7 @@ fn changed_files(
     activity: &ActivityState,
     selected: Option<usize>,
     rows: usize,
+    width: usize,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -598,15 +604,7 @@ fn changed_files(
             let mut lines = files[start..end]
                 .iter()
                 .enumerate()
-                .map(|(offset, file)| {
-                    let index = start + offset;
-                    Line::from(format!(
-                        "{} {}  {}",
-                        if index == selected { ">" } else { " " },
-                        git_file_status(&file.status),
-                        file.path.display()
-                    ))
-                })
+                .map(|(offset, file)| changed_file_line(file, start + offset == selected, width))
                 .collect::<Vec<_>>();
             if end < files.len() && lines.len() < rows {
                 lines.push(Line::from(format!("... and {} more", files.len() - end)));
@@ -616,6 +614,38 @@ fn changed_files(
         ActivityState::NotRepository | ActivityState::Unavailable => {
             vec![Line::from("Unavailable")]
         }
+    }
+}
+
+fn changed_file_line(
+    file: &devscope::progress::GitChangedFile,
+    selected: bool,
+    width: usize,
+) -> Line<'static> {
+    let path = format!(
+        "{} {}  {}",
+        if selected { ">" } else { " " },
+        git_file_status(&file.status),
+        file.path.display()
+    );
+    let Some(counts) = change_counts_summary(file.changes) else {
+        return Line::from(path);
+    };
+    let path_width = Line::from(path.clone()).width();
+    let counts_width = Line::from(counts.clone()).width();
+    if path_width + 2 + counts_width > width {
+        return Line::from(path);
+    }
+    Line::from(format!(
+        "{path}{}{counts}",
+        " ".repeat(width - path_width - counts_width)
+    ))
+}
+
+fn change_counts_summary(changes: GitChangeCounts) -> Option<String> {
+    match (changes.additions, changes.deletions) {
+        (Some(additions), Some(deletions)) => Some(format!("+{additions} -{deletions}")),
+        _ => None,
     }
 }
 fn change_summary(changes: GitChangeCounts) -> String {
@@ -1167,6 +1197,70 @@ mod tests {
         for (width, height) in [(40, 18), (20, 5), (1, 1)] {
             let _ = draw(&app, width, height);
         }
+    }
+    #[test]
+    fn shows_change_counts_in_changed_files_without_sacrificing_path_or_selection() {
+        let files = vec![
+            GitChangedFile {
+                path: "src/ui.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: GitChangeCounts {
+                    additions: Some(24),
+                    deletions: Some(8),
+                },
+            },
+            GitChangedFile {
+                path: "src/app.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: GitChangeCounts {
+                    additions: Some(12),
+                    deletions: Some(3),
+                },
+            },
+            GitChangedFile {
+                path: "assets/new.bin".into(),
+                status: GitFileStatus::Added,
+                changes: GitChangeCounts::unavailable(),
+            },
+        ];
+        let activity = activity_with_files(files.clone());
+        let wide = changed_files(&activity, Some(1), 3, 60);
+        assert!(wide[0].to_string().contains("M  src/ui.rs"));
+        assert!(wide[0].to_string().ends_with("+24 -8"));
+        assert!(wide[1].to_string().starts_with("> M  src/app.rs"));
+        assert!(wide[1].to_string().ends_with("+12 -3"));
+        assert!(wide[2].to_string().contains("A  assets/new.bin"));
+        assert!(!wide[2].to_string().contains('+'));
+
+        let narrow = changed_files(&activity, Some(1), 3, 16);
+        assert!(narrow[0].to_string().contains("M  src/ui.rs"));
+        assert!(!narrow[0].to_string().contains("+24 -8"));
+        assert!(narrow[1].to_string().starts_with("> M  src/app.rs"));
+        assert!(!narrow[1].to_string().contains("+12 -3"));
+
+        let exact_file = &files[0];
+        let path_width = changed_file_line(exact_file, true, 0).width();
+        let counts_width = Line::from("+24 -8").width();
+        let exact_width = path_width + 2 + counts_width;
+        assert!(
+            changed_file_line(exact_file, true, exact_width)
+                .to_string()
+                .ends_with("+24 -8")
+        );
+        assert!(
+            !changed_file_line(exact_file, true, exact_width - 1)
+                .to_string()
+                .contains("+24 -8")
+        );
+
+        let output = draw(
+            &app(TaskState::Unavailable, activity_with_files(files)),
+            80,
+            30,
+        );
+        assert!(output.contains("M  src/ui.rs"));
+        assert!(output.contains("+24 -8"));
+        assert!(output.contains("+12 -3"));
     }
     #[test]
     fn renders_changed_files_and_clean_state() {

@@ -72,3 +72,5 @@ interaction model. Enter opens the selected detail, Esc returns when detail is o
 and q always quits.
 Changed File Detail may surface observed change magnitude in addition to path and status.
 Change magnitude remains Activity data, not Evidence.
+Changed Files may also surface observed change magnitude for quick comparison across files.
+Change counts are secondary to path and status and may be omitted in narrow layouts.
