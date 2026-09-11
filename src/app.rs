@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     current_work::CurrentWork,
-    progress::{BuildTestKind, BuildTestState},
+    progress::{BuildTestKind, BuildTestState, GitFileStatus},
     project::ProjectSnapshot,
 };
 
@@ -60,6 +60,14 @@ pub enum FocusedPanel {
     ChangedFiles,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DetailTarget {
+    ChangedFile {
+        path: PathBuf,
+        status: GitFileStatus,
+    },
+}
+
 pub struct App {
     running: bool,
     plan: PlanState,
@@ -71,6 +79,7 @@ pub struct App {
     focused_panel: FocusedPanel,
     selected_task: Option<usize>,
     selected_changed_file: Option<usize>,
+    detail_target: Option<DetailTarget>,
     current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -89,6 +98,7 @@ impl App {
             focused_panel: FocusedPanel::Tasks,
             selected_task: None,
             selected_changed_file: None,
+            detail_target: None,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -112,6 +122,7 @@ impl App {
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
         self.activity = activity;
         self.reconcile_selected_changed_file();
+        self.reconcile_detail_target();
     }
     pub fn apply_current_work(&mut self, current_work: CurrentWorkState) {
         self.current_work = current_work;
@@ -157,6 +168,24 @@ impl App {
                     .min(summary.changed_files() - 1),
             ),
             _ => None,
+        };
+    }
+
+    fn reconcile_detail_target(&mut self) {
+        let Some(DetailTarget::ChangedFile { path, .. }) = &self.detail_target else {
+            return;
+        };
+        let path = path.clone();
+        self.detail_target = match &self.activity {
+            ActivityState::Available(summary) => summary
+                .changed_file_items()
+                .iter()
+                .find(|file| file.path == path)
+                .map(|file| DetailTarget::ChangedFile {
+                    path: file.path.clone(),
+                    status: file.status.clone(),
+                }),
+            ActivityState::NotRepository | ActivityState::Unavailable => None,
         };
     }
 
@@ -213,6 +242,14 @@ impl App {
         self.selected_changed_file
     }
 
+    pub fn detail_target(&self) -> Option<&DetailTarget> {
+        self.detail_target.as_ref()
+    }
+
+    pub fn has_detail_view(&self) -> bool {
+        self.detail_target.is_some()
+    }
+
     pub const fn refresh_status(&self) -> RefreshStatus {
         self.refresh_status
     }
@@ -230,8 +267,17 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        if self.detail_target.is_some() {
+            match key.code {
+                KeyCode::Char('q') => self.running = false,
+                KeyCode::Esc => self.detail_target = None,
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
+            KeyCode::Enter => self.open_changed_file_detail(),
             KeyCode::Tab => self.focus_panel(focusable_panels, 1),
             KeyCode::BackTab => self.focus_panel(focusable_panels, -1),
             KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(focusable_panels, 1),
@@ -267,6 +313,24 @@ impl App {
             FocusedPanel::Evidence => self.move_evidence_selection(delta),
             FocusedPanel::ChangedFiles => self.move_changed_file_selection(delta),
         }
+    }
+
+    fn open_changed_file_detail(&mut self) {
+        if self.focused_panel != FocusedPanel::ChangedFiles {
+            return;
+        }
+        let (Some(selected), ActivityState::Available(summary)) =
+            (self.selected_changed_file, &self.activity)
+        else {
+            return;
+        };
+        let Some(file) = summary.changed_file_items().get(selected) else {
+            return;
+        };
+        self.detail_target = Some(DetailTarget::ChangedFile {
+            path: file.path.clone(),
+            status: file.status.clone(),
+        });
     }
 
     fn move_task_selection(&mut self, delta: isize) {
@@ -662,6 +726,72 @@ mod tests {
         assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), TASKS_AND_EVIDENCE);
         assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
+    }
+    #[test]
+    fn changed_file_detail_opens_closes_and_preserves_selection_and_focus() {
+        let mut app = app(1);
+        app.apply_activity_state(activity_with_files(2));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        assert_eq!(app.selected_changed_file(), Some(1));
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert_eq!(
+            app.detail_target(),
+            Some(&DetailTarget::ChangedFile {
+                path: "file-1.rs".into(),
+                status: GitFileStatus::Modified,
+            })
+        );
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('j')), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('b')), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('t')), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('r')), ALL_PANELS);
+        assert_eq!(app.selected_changed_file(), Some(1));
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
+        assert!(!app.has_detail_view());
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        assert_eq!(app.selected_changed_file(), Some(1));
+    }
+
+    #[test]
+    fn changed_file_detail_requires_a_selected_changed_file_and_ignores_other_panels() {
+        let mut no_selection = app(1);
+        no_selection.focused_panel = FocusedPanel::ChangedFiles;
+        no_selection.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert!(!no_selection.has_detail_view());
+
+        let mut tasks = app(1);
+        tasks.apply_activity_state(activity_with_files(1));
+        tasks.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert!(!tasks.has_detail_view());
+        tasks.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        tasks.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert!(!tasks.has_detail_view());
+    }
+
+    #[test]
+    fn detail_quits_with_q_normal_escape_quits_and_refresh_disappearance_closes() {
+        let mut detail = app(1);
+        detail.apply_activity_state(activity_with_files(1));
+        detail.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        detail.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        detail.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert!(detail.has_detail_view());
+        detail.apply_activity_state(activity_with_files(0));
+        assert!(!detail.has_detail_view());
+
+        detail.apply_activity_state(activity_with_files(1));
+        detail.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        detail.handle_key_with_focusable_panels(key(KeyCode::Char('q')), ALL_PANELS);
+        assert!(!detail.is_running());
+
+        let mut normal = app(1);
+        normal.handle_key(key(KeyCode::Esc));
+        assert!(!normal.is_running());
     }
     #[test]
     fn q_and_escape_exit() {

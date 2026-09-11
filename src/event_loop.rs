@@ -496,7 +496,9 @@ pub fn run(
         if event::poll(EVENT_POLL_TIMEOUT)? {
             match event::read()? {
                 Event::Key(key)
-                    if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('r') =>
+                    if key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('r')
+                        && !app.has_detail_view() =>
                 {
                     if let Some(root) = project_root {
                         match try_collect_project_snapshot(root) {
@@ -526,7 +528,10 @@ pub fn run(
                     }
                     needs_render = true;
                 }
-                Event::Key(key) if let Some(kind) = manual_build_test_kind(key) => {
+                Event::Key(key)
+                    if !app.has_detail_view()
+                        && let Some(kind) = manual_build_test_kind(key) =>
+                {
                     needs_render |=
                         start_manual_build_test(project_root, app, &mut build_test_runtime, kind);
                 }

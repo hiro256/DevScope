@@ -65,3 +65,8 @@ drill-down need appears.
 
 The primary TUI screen should remain stable and compact. New information should prefer
 optional drill-down over additional permanent overview panels.
+Detail View is optional drill-down from an existing panel. The first experiment uses
+whole-screen replacement to validate the interaction before introducing a split-pane
+layout; a later split-pane implementation should preserve the same target and
+interaction model. Enter opens the selected detail, Esc returns when detail is open,
+and q always quits.

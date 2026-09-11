@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use crate::app::{
-    ActivityState, App, CurrentWorkState, FocusedPanel, PlanState, RefreshSource, TaskState,
+    ActivityState, App, CurrentWorkState, DetailTarget, FocusedPanel, PlanState, RefreshSource,
+    TaskState,
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
@@ -51,6 +52,10 @@ fn layout_variant(width: u16, height: u16) -> Option<LayoutVariant> {
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    if let Some(target) = app.detail_target() {
+        render_detail(frame, area, target);
+        return;
+    }
     let Some(layout) = layout_variant(area.width, area.height) else {
         render_compact(frame, area);
         return;
@@ -179,6 +184,21 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer_area,
     );
 }
+fn render_detail(frame: &mut Frame, area: Rect, target: &DetailTarget) {
+    let areas = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
+    let DetailTarget::ChangedFile { path, status } = target;
+    frame.render_widget(
+        Paragraph::new(format!(
+            "File\n  {}\n\nStatus\n  {}",
+            path.display(),
+            git_file_status_name(status)
+        ))
+        .block(panel_block("Changed File Detail", false)),
+        areas[0],
+    );
+    frame.render_widget(Paragraph::new("Esc: Back  q: Quit"), areas[1]);
+}
+
 fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -593,6 +613,15 @@ fn changed_files(
         }
     }
 }
+fn git_file_status_name(status: &GitFileStatus) -> &'static str {
+    match status {
+        GitFileStatus::Modified => "Modified",
+        GitFileStatus::Added => "Added",
+        GitFileStatus::Deleted => "Deleted",
+        GitFileStatus::Renamed => "Renamed",
+    }
+}
+
 fn git_file_status(status: &GitFileStatus) -> &'static str {
     match status {
         GitFileStatus::Modified => "M",
@@ -1086,6 +1115,38 @@ mod tests {
         assert_eq!(git_file_status(&GitFileStatus::Renamed), "R");
     }
 
+    #[test]
+    fn renders_changed_file_detail_with_path_status_and_small_terminal_safety() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "src/ui.rs".into(),
+                status: GitFileStatus::Modified,
+            }]),
+        );
+        let panels = focusable_panels(80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            panels,
+        );
+
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Changed File Detail"));
+        assert!(output.contains("src/ui.rs"));
+        assert!(output.contains("Modified"));
+        assert!(output.contains("Esc: Back  q: Quit"));
+        for (width, height) in [(40, 18), (20, 5), (1, 1)] {
+            let _ = draw(&app, width, height);
+        }
+    }
     #[test]
     fn renders_changed_files_and_clean_state() {
         let activity = activity_with_files(vec![
