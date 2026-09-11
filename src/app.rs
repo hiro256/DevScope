@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     current_work::CurrentWork,
-    progress::{BuildTestKind, BuildTestState, GitChangeCounts, GitFileStatus},
+    progress::{BuildTestKind, BuildTestState, GitChangeCounts, GitFileDiff, GitFileStatus},
     project::ProjectSnapshot,
 };
 
@@ -81,6 +81,8 @@ pub struct App {
     selected_task: Option<usize>,
     selected_changed_file: Option<usize>,
     detail_target: Option<DetailTarget>,
+    detail_diff: Option<GitFileDiff>,
+    detail_scroll: usize,
     current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -100,6 +102,8 @@ impl App {
             selected_task: None,
             selected_changed_file: None,
             detail_target: None,
+            detail_diff: None,
+            detail_scroll: 0,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -189,6 +193,8 @@ impl App {
                 }),
             ActivityState::NotRepository | ActivityState::Unavailable => None,
         };
+        self.detail_diff = None;
+        self.detail_scroll = 0;
     }
 
     pub const fn is_running(&self) -> bool {
@@ -244,6 +250,32 @@ impl App {
         self.selected_changed_file
     }
 
+    pub fn detail_diff(&self) -> Option<&GitFileDiff> {
+        self.detail_diff.as_ref()
+    }
+
+    pub const fn detail_scroll(&self) -> usize {
+        self.detail_scroll
+    }
+
+    pub fn apply_detail_diff(&mut self, diff: GitFileDiff) {
+        if self.detail_target.is_some() {
+            self.detail_diff = Some(diff);
+            self.detail_scroll = 0;
+        }
+    }
+
+    pub fn scroll_detail(&mut self, delta: isize, max_scroll: usize) {
+        self.detail_scroll =
+            (self.detail_scroll as isize + delta).clamp(0, max_scroll as isize) as usize;
+    }
+
+    pub fn detail_request(&self) -> Option<(PathBuf, GitFileStatus)> {
+        match self.detail_target.as_ref()? {
+            DetailTarget::ChangedFile { path, status, .. } => Some((path.clone(), status.clone())),
+        }
+    }
+
     pub fn detail_target(&self) -> Option<&DetailTarget> {
         self.detail_target.as_ref()
     }
@@ -272,7 +304,11 @@ impl App {
         if self.detail_target.is_some() {
             match key.code {
                 KeyCode::Char('q') => self.running = false,
-                KeyCode::Esc => self.detail_target = None,
+                KeyCode::Esc => {
+                    self.detail_target = None;
+                    self.detail_diff = None;
+                    self.detail_scroll = 0;
+                }
                 _ => {}
             }
             return;
@@ -334,6 +370,8 @@ impl App {
             status: file.status.clone(),
             changes: file.changes,
         });
+        self.detail_diff = None;
+        self.detail_scroll = 0;
     }
 
     fn move_task_selection(&mut self, delta: isize) {
@@ -377,7 +415,8 @@ mod tests {
         progress::{
             ActivitySummary, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
             BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, GitActivity,
-            GitChangedFile, GitFileStatus, PlanSummary, TaskSummary, TaskSummaryItem,
+            GitChangedFile, GitFileDiffUnavailable, GitFileStatus, PlanSummary, TaskSummary,
+            TaskSummaryItem,
         },
         project::{ProjectSnapshot, collect_project_snapshot},
     };
@@ -876,5 +915,21 @@ mod tests {
         app.apply_snapshot(snapshot(1));
         assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
         assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+    }
+    #[test]
+    fn detail_scroll_is_bounded_and_resets_when_the_detail_closes() {
+        let mut app = app(1);
+        app.apply_activity_state(activity_with_files(1));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.apply_detail_diff(GitFileDiff::Unavailable(GitFileDiffUnavailable::NoContent));
+        app.scroll_detail(20, 3);
+        assert_eq!(app.detail_scroll(), 3);
+        app.scroll_detail(-20, 3);
+        assert_eq!(app.detail_scroll(), 0);
+        app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
+        assert!(!app.has_detail_view());
+        assert_eq!(app.detail_scroll(), 0);
     }
 }

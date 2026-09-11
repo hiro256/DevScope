@@ -74,3 +74,5 @@ Changed File Detail may surface observed change magnitude in addition to path an
 Change magnitude remains Activity data, not Evidence.
 Changed Files may also surface observed change magnitude for quick comparison across files.
 Change counts are secondary to path and status and may be omitted in narrow layouts.
+Changed File Detail uses optional on-demand Activity drill-down for file content changes.
+The overview remains compact; diff content belongs in detail rather than the Changed Files list.

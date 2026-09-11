@@ -2,8 +2,9 @@ use std::{
     collections::BTreeMap,
     error::Error,
     fmt,
+    io::{self, Read},
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,31 @@ pub struct GitChangedFile {
     pub status: GitFileStatus,
     pub changes: GitChangeCounts,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitDiffText {
+    pub text: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitFileDiff {
+    Available {
+        unstaged: Option<GitDiffText>,
+        staged: Option<GitDiffText>,
+    },
+    Unavailable(GitFileDiffUnavailable),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitFileDiffUnavailable {
+    Untracked,
+    Renamed,
+    NoContent,
+    Error,
+}
+
+const MAX_FILE_DIFF_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommit {
     pub id: String,
@@ -115,6 +141,82 @@ pub fn collect_git_activity(root: &Path, limit: usize) -> Result<GitActivity, Gi
         changed_files,
         recent_commits,
     })
+}
+pub fn collect_git_file_diff(
+    root: &Path,
+    path: &Path,
+    status: &GitFileStatus,
+) -> Result<GitFileDiff, GitActivityError> {
+    if matches!(status, GitFileStatus::Renamed) {
+        return Ok(GitFileDiff::Unavailable(GitFileDiffUnavailable::Renamed));
+    }
+    let path = path.to_str().ok_or(GitActivityError::InvalidOutput)?;
+    let unstaged = run_limited_diff(root, ["diff", "--no-ext-diff", "--no-color", "--", path])?;
+    let staged = run_limited_diff(
+        root,
+        [
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-color",
+            "--",
+            path,
+        ],
+    )?;
+    if unstaged.is_none() && staged.is_none() {
+        let unavailable = if matches!(status, GitFileStatus::Added) {
+            GitFileDiffUnavailable::Untracked
+        } else {
+            GitFileDiffUnavailable::NoContent
+        };
+        return Ok(GitFileDiff::Unavailable(unavailable));
+    }
+    Ok(GitFileDiff::Available { unstaged, staged })
+}
+
+fn run_limited_diff<'a>(
+    root: &Path,
+    args: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<GitDiffText>, GitActivityError> {
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                GitActivityError::GitUnavailable
+            } else {
+                GitActivityError::CommandFailed(error.to_string())
+            }
+        })?;
+    let mut stdout = child.stdout.take().ok_or(GitActivityError::InvalidOutput)?;
+    let mut bytes = Vec::new();
+    stdout
+        .by_ref()
+        .take((MAX_FILE_DIFF_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| GitActivityError::CommandFailed(error.to_string()))?;
+    let truncated = bytes.len() > MAX_FILE_DIFF_BYTES;
+    if truncated {
+        bytes.truncate(MAX_FILE_DIFF_BYTES);
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .map_err(|error| GitActivityError::CommandFailed(error.to_string()))?;
+    if !truncated && !status.success() {
+        return Err(GitActivityError::CommandFailed("git diff failed".into()));
+    }
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(GitDiffText {
+        text: String::from_utf8(bytes).map_err(|_| GitActivityError::InvalidOutput)?,
+        truncated,
+    }))
 }
 fn parse_status(
     bytes: &[u8],
@@ -364,6 +466,50 @@ mod tests {
             .unwrap();
         assert_eq!(untracked.status, GitFileStatus::Added);
         assert_eq!(untracked.changes, GitChangeCounts::unavailable());
+    }
+    #[test]
+    fn collects_modified_staged_and_untracked_file_diffs() {
+        let repo = Repo::new(true);
+        repo.commit("old\n");
+        fs::write(repo.0.join("a.txt"), "unstaged\n").unwrap();
+        let unstaged =
+            collect_git_file_diff(&repo.0, Path::new("a.txt"), &GitFileStatus::Modified).unwrap();
+        let GitFileDiff::Available { unstaged, staged } = unstaged else {
+            panic!("modified file should have a diff")
+        };
+        assert!(unstaged.unwrap().text.contains("-old"));
+        assert!(staged.is_none());
+
+        fs::write(repo.0.join("a.txt"), "staged\n").unwrap();
+        cmd(&repo.0, &["add", "a.txt"]);
+        fs::write(repo.0.join("a.txt"), "staged\nunstaged\n").unwrap();
+        let combined =
+            collect_git_file_diff(&repo.0, Path::new("a.txt"), &GitFileStatus::Modified).unwrap();
+        let GitFileDiff::Available { unstaged, staged } = combined else {
+            panic!("staged and unstaged changes should both be available")
+        };
+        assert!(unstaged.unwrap().text.contains("+unstaged"));
+        assert!(staged.unwrap().text.contains("+staged"));
+
+        fs::write(repo.0.join("new.txt"), "untracked\n").unwrap();
+        assert_eq!(
+            collect_git_file_diff(&repo.0, Path::new("new.txt"), &GitFileStatus::Added).unwrap(),
+            GitFileDiff::Unavailable(GitFileDiffUnavailable::Untracked)
+        );
+    }
+
+    #[test]
+    fn handles_binary_and_renamed_diffs_without_panicking() {
+        let repo = Repo::new(true);
+        repo.commit("text");
+        fs::write(repo.0.join("a.txt"), [0, 1, 2]).unwrap();
+        assert!(
+            collect_git_file_diff(&repo.0, Path::new("a.txt"), &GitFileStatus::Modified).is_ok()
+        );
+        assert_eq!(
+            collect_git_file_diff(&repo.0, Path::new("a.txt"), &GitFileStatus::Renamed).unwrap(),
+            GitFileDiff::Unavailable(GitFileDiffUnavailable::Renamed)
+        );
     }
     #[test]
     fn detection_and_zero_commits() {

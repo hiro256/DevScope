@@ -16,7 +16,8 @@ use devscope::{
     progress::{
         BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
-        cargo_build_test_command, is_cargo_project,
+        GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
+        is_cargo_project,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -206,6 +207,15 @@ impl RefreshOutcome {
     }
 }
 
+fn refresh_open_detail(root: Option<&Path>, app: &mut App) -> bool {
+    let (Some(root), Some((path, status))) = (root, app.detail_request()) else {
+        return false;
+    };
+    let diff = collect_git_file_diff(root, &path, &status)
+        .unwrap_or(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error));
+    app.apply_detail_diff(diff);
+    true
+}
 fn apply_pending_refreshes(
     root: &Path,
     app: &mut App,
@@ -521,6 +531,7 @@ pub fn run(
                         if let Some(detector) = &mut current_work_changes {
                             detector.sync(root);
                         }
+                        refresh_open_detail(Some(root), app);
                         refresh_current_work(Some(root), app);
                         requests.clear();
                         app.record_refresh(RefreshSource::Manual, session_start.elapsed());
@@ -537,10 +548,24 @@ pub fn run(
                 }
                 Event::Key(key) => {
                     let size = terminal.size()?;
+                    let was_detail = app.has_detail_view();
                     app.handle_key_with_focusable_panels(
                         key,
                         ui::focusable_panels(size.width, size.height),
                     );
+                    if app.has_detail_view() {
+                        let delta = match key.code {
+                            KeyCode::Down | KeyCode::Char('j') => Some(1),
+                            KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                            _ => None,
+                        };
+                        if let Some(delta) = delta {
+                            app.scroll_detail(delta, ui::detail_scroll_limit(app, size.into()));
+                        }
+                        if !was_detail {
+                            refresh_open_detail(project_root, app);
+                        }
+                    }
                     needs_render = true;
                 }
                 Event::Resize(width, height) => {

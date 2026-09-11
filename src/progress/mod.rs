@@ -18,8 +18,9 @@ pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
 mod git;
 mod markdown;
 pub use git::{
-    GitActivity, GitActivityError, GitChangeCounts, GitChangedFile, GitCommit, GitFileStatus,
-    collect_git_activity, is_git_repository,
+    GitActivity, GitActivityError, GitChangeCounts, GitChangedFile, GitCommit, GitDiffText,
+    GitFileDiff, GitFileDiffUnavailable, GitFileStatus, collect_git_activity,
+    collect_git_file_diff, is_git_repository,
 };
 pub use markdown::{
     MarkdownProgress, MarkdownProgressError, MarkdownTask, analyze_markdown_progress,

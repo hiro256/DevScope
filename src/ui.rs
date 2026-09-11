@@ -6,7 +6,8 @@ use crate::app::{
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
-    BuildTestStatus, GitChangeCounts, GitFileStatus,
+    BuildTestStatus, GitChangeCounts, GitDiffText, GitFileDiff, GitFileDiffUnavailable,
+    GitFileStatus,
 };
 use ratatui::{
     Frame,
@@ -54,8 +55,8 @@ fn layout_variant(width: u16, height: u16) -> Option<LayoutVariant> {
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    if let Some(target) = app.detail_target() {
-        render_detail(frame, area, target);
+    if app.detail_target().is_some() {
+        render_detail(frame, area, app);
         return;
     }
     let Some(layout) = layout_variant(area.width, area.height) else {
@@ -187,13 +188,22 @@ pub fn render(frame: &mut Frame, app: &App) {
         footer_area,
     );
 }
-fn render_detail(frame: &mut Frame, area: Rect, target: &DetailTarget) {
-    let areas = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    let DetailTarget::ChangedFile {
+fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
+    let header_height = 10;
+    let areas = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let Some(DetailTarget::ChangedFile {
         path,
         status,
         changes,
-    } = target;
+    }) = app.detail_target()
+    else {
+        return;
+    };
     frame.render_widget(
         Paragraph::new(format!(
             "File\n  {}\n\nStatus\n  {}\n\nChanges\n  {}",
@@ -204,9 +214,53 @@ fn render_detail(frame: &mut Frame, area: Rect, target: &DetailTarget) {
         .block(panel_block("Changed File Detail", false)),
         areas[0],
     );
-    frame.render_widget(Paragraph::new("Esc: Back  q: Quit"), areas[1]);
+    frame.render_widget(
+        Paragraph::new(detail_diff_lines(app.detail_diff()))
+            .block(panel_block("Diff", false))
+            .scroll((app.detail_scroll().min(u16::MAX as usize) as u16, 0)),
+        areas[1],
+    );
+    frame.render_widget(Paragraph::new("j/k: Scroll  Esc: Back  q: Quit"), areas[2]);
 }
 
+pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
+    let body_height = usize::from(area.height.saturating_sub(11).saturating_sub(2));
+    detail_diff_lines(app.detail_diff())
+        .len()
+        .saturating_sub(body_height)
+}
+
+fn detail_diff_lines(diff: Option<&GitFileDiff>) -> Vec<Line<'static>> {
+    match diff {
+        None => vec![Line::from("Loading diff...")],
+        Some(GitFileDiff::Unavailable(reason)) => vec![Line::from(match reason {
+            GitFileDiffUnavailable::Untracked => "Unavailable for untracked file",
+            GitFileDiffUnavailable::Renamed => "Unavailable for renamed file",
+            GitFileDiffUnavailable::NoContent => "No diff available",
+            GitFileDiffUnavailable::Error => "Diff unavailable",
+        })],
+        Some(GitFileDiff::Available { unstaged, staged }) => {
+            let mut lines = Vec::new();
+            append_diff_section(&mut lines, "Unstaged", unstaged.as_ref());
+            append_diff_section(&mut lines, "Staged", staged.as_ref());
+            lines
+        }
+    }
+}
+
+fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option<&GitDiffText>) {
+    let Some(diff) = diff else {
+        return;
+    };
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(title.to_owned()));
+    lines.extend(diff.text.lines().map(|line| Line::from(line.to_owned())));
+    if diff.truncated {
+        lines.push(Line::from("... diff truncated ..."));
+    }
+}
 fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -1214,12 +1268,27 @@ mod tests {
             panels,
         );
 
+        app.apply_detail_diff(GitFileDiff::Available {
+            unstaged: Some(GitDiffText {
+                text: "@@ -1 +1 @@\n-old\n+new\n".into(),
+                truncated: false,
+            }),
+            staged: Some(GitDiffText {
+                text: "@@ -1 +1 @@\n-staged-old\n+staged-new\n".into(),
+                truncated: true,
+            }),
+        });
         let output = draw(&app, 80, 30);
         assert!(output.contains("Changed File Detail"));
         assert!(output.contains("src/ui.rs"));
         assert!(output.contains("Modified"));
         assert!(output.contains("+12 -4"));
-        assert!(output.contains("Esc: Back  q: Quit"));
+        assert!(output.contains("Unstaged"));
+        assert!(output.contains("-old"));
+        assert!(output.contains("+new"));
+        assert!(output.contains("Staged"));
+        assert!(output.contains("... diff truncated ..."));
+        assert!(output.contains("j/k: Scroll  Esc: Back  q: Quit"));
         assert_eq!(change_summary(Default::default()), "unavailable");
         for (width, height) in [(40, 18), (20, 5), (1, 1)] {
             let _ = draw(&app, width, height);
