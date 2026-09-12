@@ -169,3 +169,5 @@ Artifact Evidence directly observes one project-relative filesystem path. Its fi
 
 Build/Test Evidence observes process execution, reports Passed or Failed, and has meaningful Fresh/Stale semantics. Artifact Evidence observes filesystem state and reports Exists or Missing; freshness is not yet defined. This first slice keeps target selection explicit at the CLI and does not imply that mtime or size proves validity, verification, or recency.
 Artifact paths are project-relative both lexically and physically. DevScope rejects paths that resolve outside the project root through symlinks, junctions, or similar filesystem indirection. This is an observation boundary, not a general filesystem sandbox or a TOCTOU-proof security mechanism.
+
+Broken filesystem indirection is treated as observation failure rather than Missing.

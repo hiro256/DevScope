@@ -83,6 +83,11 @@ fn ensure_artifact_inside_root(root: &Path, path: &Path) -> Result<(), ArtifactP
                 });
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if fs::symlink_metadata(&existing).is_ok() {
+                    return Err(ArtifactPathError {
+                        message: "could not resolve artifact path".into(),
+                    });
+                }
                 if !existing.pop() {
                     return Err(ArtifactPathError {
                         message: "could not resolve artifact path".into(),
@@ -189,6 +194,17 @@ mod tests {
         }
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn rejects_broken_symlinks_instead_of_reporting_missing() {
+        use std::os::unix::fs::symlink;
+        let root = root();
+        symlink(root.join("does-not-exist"), root.join("broken-link")).unwrap();
+        for path in ["broken-link", "broken-link/file"] {
+            assert!(observe_artifact(&root, Path::new(path)).is_err(), "{path}");
+        }
+        let _ = fs::remove_dir_all(root);
     }
     #[test]
     fn rejects_unsafe_paths() {
