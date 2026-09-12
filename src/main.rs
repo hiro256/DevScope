@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
         Ok(EntryMode::Verify(kind)) => run_verify(kind),
+        Ok(EntryMode::ArtifactInspect(path)) => run_artifact_inspect(path),
         Ok(EntryMode::Help) => {
             print!("{}", cli::usage());
             ExitCode::SUCCESS
@@ -100,6 +101,22 @@ fn run_work_done(number: usize) -> ExitCode {
             }
             Err(error) => report_runtime_error(error),
         },
+        Err(error) => report_runtime_error(error),
+    }
+}
+fn run_artifact_inspect(path: std::ffi::OsString) -> ExitCode {
+    let Ok(root) = env::current_dir() else {
+        return ExitCode::FAILURE;
+    };
+    match devscope::progress::observe_artifact(&root, std::path::Path::new(&path)) {
+        Ok(observation) => {
+            print!("{}", cli::render_artifact(&observation));
+            if observation.observation_failed() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
         Err(error) => report_runtime_error(error),
     }
 }

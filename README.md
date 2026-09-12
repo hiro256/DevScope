@@ -129,6 +129,7 @@ output is not mixed with compact CLI output:
 .\target\debug\devscope.exe work done 3
 .\target\debug\devscope.exe verify build
 .\target\debug\devscope.exe verify test
+.\target\debug\devscope.exe artifact inspect target\debug\devscope.exe
 ```
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`

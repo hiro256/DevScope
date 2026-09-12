@@ -19,7 +19,7 @@ pub enum CurrentWorkContext<'a> {
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryMode {
     Tui,
     Context,
@@ -27,6 +27,7 @@ pub enum EntryMode {
     WorkList,
     WorkDone(usize),
     Verify(devscope::progress::BuildTestKind),
+    ArtifactInspect(OsString),
     Help,
     Version,
 }
@@ -72,6 +73,14 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
+        [first, second, path]
+            if first == OsStr::new("artifact") && second == OsStr::new("inspect") =>
+        {
+            Ok(EntryMode::ArtifactInspect(path.clone()))
+        }
+        [first, ..] if first == OsStr::new("artifact") => Err(UsageError {
+            message: "expected `devscope artifact inspect <path>`",
+        }),
         [first, second] if first == OsStr::new("verify") => match second.to_string_lossy().as_ref()
         {
             "build" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Build)),
@@ -96,7 +105,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect <path>\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -308,6 +317,28 @@ fn format_duration(duration: std::time::Duration) -> String {
     } else {
         format!("{}ms", duration.as_millis())
     }
+}
+
+pub fn render_artifact(observation: &devscope::progress::ArtifactObservation) -> String {
+    use devscope::progress::{ArtifactKind, ArtifactStatus};
+    let mut output = format!("Artifact\nPath: {}\n", observation.path().display());
+    match observation.status() {
+        ArtifactStatus::Exists { kind, size } => {
+            let kind = match kind {
+                ArtifactKind::File => "File",
+                ArtifactKind::Directory => "Directory",
+                ArtifactKind::Other => "Other",
+            };
+            output.push_str(&format!(
+                "Status: Exists\nKind: {kind}\nSize: {size} bytes\n"
+            ));
+        }
+        ArtifactStatus::Missing => output.push_str("Status: Missing\n"),
+        ArtifactStatus::ObservationError { message } => {
+            output.push_str(&format!("Status: Observation error\nError: {message}\n"))
+        }
+    }
+    output
 }
 
 #[cfg(test)]

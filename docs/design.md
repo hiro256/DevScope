@@ -162,3 +162,9 @@ The latest Build/Test result is persisted as local-only current state and can be
 AI workflow guidance now prefers `devscope verify build` and `devscope verify test`; people may use the same commands. If DevScope verification is unavailable or cannot start, project-native verification remains available. A normally completed failed test is itself Observed Evidence and is not a reason to automatically rerun Cargo outside DevScope.
 
 The experiment intentionally excludes automatic verification after file changes, OS process monitoring, terminal interception, Codex process detection, initiator tracking, generic Evidence APIs or persisted schemas, Evidence history, and CI integration. Before this integration, Build/Test Evidence depended on manually pressing `b` or `t` in a running TUI. It can now be generated through an explicit CLI or TUI path and remain visible as persisted Observed Evidence in later TUI sessions.
+
+## Artifact Evidence experiment
+
+Artifact Evidence directly observes one project-relative filesystem path. Its first slice distinguishes `Exists`, `Missing`, and observation failure with optional descriptive metadata, without persistence, freshness, validation rules, configuration, TUI integration, or generic Evidence abstractions. It is a second concrete Observed Evidence source to compare before stabilizing shared APIs.
+
+Build/Test Evidence observes process execution, reports Passed or Failed, and has meaningful Fresh/Stale semantics. Artifact Evidence observes filesystem state and reports Exists or Missing; freshness is not yet defined. This first slice keeps target selection explicit at the CLI and does not imply that mtime or size proves validity, verification, or recency.

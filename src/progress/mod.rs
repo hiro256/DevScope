@@ -1,10 +1,14 @@
 //! Project progress analysis independent of the TUI.
+mod artifact;
 mod build_test;
 mod build_test_freshness;
 mod build_test_runner;
 mod build_test_source;
 mod build_test_store;
 mod cargo_build_test;
+pub use artifact::{
+    ArtifactKind, ArtifactObservation, ArtifactPathError, ArtifactStatus, observe_artifact,
+};
 pub use build_test::{
     BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
     BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, BuildTestStatus,
