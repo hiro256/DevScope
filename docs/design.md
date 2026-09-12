@@ -81,3 +81,5 @@ passive global Preview surface beside the navigation panels. Preview content fol
 panel and its selection, and can be hidden without changing project state. Whole-screen Detail
 remains the deeper inspection mode.
 Global Preview availability is based on minimum usable navigation and preview widths rather than a single wide-screen cutoff.
+Task Preview surfaces source-grounded task context rather than generated interpretation. It may show
+the selected task text, source path, section, and nearby Markdown context.

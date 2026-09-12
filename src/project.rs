@@ -210,6 +210,40 @@ mod tests {
     }
 
     #[test]
+    fn refreshed_markdown_tasks_keep_preview_source_context() {
+        let project = TempProject::new();
+        project.write(
+            "docs/roadmap.md",
+            "# Plan\n\n## TUI\n- [ ] Detail View experiment\n- [ ] Artifact Evidence experiment",
+        );
+
+        let (_, tasks) = collect_markdown_state(project.path()).unwrap();
+        let TaskState::Available(tasks) = tasks else {
+            panic!("tasks should be available");
+        };
+        let task = &tasks.items()[0];
+        assert_eq!(task.source_path(), Path::new("docs/roadmap.md"));
+        assert_eq!(task.heading(), Some("TUI"));
+        assert!(
+            task.context()
+                .iter()
+                .any(|line| line.contains("Artifact Evidence"))
+        );
+
+        project.write(
+            "docs/roadmap.md",
+            "# Plan\n\n## TUI\n- [ ] Updated Detail View experiment\n- [ ] Artifact Evidence experiment",
+        );
+        let (_, refreshed_tasks) = collect_markdown_state(project.path()).unwrap();
+        let TaskState::Available(refreshed_tasks) = refreshed_tasks else {
+            panic!("tasks should be available");
+        };
+        assert_eq!(
+            refreshed_tasks.items()[0].text(),
+            "Updated Detail View experiment"
+        );
+    }
+    #[test]
     fn missing_config_preserves_markdown_collection() {
         let project = TempProject::new();
         project.write("tasks.md", "- [x] Completed\n- [ ] Remaining");

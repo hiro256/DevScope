@@ -209,10 +209,7 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = match app.focused_panel() {
-        FocusedPanel::Tasks => (
-            "Preview: Task".to_owned(),
-            vec![Line::from("Task preview is not implemented yet.")],
-        ),
+        FocusedPanel::Tasks => ("Preview: Task".to_owned(), task_preview_lines(app)),
         FocusedPanel::Evidence => (
             "Preview: Evidence".to_owned(),
             vec![Line::from("Evidence preview is not implemented yet.")],
@@ -232,6 +229,41 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(panel_block(title, false)), area);
 }
 
+fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
+    let (Some(selected), TaskState::Available(summary)) = (app.selected_task(), app.tasks()) else {
+        return vec![Line::from("No task selected")];
+    };
+    let Some(task) = summary.items().get(selected) else {
+        return vec![Line::from("No task selected")];
+    };
+
+    let mut lines = vec![
+        Line::from(task.text().to_owned()),
+        Line::from(""),
+        Line::from("Source"),
+        Line::from(format!("  {}", task.source_path().display())),
+    ];
+    if let Some(heading) = task.heading() {
+        lines.extend([
+            Line::from(""),
+            Line::from("Section"),
+            Line::from(format!("  {heading}")),
+        ]);
+    }
+    if !task.context().is_empty() {
+        lines.extend([Line::from(""), Line::from("Context")]);
+        lines.extend(task.context().iter().enumerate().map(|(index, line)| {
+            let line_number = task.context_start_line() + index;
+            let marker = if line_number == task.line() {
+                "> "
+            } else {
+                "  "
+            };
+            Line::from(format!("{marker}{line}"))
+        }));
+    }
+    lines
+}
 fn selected_changed_file_path(app: &App) -> Option<String> {
     let (Some(selected), ActivityState::Available(summary)) =
         (app.selected_changed_file(), app.activity())
@@ -1289,6 +1321,110 @@ mod tests {
         }))
     }
 
+    fn preview_task(
+        path: &str,
+        line: usize,
+        text: &str,
+        heading: &str,
+        context: &[&str],
+    ) -> TaskSummaryItem {
+        TaskSummaryItem::with_source_context(
+            path.into(),
+            line,
+            text.into(),
+            path.into(),
+            Some(heading.into()),
+            line.saturating_sub(2),
+            context.iter().map(|line| (*line).into()).collect(),
+        )
+    }
+
+    #[test]
+    fn task_preview_shows_source_grounded_context_and_follows_selection() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(
+                3,
+                vec![
+                    preview_task(
+                        "docs/roadmap.md",
+                        4,
+                        "Detail View experiment",
+                        "TUI",
+                        &[
+                            "## TUI",
+                            "- [x] Previous",
+                            "- [ ] Detail View experiment",
+                            "- [ ] Artifact Evidence experiment",
+                        ],
+                    ),
+                    preview_task(
+                        "docs/roadmap.md",
+                        4,
+                        "Artifact Evidence experiment",
+                        "Core observation",
+                        &[
+                            "## Core observation",
+                            "- [ ] Detail View experiment",
+                            "- [ ] Artifact Evidence experiment",
+                            "- [ ] Progress history experiment",
+                        ],
+                    ),
+                ],
+            )),
+            ActivityState::Unavailable,
+        );
+        let panels = focusable_panels(80, 30);
+        let first = draw(&app, 80, 30);
+        assert!(first.contains("Detail View experiment"));
+        assert!(first.contains("Source"));
+        assert!(first.contains("docs/roadmap.md"));
+        assert!(first.contains("Section"));
+        assert!(first.contains("TUI"));
+        assert!(first.contains("Context"));
+        assert!(first.contains("> - [ ] Detail View experiment"));
+
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        let second = draw(&app, 80, 30);
+        assert!(second.contains("Artifact Evidence experiment"));
+        assert!(second.contains("Core observation"));
+        assert!(second.contains("> - [ ] Artifact Evidence experiment"));
+    }
+
+    #[test]
+    fn task_preview_handles_no_selection_and_unavailable_tasks() {
+        let no_selection = app(
+            TaskState::Available(TaskSummary::new(0, vec![])),
+            ActivityState::Unavailable,
+        );
+        assert!(draw(&no_selection, 80, 30).contains("No task selected"));
+
+        let unavailable = app(TaskState::Unavailable, ActivityState::Unavailable);
+        assert!(draw(&unavailable, 80, 30).contains("No task selected"));
+    }
+
+    #[test]
+    fn task_preview_keeps_primary_information_at_half_screen_width() {
+        let app = app(
+            TaskState::Available(TaskSummary::new(
+                1,
+                vec![preview_task(
+                    "docs/roadmap.md",
+                    4,
+                    "Detail View experiment",
+                    "TUI",
+                    &["- [ ] Detail View experiment"],
+                )],
+            )),
+            ActivityState::Unavailable,
+        );
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Detail View experiment"));
+        assert!(output.contains("docs/roadmap.md"));
+        assert!(output.contains("TUI"));
+    }
     #[test]
     fn renders_global_preview_for_each_focused_panel_and_preserves_toggle_state() {
         let mut app = app(
@@ -1310,7 +1446,7 @@ mod tests {
         let task_preview = draw(&app, 120, 30);
         assert!(task_preview.contains("Project Progress"));
         assert!(task_preview.contains("Preview: Task"));
-        assert!(task_preview.contains("Task preview is not implemented yet."));
+        assert!(task_preview.contains("No task selected"));
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,

@@ -10,6 +10,9 @@ pub struct MarkdownTask {
     line: usize,
     completed: bool,
     text: String,
+    heading: Option<String>,
+    context_start_line: usize,
+    context: Vec<String>,
 }
 
 impl MarkdownTask {
@@ -25,14 +28,27 @@ impl MarkdownTask {
     pub fn text(&self) -> &str {
         &self.text
     }
+    pub fn heading(&self) -> Option<&str> {
+        self.heading.as_deref()
+    }
+    pub const fn context_start_line(&self) -> usize {
+        self.context_start_line
+    }
+    pub fn context(&self) -> &[String] {
+        &self.context
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MarkdownProgress {
+    root: PathBuf,
     tasks: Vec<MarkdownTask>,
 }
 
 impl MarkdownProgress {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     pub fn tasks(&self) -> &[MarkdownTask] {
         &self.tasks
     }
@@ -94,7 +110,10 @@ pub fn analyze_markdown_progress_with_exclusions(
         })?;
         tasks.extend(parse_tasks(&path, &content));
     }
-    Ok(MarkdownProgress { tasks })
+    Ok(MarkdownProgress {
+        root: root.to_path_buf(),
+        tasks,
+    })
 }
 
 fn discover(
@@ -145,8 +164,9 @@ fn is_excluded_path(root: &Path, path: &Path, configured: &[PathBuf]) -> bool {
     })
 }
 fn parse_tasks(path: &Path, content: &str) -> Vec<MarkdownTask> {
-    content
-        .lines()
+    let lines: Vec<_> = content.lines().collect();
+    lines
+        .iter()
         .enumerate()
         .filter_map(|(index, line)| {
             parse_task_line(line).map(|(completed, text)| MarkdownTask {
@@ -154,9 +174,27 @@ fn parse_tasks(path: &Path, content: &str) -> Vec<MarkdownTask> {
                 line: index + 1,
                 completed,
                 text,
+                heading: nearest_heading(&lines, index),
+                context_start_line: index.saturating_sub(2) + 1,
+                context: lines[index.saturating_sub(2)..(index + 3).min(lines.len())]
+                    .iter()
+                    .map(|line| (*line).to_owned())
+                    .collect(),
             })
         })
         .collect()
+}
+
+fn nearest_heading(lines: &[&str], task_index: usize) -> Option<String> {
+    lines[..=task_index].iter().rev().find_map(|line| {
+        let heading = line.trim_start().strip_prefix('#')?;
+        let heading = heading.trim_start_matches('#');
+        heading
+            .strip_prefix(char::is_whitespace)
+            .map(str::trim)
+            .filter(|heading| !heading.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn parse_task_line(line: &str) -> Option<(bool, String)> {
@@ -207,6 +245,27 @@ mod tests {
         assert_eq!(tasks[4].line(), 5);
     }
 
+    #[test]
+    fn retains_nearest_heading_and_nearby_source_lines() {
+        let tasks = parse_tasks(
+            Path::new("tasks.md"),
+            "# Plan\n\n## TUI\n- [x] Previous\n- [ ] Selected\n- [ ] Next\nAfter",
+        );
+
+        let selected = &tasks[1];
+        assert_eq!(selected.heading(), Some("TUI"));
+        assert_eq!(selected.context_start_line(), 3);
+        assert_eq!(
+            selected.context(),
+            [
+                "## TUI",
+                "- [x] Previous",
+                "- [ ] Selected",
+                "- [ ] Next",
+                "After"
+            ]
+        );
+    }
     #[test]
     fn parses_indented_tasks_and_ignores_prose() {
         let tasks = parse_tasks(

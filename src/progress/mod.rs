@@ -77,6 +77,10 @@ pub struct TaskSummaryItem {
     path: std::path::PathBuf,
     line: usize,
     text: String,
+    source_path: std::path::PathBuf,
+    heading: Option<String>,
+    context_start_line: usize,
+    context: Vec<String>,
 }
 impl TaskSummaryItem {
     pub fn path(&self) -> &std::path::Path {
@@ -87,6 +91,18 @@ impl TaskSummaryItem {
     }
     pub fn text(&self) -> &str {
         &self.text
+    }
+    pub fn source_path(&self) -> &std::path::Path {
+        &self.source_path
+    }
+    pub fn heading(&self) -> Option<&str> {
+        self.heading.as_deref()
+    }
+    pub const fn context_start_line(&self) -> usize {
+        self.context_start_line
+    }
+    pub fn context(&self) -> &[String] {
+        &self.context
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +133,10 @@ impl From<&MarkdownProgress> for TaskSummary {
                     path: t.path().into(),
                     line: t.line(),
                     text: t.text().into(),
+                    source_path: t.path().strip_prefix(p.root()).unwrap_or(t.path()).into(),
+                    heading: t.heading().map(str::to_owned),
+                    context_start_line: t.context_start_line(),
+                    context: t.context().to_vec(),
                 })
                 .collect(),
         }
@@ -125,7 +145,35 @@ impl From<&MarkdownProgress> for TaskSummary {
 
 impl TaskSummaryItem {
     pub fn new(path: std::path::PathBuf, line: usize, text: String) -> Self {
-        Self { path, line, text }
+        Self {
+            source_path: path.clone(),
+            path,
+            line,
+            text,
+            heading: None,
+            context_start_line: line,
+            context: Vec::new(),
+        }
+    }
+
+    pub fn with_source_context(
+        path: std::path::PathBuf,
+        line: usize,
+        text: String,
+        source_path: std::path::PathBuf,
+        heading: Option<String>,
+        context_start_line: usize,
+        context: Vec<String>,
+    ) -> Self {
+        Self {
+            path,
+            line,
+            text,
+            source_path,
+            heading,
+            context_start_line,
+            context,
+        }
     }
 }
 impl TaskSummary {
