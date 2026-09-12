@@ -162,9 +162,17 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
 
 fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(tasks(app.tasks(), app.selected_task(), inner_height(area))).block(
-            panel_block("Tasks", app.focused_panel() == FocusedPanel::Tasks),
-        ),
+        Paragraph::new(tasks(
+            app.tasks(),
+            app.selected_task(),
+            inner_height(area),
+            inner_width(area),
+            app.current_work(),
+        ))
+        .block(panel_block(
+            "Tasks",
+            app.focused_panel() == FocusedPanel::Tasks,
+        )),
         area,
     );
 }
@@ -342,11 +350,7 @@ fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
         ]);
     }
     if let CurrentWorkState::Available(work) = app.current_work()
-        && task
-            .source_path()
-            .components()
-            .eq(work.parent_path().components())
-        && task.text() == work.parent_task()
+        && task_matches_current_work(task, app.current_work())
     {
         lines.extend([Line::from(""), Line::from("Current Work")]);
         lines.extend(work.items().iter().map(|item| {
@@ -663,7 +667,26 @@ fn activity(activity: &ActivityState) -> String {
     }
 }
 
-fn tasks(task_state: &TaskState, selected: Option<usize>, rows: usize) -> Vec<Line<'static>> {
+fn task_matches_current_work(
+    task: &devscope::progress::TaskSummaryItem,
+    current_work: &CurrentWorkState,
+) -> bool {
+    let CurrentWorkState::Available(work) = current_work else {
+        return false;
+    };
+    task.source_path()
+        .components()
+        .eq(work.parent_path().components())
+        && task.text() == work.parent_task()
+}
+
+fn tasks(
+    task_state: &TaskState,
+    selected: Option<usize>,
+    rows: usize,
+    width: usize,
+    current_work: &CurrentWorkState,
+) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
     }
@@ -674,7 +697,7 @@ fn tasks(task_state: &TaskState, selected: Option<usize>, rows: usize) -> Vec<Li
         TaskState::Available(summary) if summary.remaining() == 0 => {
             vec![Line::from("All tasks completed")]
         }
-        TaskState::Available(summary) => task_lines(summary, selected, rows),
+        TaskState::Available(summary) => task_lines(summary, selected, rows, width, current_work),
     }
 }
 
@@ -682,6 +705,8 @@ fn task_lines(
     summary: &devscope::progress::TaskSummary,
     selected: Option<usize>,
     rows: usize,
+    width: usize,
+    current_work: &CurrentWorkState,
 ) -> Vec<Line<'static>> {
     let total = summary.remaining();
     let selected = selected.unwrap_or(0).min(total - 1);
@@ -699,11 +724,12 @@ fn task_lines(
         .enumerate()
         .map(|(offset, item)| {
             let index = start + offset;
-            Line::from(format!(
-                "{} □ {}",
-                if index == selected { ">" } else { " " },
-                item.text()
-            ))
+            task_line(
+                item,
+                index == selected,
+                width,
+                task_matches_current_work(item, current_work),
+            )
         })
         .collect::<Vec<_>>();
 
@@ -713,6 +739,49 @@ fn task_lines(
     lines
 }
 
+fn task_line(
+    task: &devscope::progress::TaskSummaryItem,
+    selected: bool,
+    width: usize,
+    has_current_work: bool,
+) -> Line<'static> {
+    let prefix = format!("{} □ ", if selected { ">" } else { " " });
+    if !has_current_work {
+        return Line::from(format!("{prefix}{}", task.text()));
+    }
+
+    const INDICATOR: &str = "  [Work]";
+    let reserved = Line::from(prefix.clone()).width() + Line::from(INDICATOR).width();
+    if reserved > width {
+        return Line::from(format!("{prefix}{}", task.text()));
+    }
+    let text = truncate_task_text(task.text(), width.saturating_sub(reserved));
+    Line::from(format!("{prefix}{text}{INDICATOR}"))
+}
+
+fn truncate_task_text(text: &str, width: usize) -> String {
+    if Line::from(text.to_owned()).width() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+
+    let ellipsis = "…";
+    let text_width = width.saturating_sub(Line::from(ellipsis).width());
+    let mut result = String::new();
+    let mut result_width: usize = 0;
+    for character in text.chars() {
+        let character_width = Line::from(character.to_string()).width();
+        if result_width.saturating_add(character_width) > text_width {
+            break;
+        }
+        result.push(character);
+        result_width += character_width;
+    }
+    result.push_str(ellipsis);
+    result
+}
 fn changed_files(
     activity: &ActivityState,
     selected: Option<usize>,
@@ -1515,6 +1584,57 @@ mod tests {
         assert!(second.contains("Artifact Evidence experiment"));
         assert!(second.contains("Core observation"));
         assert!(second.contains("> - [ ] Artifact Evidence experiment"));
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn task_list_marks_only_the_matching_current_work_parent() {
+        let parent_task = "Explore verification integration for Build/Test Evidence";
+        let summary = TaskSummary::new(
+            3,
+            vec![
+                preview_task("docs/roadmap.md", 1, "Other task", "Core", &[]),
+                preview_task("docs/roadmap.md", 2, parent_task, "Core", &[]),
+                preview_task("docs/other.md", 3, parent_task, "Core", &[]),
+            ],
+        );
+        let current_work = matching_work_state("docs\\roadmap.md", parent_task, "- [ ] Work item");
+
+        let lines = task_lines(&summary, Some(0), 3, 100, &current_work);
+        assert!(!line_text(&lines[0]).contains("[Work]"));
+        assert!(line_text(&lines[1]).contains("[Work]"));
+        assert!(!line_text(&lines[2]).contains("[Work]"));
+
+        let lines = task_lines(&summary, Some(2), 3, 100, &current_work);
+        assert!(line_text(&lines[1]).contains("[Work]"));
+    }
+
+    #[test]
+    fn task_list_reserves_width_for_current_work_indicator() {
+        let parent_task = "A long Current Work parent task that must retain its indicator";
+        let summary = TaskSummary::new(
+            1,
+            vec![preview_task("docs/roadmap.md", 1, parent_task, "Core", &[])],
+        );
+        let current_work = matching_work_state("docs/roadmap.md", parent_task, "- [ ] Work item");
+
+        let line = line_text(&task_lines(&summary, Some(0), 1, 30, &current_work)[0]);
+        assert!(line.contains("[Work]"));
+        assert!(line.contains('…'));
+        assert!(Line::from(line).width() <= 30);
+
+        let mut app = app(TaskState::Available(summary), ActivityState::Unavailable);
+        app.apply_current_work(current_work);
+        assert!(draw(&app, 70, 30).contains("[Work]"));
+
+        app.apply_current_work(CurrentWorkState::Unavailable);
+        assert!(!draw(&app, 70, 30).contains("[Work]"));
     }
 
     #[test]

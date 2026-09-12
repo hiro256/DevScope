@@ -61,6 +61,8 @@ Current Work changes update independently from Plan and Activity observation.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
+The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.
+
 The Current Work TUI experiment validated overview-only Work progress as sufficient for
 the current workflow. A dedicated Current Work panel remains deferred until a concrete
 drill-down need appears.
