@@ -86,3 +86,5 @@ the selected task text, source path, section, and nearby Markdown context.
 It intentionally exposes source quality rather than generating interpretation; improve ambiguous
 task text at the source or workflow level when appropriate. Markdown checkbox syntax is broader
 than accepted Plan semantics, and source classification remains an open design question.
+Evidence Preview surfaces the selected observed Build/Test state and its available execution details.
+Freshness is shown separately from the underlying outcome.

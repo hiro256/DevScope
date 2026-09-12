@@ -210,10 +210,8 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = match app.focused_panel() {
         FocusedPanel::Tasks => ("Preview: Task".to_owned(), task_preview_lines(app)),
-        FocusedPanel::Evidence => (
-            "Preview: Evidence".to_owned(),
-            vec![Line::from("Evidence preview is not implemented yet.")],
-        ),
+        FocusedPanel::Evidence => evidence_preview(app),
+
         FocusedPanel::ChangedFiles => {
             let title = selected_changed_file_path(app)
                 .map(|path| format!("Preview: {path}"))
@@ -229,6 +227,66 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(panel_block(title, false)), area);
 }
 
+fn evidence_preview(app: &App) -> (String, Vec<Line<'static>>) {
+    let kind = app.evidence_detail_kind().unwrap_or(BuildTestKind::Build);
+    (
+        format!("Preview: {}", detail_kind(kind)),
+        evidence_preview_lines(kind, app.build_test_state(kind)),
+    )
+}
+
+fn evidence_preview_lines(kind: BuildTestKind, state: &BuildTestState) -> Vec<Line<'static>> {
+    match state {
+        BuildTestState::Unavailable => preview_field("Status", "Unavailable"),
+        BuildTestState::NotRun => {
+            let mut lines = preview_field("Status", "Not run");
+            lines.extend(preview_field(
+                "Action",
+                &format!("Press {} to run {}.", detail_key(kind), detail_kind(kind)),
+            ));
+            lines
+        }
+        BuildTestState::Running(run) => {
+            let mut lines = preview_field("Status", "Running");
+            lines.extend(preview_field("Command", run.command_label()));
+            lines
+        }
+        BuildTestState::Completed(result) => {
+            let outcome = match result.outcome() {
+                BuildTestOutcome::Passed => "Passed",
+                BuildTestOutcome::Failed => "Failed",
+            };
+            let freshness = match result.freshness() {
+                BuildTestFreshness::Fresh => "Fresh",
+                BuildTestFreshness::Stale => "Stale",
+            };
+            let mut lines = preview_field("Status", outcome);
+            lines.extend(preview_field("Freshness", freshness));
+            lines.extend(preview_field("Command", result.command_label()));
+            lines.extend(preview_field(
+                "Duration",
+                &format_duration(result.duration()),
+            ));
+            if !result.summary().is_empty() {
+                lines.extend(preview_field("Result", result.summary()));
+            }
+            lines
+        }
+        BuildTestState::ExecutionError(error) => {
+            let mut lines = preview_field("Status", "Execution error");
+            lines.extend(preview_field("Command", error.command_label()));
+            lines.extend(preview_field("Error", error.message()));
+            lines
+        }
+    }
+}
+
+fn preview_field(label: &str, value: &str) -> Vec<Line<'static>> {
+    vec![
+        Line::from(label.to_owned()),
+        Line::from(format!("  {value}")),
+    ]
+}
 fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
     let (Some(selected), TaskState::Available(summary)) = (app.selected_task(), app.tasks()) else {
         return vec![Line::from("No task selected")];
@@ -955,6 +1013,111 @@ mod tests {
     }
 
     #[test]
+    fn evidence_preview_uses_selected_live_build_test_state() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        let panels = focusable_panels(80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        let not_run = draw(&app, 80, 30);
+        assert!(not_run.contains("Preview: Build"));
+        assert!(not_run.contains("Status"));
+        assert!(not_run.contains("Not run"));
+        assert!(not_run.contains("Press b to run Build."));
+
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+            )),
+        );
+        let running = draw(&app, 80, 30);
+        assert!(running.contains("Running"));
+        assert!(running.contains("cargo check"));
+
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "cargo",
+                "cargo check",
+                Some(0),
+                Duration::from_millis(850),
+                "Passed",
+                None,
+            )),
+        );
+        let passed = draw(&app, 80, 30);
+        assert!(passed.contains("Status"));
+        assert!(passed.contains("Freshness"));
+        assert!(passed.contains("Fresh"));
+        assert!(passed.contains("Duration"));
+        assert!(passed.contains("850ms"));
+
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Stale,
+            ),
+        );
+        let stale = draw(&app, 80, 30);
+        assert!(stale.contains("Passed"));
+        assert!(stale.contains("Stale"));
+
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+                "cargo",
+                "cargo test",
+                Some(101),
+                Duration::from_secs(2),
+                "1 failed",
+                None,
+            )),
+        );
+        let failed = draw(&app, 80, 30);
+        assert!(failed.contains("Preview: Test"));
+        assert!(failed.contains("Failed"));
+        assert!(failed.contains("1 failed"));
+
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            execution_error_state(BuildTestKind::Test),
+        );
+        let error = draw(&app, 80, 30);
+        assert!(error.contains("Execution error"));
+        assert!(error.contains("a detailed execution error"));
+    }
+
+    #[test]
+    fn evidence_preview_handles_unavailable_state() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let panels = focusable_panels(80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("Preview: Build"));
+        assert!(output.contains("Unavailable"));
+    }
+    #[test]
     fn renders_evidence_details_for_initial_running_and_completed_states() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
@@ -1451,7 +1614,7 @@ mod tests {
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
         );
-        assert!(draw(&app, 120, 30).contains("Preview: Evidence"));
+        assert!(draw(&app, 120, 30).contains("Preview: Build"));
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
