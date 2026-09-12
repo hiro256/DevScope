@@ -341,6 +341,19 @@ fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
             Line::from(format!("  {heading}")),
         ]);
     }
+    if let CurrentWorkState::Available(work) = app.current_work()
+        && task
+            .source_path()
+            .components()
+            .eq(work.parent_path().components())
+        && task.text() == work.parent_task()
+    {
+        lines.extend([Line::from(""), Line::from("Current Work")]);
+        lines.extend(work.items().iter().map(|item| {
+            let marker = if item.completed() { "✓" } else { "□" };
+            Line::from(format!("  {marker} {}", item.text()))
+        }));
+    }
     if !task.context().is_empty() {
         lines.extend([Line::from(""), Line::from("Context")]);
         lines.extend(task.context().iter().enumerate().map(|(index, line)| {
@@ -863,6 +876,10 @@ mod tests {
     static WORK_ID: AtomicUsize = AtomicUsize::new(0);
 
     fn work_state(items: &str) -> CurrentWorkState {
+        matching_work_state("docs/roadmap.md", "Work", items)
+    }
+
+    fn matching_work_state(parent: &str, task: &str, items: &str) -> CurrentWorkState {
         let root = std::env::temp_dir().join(format!(
             "devscope-ui-work-{}-{}",
             std::process::id(),
@@ -872,7 +889,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
-            format!("# Current Work\nParent: docs/roadmap.md\nTask: Work\n{items}"),
+            format!("# Current Work\nParent: {parent}\nTask: {task}\n{items}"),
         )
         .unwrap();
         let work = load_current_work(&root).unwrap().unwrap();
@@ -1500,6 +1517,73 @@ mod tests {
         assert!(second.contains("> - [ ] Artifact Evidence experiment"));
     }
 
+    #[test]
+    fn task_preview_shows_matching_current_work_without_affecting_unrelated_tasks() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(
+                2,
+                vec![
+                    preview_task(
+                        "docs/roadmap.md",
+                        4,
+                        "Explore verification integration for Build/Test Evidence",
+                        "Core observation",
+                        &["- [ ] Explore verification integration for Build/Test Evidence"],
+                    ),
+                    preview_task(
+                        "docs/roadmap.md",
+                        5,
+                        "Artifact Evidence experiment",
+                        "Core observation",
+                        &["- [ ] Artifact Evidence experiment"],
+                    ),
+                ],
+            )),
+            ActivityState::Unavailable,
+        );
+        app.apply_current_work(matching_work_state(
+            "docs\\roadmap.md",
+            "Explore verification integration for Build/Test Evidence",
+            "- [x] Show matching Work\n- [ ] Preserve source context",
+        ));
+
+        let panels = focusable_panels(120, 30);
+        let matching = draw(&app, 120, 30);
+        assert!(matching.contains("Current Work"));
+        assert!(matching.contains("✓ Show matching Work"));
+        assert!(matching.contains("□ Preserve source context"));
+        assert!(matching.contains("Source"));
+        assert!(matching.contains("Context"));
+
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        assert!(!draw(&app, 120, 30).contains("Current Work"));
+    }
+
+    #[test]
+    fn task_preview_keeps_source_context_when_current_work_is_unavailable() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(
+                1,
+                vec![preview_task(
+                    "docs/roadmap.md",
+                    4,
+                    "Explore verification integration for Build/Test Evidence",
+                    "Core observation",
+                    &["- [ ] Explore verification integration for Build/Test Evidence"],
+                )],
+            )),
+            ActivityState::Unavailable,
+        );
+        app.apply_current_work(CurrentWorkState::Unavailable);
+
+        let output = draw(&app, 120, 30);
+        assert!(!output.contains("Current Work"));
+        assert!(output.contains("Source"));
+        assert!(output.contains("Context"));
+    }
     #[test]
     fn task_preview_handles_no_selection_and_unavailable_tasks() {
         let no_selection = app(
