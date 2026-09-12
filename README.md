@@ -135,7 +135,7 @@ If DevScope is already available on `PATH`, `devscope context` and `devscope tas
 are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
 TUI. The CLI reports Cargo Build/Test source availability in `context`. `verify build` and
 `verify test` run the corresponding Cargo command, then persist the observed current result
-locally for restoration in a later TUI session.
+locally for restoration in a later TUI session. Freshness compares relevant project inputs around the verification run.
 
 ## Not yet implemented
 

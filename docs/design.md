@@ -136,8 +136,15 @@ The initial CLI experiment persists its minimal Build/Test state locally so CLI-
 can be restored in a later TUI session and compared against the existing freshness inputs. This is
 not a generic Evidence persistence format or a history feature.
 
-Build/Test freshness is evaluated from the verification inputs captured when a run starts. A result
-is Fresh only when those inputs are still unchanged after completion; any relevant source change
-during or after the run makes it Stale, independently of whether its outcome Passed or Failed. A
-Fresh result retains its start-state baseline for later comparisons. A Stale result never regains
-Freshness merely through persistence or reload. CLI and TUI verification use this same evaluation.
+Build/Test freshness is observational, not proof that no transient input change occurred during a
+verification. Both CLI and TUI capture relevant inputs at verification start and compare them with
+the inputs observed at completion. A difference makes the result Stale; baseline capture or
+comparison failures are also conservative and do not claim Freshness.
+
+The TUI may additionally mark a run Stale when it directly observes a relevant input change while
+the command is running, even if the inputs later return to their start state. The CLI intentionally
+uses only the shared start/end comparison and does not add a watcher or polling loop. Therefore a
+Fresh result means DevScope observed no contradiction between that verification path and the
+relevant input state, not that no transient change is mathematically ruled out. Passed or Failed
+remains independent from Freshness. Fresh results retain their start baseline for later comparison;
+Stale results remain Stale through persistence and reload.
