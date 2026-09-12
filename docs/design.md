@@ -80,3 +80,4 @@ The primary overview keeps Project Progress full-width. Large and Medium layouts
 passive global Preview surface beside the navigation panels. Preview content follows the focused
 panel and its selection, and can be hidden without changing project state. Whole-screen Detail
 remains the deeper inspection mode.
+Global Preview availability is based on minimum usable navigation and preview widths rather than a single wide-screen cutoff.

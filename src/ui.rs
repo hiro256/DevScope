@@ -21,7 +21,8 @@ const COMPACT_WIDTH: u16 = 20;
 const COMPACT_HEIGHT: u16 = 18;
 const CHANGE_COUNTS_GAP: usize = 2;
 const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
-const MIN_GLOBAL_PREVIEW_WIDTH: u16 = 100;
+const MIN_NAVIGATION_PANE_WIDTH: u16 = 35;
+const MIN_PREVIEW_PANE_WIDTH: u16 = 43;
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -30,15 +31,26 @@ enum LayoutVariant {
     Small,
 }
 
-pub fn has_global_preview(width: u16, height: u16, enabled: bool) -> bool {
-    enabled
-        && matches!(
-            layout_variant(width, height),
-            Some(LayoutVariant::Large | LayoutVariant::Medium)
-        )
-        && width >= MIN_GLOBAL_PREVIEW_WIDTH
+fn preview_pane_widths(width: u16) -> (u16, u16) {
+    let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(Rect::new(0, 0, width, 1));
+    (panes[0].width, panes[1].width)
 }
 
+pub fn preview_layout_available(width: u16, height: u16) -> bool {
+    if !matches!(
+        layout_variant(width, height),
+        Some(LayoutVariant::Large | LayoutVariant::Medium)
+    ) {
+        return false;
+    }
+    let (navigation_width, preview_width) = preview_pane_widths(width);
+    navigation_width >= MIN_NAVIGATION_PANE_WIDTH && preview_width >= MIN_PREVIEW_PANE_WIDTH
+}
+
+pub fn has_global_preview(width: u16, height: u16, enabled: bool) -> bool {
+    enabled && preview_layout_available(width, height)
+}
 pub fn focusable_panels(width: u16, height: u16) -> &'static [FocusedPanel] {
     match layout_variant(width, height) {
         Some(LayoutVariant::Large | LayoutVariant::Medium) => &[
@@ -99,17 +111,22 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_navigation_panels(frame, outer[2], layout, app);
     }
 
-    frame.render_widget(Paragraph::new(footer_text(area.width)), outer[3]);
+    frame.render_widget(
+        Paragraph::new(footer_text(area.width, area.height)),
+        outer[3],
+    );
 }
 
-fn footer_text(width: u16) -> &'static str {
-    if width >= 96 {
-        "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
-    } else {
-        "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+fn footer_text(width: u16, height: u16) -> &'static str {
+    match (width >= 96, preview_layout_available(width, height)) {
+        (true, true) => {
+            "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+        }
+        (true, false) => "Tab:Panel  j/k:Move  Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
+        (false, true) => "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit",
+        (false, false) => "Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit",
     }
 }
-
 fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant, app: &App) {
     match layout {
         LayoutVariant::Large => {
@@ -1383,15 +1400,32 @@ mod tests {
     }
 
     #[test]
-    fn global_preview_respects_responsive_fallbacks() {
-        assert!(has_global_preview(120, 30, true));
-        assert!(has_global_preview(120, 25, true));
-        assert!(!has_global_preview(99, 30, true));
-        assert!(!has_global_preview(120, 24, true));
-        assert!(!has_global_preview(120, 30, false));
-        let app = app(TaskState::Unavailable, ActivityState::Unavailable);
-        assert!(!draw(&app, 90, 30).contains("Preview:"));
-        assert!(!draw(&app, 120, 24).contains("Preview:"));
+    fn global_preview_uses_pane_minima_and_respects_responsive_fallbacks() {
+        let (navigation, preview) = preview_pane_widths(78);
+        assert_eq!(navigation, MIN_NAVIGATION_PANE_WIDTH);
+        assert_eq!(preview, MIN_PREVIEW_PANE_WIDTH);
+        assert!(has_global_preview(78, 30, true));
+        assert!(!has_global_preview(77, 30, true));
+        assert!(has_global_preview(80, 25, true));
+        assert!(!has_global_preview(78, 24, true));
+        assert!(!has_global_preview(78, 30, false));
+        let mut preview_app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        assert!(has_global_preview(80, 30, preview_app.preview_visible()));
+        assert!(!has_global_preview(80, 24, preview_app.preview_visible()));
+        assert!(has_global_preview(80, 30, preview_app.preview_visible()));
+        preview_app.toggle_preview();
+        assert!(!has_global_preview(80, 30, preview_app.preview_visible()));
+        let fresh_app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        assert!(draw(&fresh_app, 80, 30).contains("Preview: Task"));
+        assert!(!draw(&fresh_app, 77, 30).contains("Preview:"));
+        assert!(!draw(&fresh_app, 78, 24).contains("Preview:"));
+    }
+
+    #[test]
+    fn footer_advertises_preview_only_when_the_layout_can_show_it() {
+        assert!(footer_text(80, 30).contains("p:Preview"));
+        assert!(!footer_text(77, 30).contains("p:Preview"));
+        assert!(!footer_text(80, 24).contains("p:Preview"));
     }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {
