@@ -21,7 +21,7 @@ const COMPACT_WIDTH: u16 = 20;
 const COMPACT_HEIGHT: u16 = 18;
 const CHANGE_COUNTS_GAP: usize = 2;
 const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
-const MIN_SPLIT_PREVIEW_WIDTH: u16 = 72;
+const MIN_GLOBAL_PREVIEW_WIDTH: u16 = 100;
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -30,11 +30,13 @@ enum LayoutVariant {
     Small,
 }
 
-pub fn has_changed_file_preview(width: u16, height: u16) -> bool {
-    matches!(
-        layout_variant(width, height),
-        Some(LayoutVariant::Large | LayoutVariant::Medium)
-    ) && width >= MIN_SPLIT_PREVIEW_WIDTH
+pub fn has_global_preview(width: u16, height: u16, enabled: bool) -> bool {
+    enabled
+        && matches!(
+            layout_variant(width, height),
+            Some(LayoutVariant::Large | LayoutVariant::Medium)
+        )
+        && width >= MIN_GLOBAL_PREVIEW_WIDTH
 }
 
 pub fn focusable_panels(width: u16, height: u16) -> &'static [FocusedPanel] {
@@ -71,123 +73,96 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_compact(frame, area);
         return;
     };
-    let (
-        title_area,
-        progress_area,
-        task_area,
-        details_area,
-        changed_files_area,
-        commits_area,
-        footer_area,
-    ) = match layout {
-        LayoutVariant::Large => {
-            let panels = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Min(2),
-                Constraint::Length(1),
-            ])
-            .split(area);
-            (
-                panels[0],
-                panels[1],
-                panels[2],
-                panels[3],
-                Some(panels[4]),
-                Some(panels[5]),
-                panels[6],
-            )
-        }
-        LayoutVariant::Medium => {
-            let panels = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Min(4),
-                Constraint::Length(1),
-            ])
-            .split(area);
-            (
-                panels[0],
-                panels[1],
-                panels[2],
-                panels[3],
-                Some(panels[4]),
-                None,
-                panels[5],
-            )
-        }
-        LayoutVariant::Small => {
-            let panels = Layout::vertical([
-                Constraint::Length(2),
-                Constraint::Length(6),
-                Constraint::Length(3),
-                Constraint::Length(6),
-                Constraint::Length(1),
-            ])
-            .split(area);
-            (
-                panels[0], panels[1], panels[2], panels[3], None, None, panels[4],
-            )
-        }
-    };
+    let outer = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(6),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
 
     frame.render_widget(
         Paragraph::new(vec![
             Line::from("DevScope").style(Style::default().add_modifier(Modifier::BOLD)),
             Line::from(refresh_status(app)),
         ]),
-        title_area,
+        outer[0],
     );
-    frame.render_widget(project_progress(app, progress_area.width), progress_area);
+    frame.render_widget(project_progress(app, outer[1].width), outer[1]);
+
+    if has_global_preview(area.width, area.height, app.preview_visible()) {
+        let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(outer[2]);
+        render_navigation_panels(frame, panes[0], layout, app);
+        render_preview(frame, panes[1], app);
+    } else {
+        render_navigation_panels(frame, outer[2], layout, app);
+    }
+
+    frame.render_widget(Paragraph::new(footer_text(area.width)), outer[3]);
+}
+
+fn footer_text(width: u16) -> &'static str {
+    if width >= 96 {
+        "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+    } else {
+        "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+    }
+}
+
+fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant, app: &App) {
+    match layout {
+        LayoutVariant::Large => {
+            let panels = Layout::vertical([
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Min(2),
+            ])
+            .split(area);
+            render_tasks(frame, panels[0], app);
+            render_evidence(frame, panels[1], app);
+            render_changed_files_list(frame, panels[2], app);
+            render_commits(frame, panels[3], app);
+        }
+        LayoutVariant::Medium => {
+            let panels = Layout::vertical([
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Min(4),
+            ])
+            .split(area);
+            render_tasks(frame, panels[0], app);
+            render_evidence(frame, panels[1], app);
+            render_changed_files_list(frame, panels[2], app);
+        }
+        LayoutVariant::Small => {
+            let panels = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(area);
+            render_tasks(frame, panels[0], app);
+            render_evidence(frame, panels[1], app);
+        }
+    }
+}
+
+fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(tasks(
-            app.tasks(),
-            app.selected_task(),
-            inner_height(task_area),
-        ))
-        .block(panel_block(
-            "Task Summary",
-            app.focused_panel() == FocusedPanel::Tasks,
-        )),
-        task_area,
+        Paragraph::new(tasks(app.tasks(), app.selected_task(), inner_height(area))).block(
+            panel_block("Task Summary", app.focused_panel() == FocusedPanel::Tasks),
+        ),
+        area,
     );
+}
+
+fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(evidence_details(app, inner_height(details_area))).block(panel_block(
+        Paragraph::new(evidence_details(app, inner_height(area))).block(panel_block(
             evidence_detail_title(app),
             app.focused_panel() == FocusedPanel::Evidence,
         )),
-        details_area,
-    );
-
-    if let Some(changed_files_area) = changed_files_area {
-        if has_changed_file_preview(area.width, area.height) {
-            render_changed_files_preview(frame, changed_files_area, app);
-        } else {
-            render_changed_files_list(frame, changed_files_area, app);
-        }
-    }
-
-    if let Some(commits_area) = commits_area {
-        frame.render_widget(
-            Paragraph::new(commits(app.activity(), inner_height(commits_area))).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(padded_title("Recent Commits")),
-            ),
-            commits_area,
-        );
-    }
-
-    frame.render_widget(
-        Paragraph::new("Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit"),
-        footer_area,
+        area,
     );
 }
+
 fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(changed_files(
@@ -204,21 +179,40 @@ fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn render_changed_files_preview(frame: &mut Frame, area: Rect, app: &App) {
-    let panes = Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]).split(area);
-    render_changed_files_list(frame, panes[0], app);
-    let title = selected_changed_file_path(app)
-        .map(|path| format!("Diff: {path}"))
-        .unwrap_or_else(|| "Diff".into());
-    let lines = if app.selected_changed_file().is_some() {
-        detail_diff_lines(app.preview_diff())
-    } else {
-        vec![Line::from("No file selected")]
-    };
+fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block(title, false)),
-        panes[1],
+        Paragraph::new(commits(app.activity(), inner_height(area))).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(padded_title("Recent Commits")),
+        ),
+        area,
     );
+}
+
+fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
+    let (title, lines) = match app.focused_panel() {
+        FocusedPanel::Tasks => (
+            "Preview: Task".to_owned(),
+            vec![Line::from("Task preview is not implemented yet.")],
+        ),
+        FocusedPanel::Evidence => (
+            "Preview: Evidence".to_owned(),
+            vec![Line::from("Evidence preview is not implemented yet.")],
+        ),
+        FocusedPanel::ChangedFiles => {
+            let title = selected_changed_file_path(app)
+                .map(|path| format!("Preview: {path}"))
+                .unwrap_or_else(|| "Preview: Changed Files".into());
+            let lines = if app.selected_changed_file().is_some() {
+                detail_diff_lines(app.preview_diff())
+            } else {
+                vec![Line::from("No file selected")]
+            };
+            (title, lines)
+        }
+    };
+    frame.render_widget(Paragraph::new(lines).block(panel_block(title, false)), area);
 }
 
 fn selected_changed_file_path(app: &App) -> Option<String> {
@@ -232,7 +226,6 @@ fn selected_changed_file_path(app: &App) -> Option<String> {
         .get(selected)
         .map(|file| file.path.display().to_string())
 }
-
 fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
     let header_height = 10;
     let areas = Layout::vertical([
@@ -1086,6 +1079,7 @@ mod tests {
         assert!(output.contains("b:Build"));
         assert!(output.contains("t:Test"));
         assert!(output.contains("r:Reload"));
+        assert!(output.contains("p:Preview"));
         assert!(output.contains("q/Esc:Quit"));
     }
 
@@ -1279,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_passive_changed_file_preview_and_follows_selection() {
+    fn renders_global_preview_for_each_focused_panel_and_preserves_toggle_state() {
         let mut app = app(
             TaskState::Unavailable,
             activity_with_files(vec![
@@ -1295,6 +1289,20 @@ mod tests {
                 },
             ]),
         );
+        let panels = focusable_panels(120, 30);
+        let task_preview = draw(&app, 120, 30);
+        assert!(task_preview.contains("Project Progress"));
+        assert!(task_preview.contains("Preview: Task"));
+        assert!(task_preview.contains("Task preview is not implemented yet."));
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        assert!(draw(&app, 120, 30).contains("Preview: Evidence"));
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
         app.apply_preview_diff(GitFileDiff::Available {
             unstaged: Some(GitDiffText {
                 text: "+preview-a".into(),
@@ -1302,12 +1310,44 @@ mod tests {
             }),
             staged: None,
         });
-        let first = draw(&app, 90, 30);
-        assert!(first.contains("Changed Files"));
-        assert!(first.contains("Diff: src/a.rs"));
-        assert!(first.contains("+preview-a"));
+        let changed = draw(&app, 120, 30);
+        assert!(changed.contains("Preview: src/a.rs"));
+        assert!(changed.contains("+preview-a"));
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            panels,
+        );
+        assert!(!app.preview_visible());
+        assert!(!draw(&app, 120, 30).contains("Preview: src/a.rs"));
+        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+        assert_eq!(app.selected_changed_file(), Some(0));
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
+            panels,
+        );
+        assert!(app.preview_visible());
+        assert!(draw(&app, 120, 30).contains("Preview: src/a.rs"));
+    }
 
-        let panels = focusable_panels(90, 30);
+    #[test]
+    fn global_preview_is_passive_follows_changed_file_selection_and_preserves_detail() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![
+                GitChangedFile {
+                    path: "src/a.rs".into(),
+                    status: GitFileStatus::Modified,
+                    changes: Default::default(),
+                },
+                GitChangedFile {
+                    path: "src/b.rs".into(),
+                    status: GitFileStatus::Modified,
+                    changes: Default::default(),
+                },
+            ]),
+        );
+        let panels = focusable_panels(120, 30);
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
@@ -1327,35 +1367,31 @@ mod tests {
             }),
             staged: None,
         });
-        let second = draw(&app, 90, 30);
-        assert!(second.contains("Diff: src/b.rs"));
-        assert!(second.contains("+preview-b"));
-        assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
-    }
-
-    #[test]
-    fn split_preview_is_passive_and_falls_back_without_its_minimum_width() {
-        assert!(has_changed_file_preview(90, 30));
-        assert!(has_changed_file_preview(90, 25));
-        assert!(!has_changed_file_preview(71, 30));
-        assert!(!has_changed_file_preview(90, 24));
-        assert_eq!(
-            focusable_panels(90, 30),
-            &[
-                FocusedPanel::Tasks,
-                FocusedPanel::Evidence,
-                FocusedPanel::ChangedFiles
-            ]
+        assert!(draw(&app, 120, 30).contains("Preview: src/b.rs"));
+        assert!(draw(&app, 120, 30).contains("+preview-b"));
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            panels,
         );
+        assert!(app.has_detail_view());
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            panels,
+        );
+        assert!(!app.has_detail_view());
+        assert_eq!(app.selected_changed_file(), Some(1));
     }
 
     #[test]
-    fn preview_handles_no_selection_and_resize_without_panicking() {
+    fn global_preview_respects_responsive_fallbacks() {
+        assert!(has_global_preview(120, 30, true));
+        assert!(has_global_preview(120, 25, true));
+        assert!(!has_global_preview(99, 30, true));
+        assert!(!has_global_preview(120, 24, true));
+        assert!(!has_global_preview(120, 30, false));
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
-        let wide = draw(&app, 90, 30);
-        assert!(wide.contains("No file selected"));
-        assert!(!draw(&app, 71, 30).contains("No file selected"));
-        assert!(!draw(&app, 90, 24).contains("No file selected"));
+        assert!(!draw(&app, 90, 30).contains("Preview:"));
+        assert!(!draw(&app, 120, 24).contains("Preview:"));
     }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {

@@ -84,6 +84,7 @@ pub struct App {
     detail_diff: Option<GitFileDiff>,
     detail_scroll: usize,
     preview_diff: Option<GitFileDiff>,
+    preview_visible: bool,
     current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -106,6 +107,7 @@ impl App {
             detail_diff: None,
             detail_scroll: 0,
             preview_diff: None,
+            preview_visible: true,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -261,6 +263,14 @@ impl App {
         self.preview_diff.as_ref()
     }
 
+    pub const fn preview_visible(&self) -> bool {
+        self.preview_visible
+    }
+
+    pub fn toggle_preview(&mut self) {
+        self.preview_visible = !self.preview_visible;
+    }
+
     pub fn apply_preview_diff(&mut self, diff: GitFileDiff) {
         if self.selected_changed_file_request().is_some() {
             self.preview_diff = Some(diff);
@@ -339,6 +349,7 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
             KeyCode::Enter => self.open_changed_file_detail(),
+            KeyCode::Char('p') => self.toggle_preview(),
             KeyCode::Tab => self.focus_panel(focusable_panels, 1),
             KeyCode::BackTab => self.focus_panel(focusable_panels, -1),
             KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(focusable_panels, 1),

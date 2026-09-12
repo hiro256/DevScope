@@ -76,6 +76,7 @@ Changed Files may also surface observed change magnitude for quick comparison ac
 Change counts are secondary to path and status and may be omitted in narrow layouts.
 Changed File Detail uses optional on-demand Activity drill-down for file content changes.
 The overview remains compact; diff content belongs in detail rather than the Changed Files list.
-Large and Medium layouts may show a passive Changed File diff preview beside the Changed Files list.
-The preview remains subordinate to Changed Files focus and selection; Enter opens the existing
-whole-screen Detail for deeper inspection and scrolling.
+The primary overview keeps Project Progress full-width. Large and Medium layouts may expose a
+passive global Preview surface beside the navigation panels. Preview content follows the focused
+panel and its selection, and can be hidden without changing project state. Whole-screen Detail
+remains the deeper inspection mode.
