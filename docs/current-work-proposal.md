@@ -245,7 +245,7 @@ Parent: docs/roadmap.md
 Task: Current Work CLI experiment
 
 - [x] Define storage
-- [ ] Dogfood the workflow
+- [ ] Dogfood Current Work CLI storage and recovery workflow
 ```
 
 This does not yet define a stable Current Work file format or permanent persistence

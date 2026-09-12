@@ -109,11 +109,11 @@
 
 ### TUI
 
-- [ ] Detail View experiment
+- [ ] Validate Detail View drill-down for focused panels
 
 ### Core observation
 
-- [ ] Artifact Evidence experiment
+- [ ] Explore Artifact Evidence as a second Evidence source
 - [ ] Progress history experiment
 
 ### External surfaces
