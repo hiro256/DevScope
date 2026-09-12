@@ -57,6 +57,23 @@ Do not invent or invoke `work add`, `work start`, `work clear`, `work reopen`, o
 `work undo`. Do not normally edit `.devscope/work/current.md` directly; use an existing
 narrow CLI write when one exists.
 
+## Task-writing guidance
+
+When creating or refining Plan or Current Work tasks, prefer self-explanatory text
+that remains understandable without surrounding chat context. Use an explicit target
+and expected outcome instead of vague verbs such as `verify`, `dogfood`, `update`, or
+`fix`; for example, prefer `Verify automatic Git refresh updates the open diff` over
+`Verify behavior`.
+
+Keep tasks concise enough for TUI and CLI display rather than expanding them into
+prose. Improve materially ambiguous wording only when editing that Plan or Current
+Work item is already in scope. Do not rewrite unrelated historical tasks merely for
+cosmetic consistency.
+
+This guidance improves wording only. It does not decide task importance, Plan
+authority, completion truth, or Evidence, and it does not authorize a Plan promotion
+or checkbox completion.
+
 ## Verification and Evidence
 
 ```text

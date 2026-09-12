@@ -83,3 +83,6 @@ remains the deeper inspection mode.
 Global Preview availability is based on minimum usable navigation and preview widths rather than a single wide-screen cutoff.
 Task Preview surfaces source-grounded task context rather than generated interpretation. It may show
 the selected task text, source path, section, and nearby Markdown context.
+It intentionally exposes source quality rather than generating interpretation; improve ambiguous
+task text at the source or workflow level when appropriate. Markdown checkbox syntax is broader
+than accepted Plan semantics, and source classification remains an open design question.
