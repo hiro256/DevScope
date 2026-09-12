@@ -3,6 +3,7 @@ mod build_test;
 mod build_test_freshness;
 mod build_test_runner;
 mod build_test_source;
+mod build_test_store;
 mod cargo_build_test;
 pub use build_test::{
     BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
@@ -12,8 +13,11 @@ pub use build_test::{
 pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
 };
-pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion};
+pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion, run_build_test};
 pub use build_test_source::BuildTestCommandSpec;
+pub use build_test_store::{
+    PersistedBuildTestState, load_build_test_states, save_build_test_state,
+};
 pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
 mod git;
 mod markdown;

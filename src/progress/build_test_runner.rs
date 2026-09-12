@@ -38,7 +38,7 @@ impl BuildTestExecution {
         thread::Builder::new()
             .name("devscope-build-test".into())
             .spawn(move || {
-                let completion = execute(spec);
+                let completion = run_build_test(spec);
                 let _ = sender.send(completion);
             })
             .map_err(|source| {
@@ -87,7 +87,10 @@ impl BuildTestExecution {
     }
 }
 
-fn execute(spec: BuildTestCommandSpec) -> BuildTestExecutionCompletion {
+/// Runs one Build/Test command synchronously for CLI and worker callers.
+///
+/// The returned completion preserves the same lifecycle terminal states as the TUI.
+pub fn run_build_test(spec: BuildTestCommandSpec) -> BuildTestExecutionCompletion {
     let started = Instant::now();
     let output = Command::new(spec.program())
         .args(spec.arguments())

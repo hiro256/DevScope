@@ -10,6 +10,10 @@ use app::{App, CurrentWorkState};
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     current_work::{load_current_work, mark_current_work_done},
+    progress::{
+        BuildTestExecutionCompletion, BuildTestKind, BuildTestState, cargo_build_test_command,
+        load_build_test_states, run_build_test, save_build_test_state,
+    },
     project::{ProjectSnapshot, try_collect_project_snapshot},
 };
 use terminal::TerminalSession;
@@ -21,6 +25,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
+        Ok(EntryMode::Verify(kind)) => run_verify(kind),
         Ok(EntryMode::Help) => {
             print!("{}", cli::usage());
             ExitCode::SUCCESS
@@ -97,6 +102,38 @@ fn run_work_done(number: usize) -> ExitCode {
         Err(error) => report_runtime_error(error),
     }
 }
+fn run_verify(kind: BuildTestKind) -> ExitCode {
+    let Ok(root) = env::current_dir() else {
+        return ExitCode::FAILURE;
+    };
+    let Some(spec) = cargo_build_test_command(&root, kind) else {
+        eprintln!("error: Cargo Build/Test is unavailable for this project");
+        return ExitCode::FAILURE;
+    };
+    let baseline = devscope::progress::BuildTestFreshnessBaseline::capture(&root).ok();
+    let completion = run_build_test(spec);
+    let state = match &completion {
+        BuildTestExecutionCompletion::Completed(result) => {
+            BuildTestState::Completed(result.clone())
+        }
+        BuildTestExecutionCompletion::ExecutionError(error) => {
+            BuildTestState::ExecutionError(error.clone())
+        }
+    };
+    if let Err(error) = save_build_test_state(&root, kind, &state, baseline.as_ref()) {
+        eprintln!("error: could not save observed Evidence: {error}");
+        return ExitCode::FAILURE;
+    }
+    print!("{}", cli::render_verify(&completion));
+    match completion {
+        BuildTestExecutionCompletion::Completed(result)
+            if result.outcome() == devscope::progress::BuildTestOutcome::Passed =>
+        {
+            ExitCode::SUCCESS
+        }
+        _ => ExitCode::FAILURE,
+    }
+}
 fn run_tui() -> io::Result<()> {
     let project_root = env::current_dir().ok();
     let snapshot = match project_root.as_deref() {
@@ -106,11 +143,19 @@ fn run_tui() -> io::Result<()> {
 
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);
+    restore_tui_build_test_states(project_root.as_deref(), &mut app);
     app.apply_current_work(load_tui_current_work(project_root.as_deref()));
     event_loop::run(terminal.terminal_mut(), project_root.as_deref(), &mut app)
         .and(terminal.restore())
 }
 
+fn restore_tui_build_test_states(root: Option<&std::path::Path>, app: &mut App) {
+    let Some(root) = root else { return };
+    for mut stored in load_build_test_states(root) {
+        stored.restore_freshness(root);
+        app.apply_build_test_state(stored.kind, stored.state);
+    }
+}
 fn load_tui_current_work(root: Option<&std::path::Path>) -> CurrentWorkState {
     let Some(root) = root else {
         return CurrentWorkState::Unavailable;

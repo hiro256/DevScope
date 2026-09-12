@@ -47,7 +47,7 @@ impl BuildTestFreshnessError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum BuildTestInputEntryKind {
     File,
     Directory,
@@ -55,7 +55,7 @@ enum BuildTestInputEntryKind {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BuildTestInputEntry {
     path: PathBuf,
     kind: BuildTestInputEntryKind,
@@ -78,6 +78,17 @@ impl BuildTestFreshnessBaseline {
     }
 
     /// Compares current inputs with the captured state without updating the baseline.
+    pub fn fingerprint(root: &Path) -> Result<u64, BuildTestFreshnessError> {
+        let baseline = Self::capture(root)?;
+        Ok(baseline.fingerprint_value())
+    }
+
+    pub fn fingerprint_value(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub fn check(&self, root: &Path) -> Result<BuildTestInputChange, BuildTestFreshnessError> {
         let current = scan_build_test_inputs(root)?;
         Ok(if self.entries == current {
@@ -169,9 +180,10 @@ fn is_excluded(root: &Path, path: &Path, kind: BuildTestInputEntryKind) -> bool 
     name == ".git"
         || (name == "target" && kind == BuildTestInputEntryKind::Directory)
         || (kind == BuildTestInputEntryKind::Directory
-            && path
-                .strip_prefix(root)
-                .is_ok_and(|relative| relative == Path::new(".devscope").join("work")))
+            && path.strip_prefix(root).is_ok_and(|relative| {
+                relative == Path::new(".devscope").join("work")
+                    || relative == Path::new(".devscope").join("evidence")
+            }))
 }
 
 fn build_test_input_entry(

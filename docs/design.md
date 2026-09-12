@@ -125,3 +125,13 @@ them. Recent Commits remains overview-only until a concrete selection or drill-d
 Future Detail Pane work, if justified, may refine content density, examine a Recent Commits detail,
 or consider syntax highlighting and colors. It does not imply Detail Pane focus, scrolling, or Full
 Detail for Tasks or Evidence.
+## Instrumented verification experiment
+
+Build/Test verification can be invoked through DevScope itself by the TUI or CLI. Verification
+becomes agent-neutral Observed Evidence when DevScope runs the command and observes its result;
+DevScope does not need to identify the human or agent that initiated it. Prefer explicit,
+instrumented verification over passive process inference.
+
+The initial CLI experiment persists its minimal Build/Test state locally so CLI-triggered results
+can be restored in a later TUI session and compared against the existing freshness inputs. This is
+not a generic Evidence persistence format or a history feature.

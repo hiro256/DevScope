@@ -26,6 +26,7 @@ pub enum EntryMode {
     TaskList,
     WorkList,
     WorkDone(usize),
+    Verify(devscope::progress::BuildTestKind),
     Help,
     Version,
 }
@@ -71,6 +72,17 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
+        [first, second] if first == OsStr::new("verify") => match second.to_string_lossy().as_ref()
+        {
+            "build" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Build)),
+            "test" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Test)),
+            _ => Err(UsageError {
+                message: "expected `devscope verify build` or `devscope verify test`",
+            }),
+        },
+        [first, ..] if first == OsStr::new("verify") => Err(UsageError {
+            message: "expected `devscope verify build` or `devscope verify test`",
+        }),
         [first, ..] if first == OsStr::new("task") => Err(UsageError {
             message: "expected `devscope task list`",
         }),
@@ -84,7 +96,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -253,6 +265,51 @@ fn display_path(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
+pub fn render_verify(completion: &devscope::progress::BuildTestExecutionCompletion) -> String {
+    use devscope::progress::{BuildTestExecutionCompletion, BuildTestOutcome};
+    match completion {
+        BuildTestExecutionCompletion::Completed(result) => format!(
+            "{}\nStatus: {}\nCommand: {}\nDuration: {}\n{}",
+            match result.kind() {
+                devscope::progress::BuildTestKind::Build => "Build",
+                devscope::progress::BuildTestKind::Test => "Test",
+            },
+            match result.outcome() {
+                BuildTestOutcome::Passed => "Passed",
+                BuildTestOutcome::Failed => "Failed",
+            },
+            result.command_label(),
+            format_duration(result.duration()),
+            if result.outcome() == BuildTestOutcome::Failed {
+                format!("Result: {}\n", result.summary())
+            } else {
+                String::new()
+            },
+        ),
+        BuildTestExecutionCompletion::ExecutionError(error) => format!(
+            "{}\nStatus: Execution error\nCommand: {}\nError: {}\n",
+            match error.kind() {
+                devscope::progress::BuildTestKind::Build => "Build",
+                devscope::progress::BuildTestKind::Test => "Test",
+            },
+            error.command_label(),
+            error.message()
+        ),
+    }
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!(
+            "{}.{:01}s",
+            duration.as_secs(),
+            duration.subsec_millis() / 100
+        )
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +329,45 @@ mod tests {
 
     static ID: AtomicUsize = AtomicUsize::new(0);
 
+    #[test]
+    fn parses_verify_build_test_and_rejects_other_targets() {
+        assert_eq!(
+            parse_args([OsString::from("verify"), OsString::from("build")]),
+            Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Build))
+        );
+        assert_eq!(
+            parse_args([OsString::from("verify"), OsString::from("test")]),
+            Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Test))
+        );
+        assert!(parse_args([OsString::from("verify"), OsString::from("lint")]).is_err());
+    }
+
+    #[test]
+    fn renders_verify_completion_and_error() {
+        use devscope::progress::{
+            BuildTestExecutionCompletion, BuildTestExecutionError, BuildTestFreshness,
+            BuildTestOutcome, BuildTestResult,
+        };
+        let passed = BuildTestExecutionCompletion::Completed(BuildTestResult::new(
+            devscope::progress::BuildTestKind::Build,
+            BuildTestOutcome::Passed,
+            BuildTestFreshness::Fresh,
+            "cargo",
+            "cargo check",
+            Some(0),
+            std::time::Duration::from_millis(1200),
+            "passed",
+            None,
+        ));
+        assert!(render_verify(&passed).contains("Build\nStatus: Passed\nCommand: cargo check"));
+        let error = BuildTestExecutionCompletion::ExecutionError(BuildTestExecutionError::new(
+            devscope::progress::BuildTestKind::Test,
+            "cargo",
+            "cargo test",
+            "not found",
+        ));
+        assert!(render_verify(&error).contains("Status: Execution error"));
+    }
     #[test]
     fn parses_supported_entry_modes() {
         assert_eq!(parse_args([]), Ok(EntryMode::Tui));

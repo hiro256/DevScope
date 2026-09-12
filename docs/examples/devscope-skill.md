@@ -89,6 +89,18 @@ AI interpretation separately.
 
 Git Activity shows what changed; it does not prove that a requirement is complete.
 
+When DevScope verification is available, prefer:
+
+```text
+devscope verify build
+devscope verify test
+```
+
+over directly running `cargo check` or `cargo test`. This lets DevScope run the command,
+observe its result, and retain it as local Observed Evidence for a later TUI session. If
+DevScope verification is unavailable or fails to start, use the project's native verification
+command when needed.
+
 ## Authority
 
 The Skill does not grant authority. For Plan mutations, commits, or pushes:

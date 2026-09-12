@@ -17,7 +17,7 @@ use devscope::{
         BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
         GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
-        is_cargo_project,
+        is_cargo_project, save_build_test_state,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -317,18 +317,16 @@ impl BuildTestRuntime {
 }
 
 fn initialize_build_test_availability(project_root: Option<&Path>, app: &mut App) {
-    let state = if project_root.is_some_and(is_cargo_project) {
-        BuildTestState::NotRun
-    } else {
-        BuildTestState::Unavailable
-    };
-    if app.build_test_state(BuildTestKind::Build) == &state
-        && app.build_test_state(BuildTestKind::Test) == &state
-    {
+    if !project_root.is_some_and(is_cargo_project) {
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
         return;
     }
-    app.apply_build_test_state(BuildTestKind::Build, state.clone());
-    app.apply_build_test_state(BuildTestKind::Test, state);
+    for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+        if matches!(app.build_test_state(kind), BuildTestState::Unavailable) {
+            app.apply_build_test_state(kind, BuildTestState::NotRun);
+        }
+    }
 }
 
 fn manual_build_test_kind(key: KeyEvent) -> Option<BuildTestKind> {
@@ -375,6 +373,9 @@ fn start_manual_build_test(
         Err(error) => {
             runtime.active_baseline = None;
             app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            if let Some(root) = project_root {
+                let _ = save_build_test_state(root, kind, app.build_test_state(kind), None);
+            }
         }
     }
     true
@@ -396,6 +397,16 @@ fn apply_build_test_completion(
             }
             app.apply_build_test_state(kind, BuildTestState::Completed(result));
             runtime.capture_baseline(project_root, kind);
+            if let (Some(root), Some(baseline)) = (
+                project_root,
+                match kind {
+                    BuildTestKind::Build => runtime.build_baseline.as_ref(),
+                    BuildTestKind::Test => runtime.test_baseline.as_ref(),
+                },
+            ) {
+                let _ =
+                    save_build_test_state(root, kind, app.build_test_state(kind), Some(baseline));
+            }
         }
         BuildTestExecutionCompletion::ExecutionError(error) => {
             let kind = error.kind();
@@ -403,6 +414,9 @@ fn apply_build_test_completion(
             runtime.active_baseline = None;
             runtime.active_inputs_changed = false;
             app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            if let Some(root) = project_root {
+                let _ = save_build_test_state(root, kind, app.build_test_state(kind), None);
+            }
         }
     }
 }
@@ -524,6 +538,12 @@ pub fn run(
     let mut requests = RefreshRequest::default();
     let mut build_test_runtime = BuildTestRuntime::default();
     initialize_build_test_availability(project_root, app);
+    for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+        if matches!(app.build_test_state(kind), BuildTestState::Completed(result) if matches!(result.freshness(), BuildTestFreshness::Fresh))
+        {
+            build_test_runtime.capture_baseline(project_root, kind);
+        }
+    }
     let initial_size = terminal.size()?;
     if changed_file_preview_active(initial_size.width, initial_size.height, app) {
         refresh_changed_file_preview(project_root, app);
