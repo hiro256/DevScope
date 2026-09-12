@@ -17,7 +17,7 @@ use devscope::{
         BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
         GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
-        is_cargo_project, save_build_test_state,
+        evaluate_completed_build_test_freshness, is_cargo_project, save_build_test_state,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -307,8 +307,7 @@ impl BuildTestRuntime {
         }
     }
 
-    fn capture_baseline(&mut self, root: Option<&Path>, kind: BuildTestKind) {
-        let baseline = root.and_then(|root| BuildTestFreshnessBaseline::capture(root).ok());
+    fn set_baseline(&mut self, kind: BuildTestKind, baseline: Option<BuildTestFreshnessBaseline>) {
         match kind {
             BuildTestKind::Build => self.build_baseline = baseline,
             BuildTestKind::Test => self.test_baseline = baseline,
@@ -387,16 +386,25 @@ fn apply_build_test_completion(
     runtime: &mut BuildTestRuntime,
     completion: BuildTestExecutionCompletion,
     inputs_changed: bool,
+    started_baseline: Option<BuildTestFreshnessBaseline>,
 ) {
     match completion {
         BuildTestExecutionCompletion::Completed(result) => {
             let kind = result.kind();
+            let (freshness, persisted_baseline) =
+                project_root.map_or((BuildTestFreshness::Stale, None), |root| {
+                    evaluate_completed_build_test_freshness(
+                        root,
+                        started_baseline.as_ref(),
+                        inputs_changed,
+                    )
+                });
             let mut result = result;
-            if inputs_changed {
+            if matches!(freshness, BuildTestFreshness::Stale) {
                 result.mark_stale();
             }
             app.apply_build_test_state(kind, BuildTestState::Completed(result));
-            runtime.capture_baseline(project_root, kind);
+            runtime.set_baseline(kind, persisted_baseline);
             if let (Some(root), Some(baseline)) = (
                 project_root,
                 match kind {
@@ -406,6 +414,8 @@ fn apply_build_test_completion(
             ) {
                 let _ =
                     save_build_test_state(root, kind, app.build_test_state(kind), Some(baseline));
+            } else if let Some(root) = project_root {
+                let _ = save_build_test_state(root, kind, app.build_test_state(kind), None);
             }
         }
         BuildTestExecutionCompletion::ExecutionError(error) => {
@@ -487,10 +497,17 @@ fn finish_build_test_execution(
 ) {
     observe_active_build_test_inputs(project_root, runtime);
     let inputs_changed = runtime.active_inputs_changed;
+    let started_baseline = runtime.active_baseline.take();
     runtime.active = None;
-    runtime.active_baseline = None;
     runtime.active_inputs_changed = false;
-    apply_build_test_completion(project_root, app, runtime, completion, inputs_changed);
+    apply_build_test_completion(
+        project_root,
+        app,
+        runtime,
+        completion,
+        inputs_changed,
+        started_baseline,
+    );
 }
 
 fn poll_build_test_execution(
@@ -541,7 +558,10 @@ pub fn run(
     for kind in [BuildTestKind::Build, BuildTestKind::Test] {
         if matches!(app.build_test_state(kind), BuildTestState::Completed(result) if matches!(result.freshness(), BuildTestFreshness::Fresh))
         {
-            build_test_runtime.capture_baseline(project_root, kind);
+            build_test_runtime.set_baseline(
+                kind,
+                project_root.and_then(|root| BuildTestFreshnessBaseline::capture(root).ok()),
+            );
         }
     }
     let initial_size = terminal.size()?;
@@ -936,6 +956,7 @@ mod tests {
             &mut runtime,
             BuildTestExecutionCompletion::Completed(build.clone()),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert_eq!(
             app.build_test_state(BuildTestKind::Build),
@@ -951,6 +972,7 @@ mod tests {
             &mut runtime,
             BuildTestExecutionCompletion::Completed(test.clone()),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert_eq!(
             app.build_test_state(BuildTestKind::Test),
@@ -978,6 +1000,7 @@ mod tests {
                 BuildTestOutcome::Passed,
             )),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
 
@@ -1024,7 +1047,7 @@ mod tests {
         };
         assert_eq!(result.outcome(), BuildTestOutcome::Failed);
         assert_eq!(result.freshness(), BuildTestFreshness::Stale);
-        assert!(runtime.test_baseline.is_some());
+        assert!(runtime.test_baseline.is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1104,6 +1127,7 @@ mod tests {
                 BuildTestOutcome::Failed,
             )),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(root.join("target")).unwrap();
@@ -1164,6 +1188,7 @@ mod tests {
                 BuildTestOutcome::Passed,
             )),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1252,6 +1277,7 @@ mod tests {
                 "worker disconnected",
             )),
             false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert!(matches!(
             app.build_test_state(BuildTestKind::Build),

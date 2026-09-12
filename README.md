@@ -127,13 +127,15 @@ output is not mixed with compact CLI output:
 .\target\debug\devscope.exe task list
 .\target\debug\devscope.exe work list
 .\target\debug\devscope.exe work done 3
+.\target\debug\devscope.exe verify build
+.\target\debug\devscope.exe verify test
 ```
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
 are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
-TUI. The CLI currently reports Cargo Build/Test source availability only; Build/Test run
-results are runtime state owned by a running TUI session and are not exposed by a
-separate CLI run.
+TUI. The CLI reports Cargo Build/Test source availability in `context`. `verify build` and
+`verify test` run the corresponding Cargo command, then persist the observed current result
+locally for restoration in a later TUI session.
 
 ## Not yet implemented
 

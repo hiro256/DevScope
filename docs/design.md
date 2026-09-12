@@ -135,3 +135,9 @@ instrumented verification over passive process inference.
 The initial CLI experiment persists its minimal Build/Test state locally so CLI-triggered results
 can be restored in a later TUI session and compared against the existing freshness inputs. This is
 not a generic Evidence persistence format or a history feature.
+
+Build/Test freshness is evaluated from the verification inputs captured when a run starts. A result
+is Fresh only when those inputs are still unchanged after completion; any relevant source change
+during or after the run makes it Stale, independently of whether its outcome Passed or Failed. A
+Fresh result retains its start-state baseline for later comparisons. A Stale result never regains
+Freshness merely through persistence or reload. CLI and TUI verification use this same evaluation.

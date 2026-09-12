@@ -12,6 +12,7 @@ pub use build_test::{
 };
 pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
+    evaluate_completed_build_test_freshness,
 };
 pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion, run_build_test};
 pub use build_test_source::BuildTestCommandSpec;

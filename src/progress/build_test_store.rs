@@ -3,8 +3,8 @@
 use std::{fs, io, path::Path, time::Duration};
 
 use super::{
-    BuildTestExecutionError, BuildTestFreshnessBaseline, BuildTestKind, BuildTestOutcome,
-    BuildTestResult, BuildTestState,
+    BuildTestExecutionError, BuildTestFreshness, BuildTestFreshnessBaseline, BuildTestKind,
+    BuildTestOutcome, BuildTestResult, BuildTestState,
 };
 
 const STATE_PATH: &str = ".devscope/evidence/build-test-v1.tsv";
@@ -72,24 +72,36 @@ fn parse_states(text: &str) -> Result<Vec<PersistedBuildTestState>, ()> {
             _ => return Err(()),
         };
         let state = match fields[1] {
-            "completed" if fields.len() == 9 => {
+            "completed" if fields.len() == 9 || fields.len() == 10 => {
                 let outcome = match fields[2] {
                     "passed" => BuildTestOutcome::Passed,
                     "failed" => BuildTestOutcome::Failed,
                     _ => return Err(()),
                 };
-                let exit_code = fields[3].parse().ok();
-                let duration = fields[4].parse::<u64>().map_err(|_| ())?;
-                let source = decode(fields[5])?;
-                let command = decode(fields[6])?;
-                let summary = decode(fields[7])?;
-                let fingerprint = fields[8].parse().map_err(|_| ())?;
+                let (freshness, offset) = if fields.len() == 10 {
+                    (
+                        match fields[3] {
+                            "fresh" => BuildTestFreshness::Fresh,
+                            "stale" => BuildTestFreshness::Stale,
+                            _ => return Err(()),
+                        },
+                        1,
+                    )
+                } else {
+                    (BuildTestFreshness::Fresh, 0)
+                };
+                let exit_code = fields[3 + offset].parse().ok();
+                let duration = fields[4 + offset].parse::<u64>().map_err(|_| ())?;
+                let source = decode(fields[5 + offset])?;
+                let command = decode(fields[6 + offset])?;
+                let summary = decode(fields[7 + offset])?;
+                let fingerprint = fields[8 + offset].parse().ok();
                 states.push(PersistedBuildTestState {
                     kind,
                     state: BuildTestState::Completed(BuildTestResult::new(
                         kind,
                         outcome,
-                        super::BuildTestFreshness::Fresh,
+                        freshness,
                         source,
                         command,
                         exit_code,
@@ -97,7 +109,7 @@ fn parse_states(text: &str) -> Result<Vec<PersistedBuildTestState>, ()> {
                         summary,
                         None,
                     )),
-                    baseline_fingerprint: Some(fingerprint),
+                    baseline_fingerprint: fingerprint,
                 });
                 continue;
             }
@@ -130,10 +142,14 @@ fn render_states(states: &[PersistedBuildTestState]) -> String {
             };
             match &entry.state {
                 BuildTestState::Completed(result) => format!(
-                    "{kind}\tcompleted\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "{kind}\tcompleted\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     match result.outcome() {
                         BuildTestOutcome::Passed => "passed",
                         BuildTestOutcome::Failed => "failed",
+                    },
+                    match result.freshness() {
+                        BuildTestFreshness::Fresh => "fresh",
+                        BuildTestFreshness::Stale => "stale",
                     },
                     result.exit_code().unwrap_or(-1),
                     result.duration().as_millis(),
@@ -237,6 +253,30 @@ mod tests {
         fs::create_dir_all(state_path(&root).parent().unwrap()).unwrap();
         fs::write(state_path(&root), "broken").unwrap();
         assert!(load_build_test_states(&root).is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn stale_result_remains_stale_after_reload() {
+        let root = root();
+        let state = BuildTestState::Completed(BuildTestResult::new(
+            BuildTestKind::Build,
+            BuildTestOutcome::Passed,
+            BuildTestFreshness::Stale,
+            "cargo",
+            "cargo check",
+            Some(0),
+            Duration::from_millis(12),
+            "passed",
+            None,
+        ));
+        save_build_test_state(&root, BuildTestKind::Build, &state, None).unwrap();
+
+        let mut restored = load_build_test_states(&root).pop().unwrap();
+        restored.restore_freshness(&root);
+        assert_eq!(
+            restored.state.status(),
+            super::super::BuildTestStatus::Stale
+        );
         let _ = fs::remove_dir_all(root);
     }
     #[test]

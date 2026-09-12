@@ -63,14 +63,14 @@ struct BuildTestInputEntry {
     symlink_target: Option<PathBuf>,
 }
 
-/// The relevant project filesystem state captured when verification completes.
+/// The relevant project filesystem state captured when verification starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildTestFreshnessBaseline {
     entries: Vec<BuildTestInputEntry>,
 }
 
 impl BuildTestFreshnessBaseline {
-    /// Captures the project state after a Build/Test process has completed.
+    /// Captures the project state at the start of a Build/Test process.
     pub fn capture(root: &Path) -> Result<Self, BuildTestFreshnessError> {
         Ok(Self {
             entries: scan_build_test_inputs(root)?,
@@ -96,6 +96,36 @@ impl BuildTestFreshnessBaseline {
         } else {
             BuildTestInputChange::Changed
         })
+    }
+}
+
+/// Evaluates a completed Build/Test run against its inputs at start.
+///
+/// An unavailable comparison is conservative: the result is stale rather than
+/// claiming that its verification inputs remained unchanged.
+pub fn evaluate_completed_build_test_freshness(
+    root: &Path,
+    started_baseline: Option<&BuildTestFreshnessBaseline>,
+    inputs_changed_while_running: bool,
+) -> (
+    super::BuildTestFreshness,
+    Option<BuildTestFreshnessBaseline>,
+) {
+    let Some(started_baseline) = started_baseline else {
+        return (super::BuildTestFreshness::Stale, None);
+    };
+
+    let inputs_changed_after_start = matches!(
+        started_baseline.check(root),
+        Ok(BuildTestInputChange::Changed) | Err(_)
+    );
+    if inputs_changed_while_running || inputs_changed_after_start {
+        (super::BuildTestFreshness::Stale, None)
+    } else {
+        (
+            super::BuildTestFreshness::Fresh,
+            Some(started_baseline.clone()),
+        )
     }
 }
 
@@ -284,6 +314,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn completion_freshness_uses_the_start_baseline() {
+        let project = TempProject::new();
+        project.write("src/lib.rs", "before");
+        let baseline = project.capture();
+
+        assert!(matches!(
+            evaluate_completed_build_test_freshness(&project.0, Some(&baseline), false),
+            (super::super::BuildTestFreshness::Fresh, Some(_))
+        ));
+
+        project.write("src/lib.rs", "after");
+        assert_eq!(
+            evaluate_completed_build_test_freshness(&project.0, Some(&baseline), false),
+            (super::super::BuildTestFreshness::Stale, None)
+        );
+
+        let unchanged_project = TempProject::new();
+        unchanged_project.write("src/lib.rs", "unchanged");
+        let unchanged_baseline = unchanged_project.capture();
+        assert_eq!(
+            evaluate_completed_build_test_freshness(
+                &unchanged_project.0,
+                Some(&unchanged_baseline),
+                true,
+            ),
+            (super::super::BuildTestFreshness::Stale, None)
+        );
+    }
     #[test]
     fn detects_source_and_same_length_content_changes() {
         let project = TempProject::new();

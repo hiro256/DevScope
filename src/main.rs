@@ -12,7 +12,8 @@ use devscope::{
     current_work::{load_current_work, mark_current_work_done},
     progress::{
         BuildTestExecutionCompletion, BuildTestKind, BuildTestState, cargo_build_test_command,
-        load_build_test_states, run_build_test, save_build_test_state,
+        evaluate_completed_build_test_freshness, load_build_test_states, run_build_test,
+        save_build_test_state,
     },
     project::{ProjectSnapshot, try_collect_project_snapshot},
 };
@@ -111,7 +112,18 @@ fn run_verify(kind: BuildTestKind) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let baseline = devscope::progress::BuildTestFreshnessBaseline::capture(&root).ok();
-    let completion = run_build_test(spec);
+    let mut completion = run_build_test(spec);
+    let persisted_baseline = match &mut completion {
+        BuildTestExecutionCompletion::Completed(result) => {
+            let (freshness, baseline) =
+                evaluate_completed_build_test_freshness(&root, baseline.as_ref(), false);
+            if matches!(freshness, devscope::progress::BuildTestFreshness::Stale) {
+                result.mark_stale();
+            }
+            baseline
+        }
+        BuildTestExecutionCompletion::ExecutionError(_) => None,
+    };
     let state = match &completion {
         BuildTestExecutionCompletion::Completed(result) => {
             BuildTestState::Completed(result.clone())
@@ -120,7 +132,7 @@ fn run_verify(kind: BuildTestKind) -> ExitCode {
             BuildTestState::ExecutionError(error.clone())
         }
     };
-    if let Err(error) = save_build_test_state(&root, kind, &state, baseline.as_ref()) {
+    if let Err(error) = save_build_test_state(&root, kind, &state, persisted_baseline.as_ref()) {
         eprintln!("error: could not save observed Evidence: {error}");
         return ExitCode::FAILURE;
     }
