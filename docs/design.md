@@ -152,3 +152,13 @@ Fresh result means DevScope observed no contradiction between that verification 
 relevant input state, not that no transient change is mathematically ruled out. Passed or Failed
 remains independent from Freshness. Fresh results retain their start baseline for later comparison;
 Stale results remain Stale through persistence and reload.
+
+### Verification integration closure
+
+The verification integration experiment is validated. TUI `b` / `t` and CLI `devscope verify build` / `devscope verify test` invoke the same Build/Test runner. When DevScope runs a verification command and directly observes its process result, the result is Observed Evidence. This is agent-neutral: a human and an AI use the same path, and initiator identity is not part of the contract.
+
+The latest Build/Test result is persisted as local-only current state and can be restored in a later TUI session. This is intentionally not Evidence history, a generic Evidence store, or a CI result database. Passed or Failed is independent from Fresh or Stale: every outcome/freshness combination is possible. Fresh means the observed start and end relevant inputs do not contradict the result; Stale means they differ, the TUI observed a relevant live change during the run, or baseline capture/comparison was unavailable. The CLI uses only start/end comparison, so Fresh does not prove that no transient change occurred. Failures to establish a comparison conservatively remain Stale.
+
+AI workflow guidance now prefers `devscope verify build` and `devscope verify test`; people may use the same commands. If DevScope verification is unavailable or cannot start, project-native verification remains available. A normally completed failed test is itself Observed Evidence and is not a reason to automatically rerun Cargo outside DevScope.
+
+The experiment intentionally excludes automatic verification after file changes, OS process monitoring, terminal interception, Codex process detection, initiator tracking, generic Evidence APIs or persisted schemas, Evidence history, and CI integration. Before this integration, Build/Test Evidence depended on manually pressing `b` or `t` in a running TUI. It can now be generated through an explicit CLI or TUI path and remain visible as persisted Observed Evidence in later TUI sessions.

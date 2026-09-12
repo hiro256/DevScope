@@ -113,7 +113,7 @@
 
 ### Core observation
 
-- [ ] Explore verification integration for Build/Test Evidence
+- [x] Explore verification integration for Build/Test Evidence
 - [ ] Explore Artifact Evidence as a second Evidence source
 - [ ] Progress history experiment
 
