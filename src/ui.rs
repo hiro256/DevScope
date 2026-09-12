@@ -5,9 +5,8 @@ use crate::app::{
     TaskState,
 };
 use devscope::progress::{
-    BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestResult, BuildTestState,
-    BuildTestStatus, GitChangeCounts, GitDiffText, GitFileDiff, GitFileDiffUnavailable,
-    GitFileStatus,
+    BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, BuildTestStatus,
+    GitChangeCounts, GitDiffText, GitFileDiff, GitFileDiffUnavailable, GitFileStatus,
 };
 use ratatui::{
     Frame,
@@ -120,10 +119,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn footer_text(width: u16, height: u16) -> &'static str {
     match (width >= 96, preview_layout_available(width, height)) {
         (true, true) => {
-            "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+            "Tab:Panel  j/k:Move  Enter:Detail  p:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit"
         }
         (true, false) => "Tab:Panel  j/k:Move  Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
-        (false, true) => "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit",
+        (false, true) => "Tab:Panel  j/k:Move  p:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
         (false, false) => "Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit",
     }
 }
@@ -132,7 +131,7 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
         LayoutVariant::Large => {
             let panels = Layout::vertical([
                 Constraint::Length(6),
-                Constraint::Length(6),
+                Constraint::Length(4),
                 Constraint::Length(6),
                 Constraint::Min(2),
             ])
@@ -145,7 +144,7 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
         LayoutVariant::Medium => {
             let panels = Layout::vertical([
                 Constraint::Length(6),
-                Constraint::Length(6),
+                Constraint::Length(4),
                 Constraint::Min(4),
             ])
             .split(area);
@@ -164,7 +163,7 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
 fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(tasks(app.tasks(), app.selected_task(), inner_height(area))).block(
-            panel_block("Task Summary", app.focused_panel() == FocusedPanel::Tasks),
+            panel_block("Tasks", app.focused_panel() == FocusedPanel::Tasks),
         ),
         area,
     );
@@ -172,12 +171,46 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(evidence_details(app, inner_height(area))).block(panel_block(
-            evidence_detail_title(app),
+        Paragraph::new(evidence_selector_lines(app)).block(panel_block(
+            "Evidence",
             app.focused_panel() == FocusedPanel::Evidence,
         )),
         area,
     );
+}
+
+fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
+    [BuildTestKind::Build, BuildTestKind::Test]
+        .into_iter()
+        .map(|kind| {
+            let marker = if app.evidence_detail_kind() == Some(kind) {
+                "> "
+            } else {
+                "  "
+            };
+            Line::from(format!(
+                "{marker}{}  {}",
+                detail_kind(kind),
+                evidence_selector_status(app.build_test_state(kind))
+            ))
+        })
+        .collect()
+}
+
+fn evidence_selector_status(state: &BuildTestState) -> String {
+    match state {
+        BuildTestState::Completed(result) => {
+            let outcome = match result.outcome() {
+                BuildTestOutcome::Passed => "Passed",
+                BuildTestOutcome::Failed => "Failed",
+            };
+            match result.freshness() {
+                BuildTestFreshness::Fresh => outcome.into(),
+                BuildTestFreshness::Stale => format!("{outcome} (stale)"),
+            }
+        }
+        _ => build_test_status(state).into(),
+    }
 }
 
 fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
@@ -209,13 +242,13 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = match app.focused_panel() {
-        FocusedPanel::Tasks => ("Preview: Task".to_owned(), task_preview_lines(app)),
+        FocusedPanel::Tasks => ("Detail: Task".to_owned(), task_preview_lines(app)),
         FocusedPanel::Evidence => evidence_preview(app),
 
         FocusedPanel::ChangedFiles => {
             let title = selected_changed_file_path(app)
-                .map(|path| format!("Preview: {path}"))
-                .unwrap_or_else(|| "Preview: Changed Files".into());
+                .map(|path| format!("Detail: {path}"))
+                .unwrap_or_else(|| "Detail: Changed Files".into());
             let lines = if app.selected_changed_file().is_some() {
                 detail_diff_lines(app.preview_diff())
             } else {
@@ -230,7 +263,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
 fn evidence_preview(app: &App) -> (String, Vec<Line<'static>>) {
     let kind = app.evidence_detail_kind().unwrap_or(BuildTestKind::Build);
     (
-        format!("Preview: {}", detail_kind(kind)),
+        format!("Detail: {}", detail_kind(kind)),
         evidence_preview_lines(kind, app.build_test_state(kind)),
     )
 }
@@ -485,115 +518,6 @@ fn build_test_status(state: &BuildTestState) -> &'static str {
         BuildTestStatus::Stale => "Stale",
         BuildTestStatus::ExecutionError => "Error",
     }
-}
-
-fn evidence_detail_title(app: &App) -> String {
-    match app.evidence_detail_kind() {
-        Some(BuildTestKind::Build) => "Details: Build".into(),
-        Some(BuildTestKind::Test) => "Details: Test".into(),
-        None => "Details: Evidence".into(),
-    }
-}
-
-fn evidence_details(app: &App, rows: usize) -> Vec<Line<'static>> {
-    if rows == 0 {
-        return Vec::new();
-    }
-
-    let Some(kind) = app.evidence_detail_kind() else {
-        let unavailable = matches!(
-            app.build_test_state(BuildTestKind::Build),
-            BuildTestState::Unavailable
-        ) && matches!(
-            app.build_test_state(BuildTestKind::Test),
-            BuildTestState::Unavailable
-        );
-        return if unavailable {
-            vec![Line::from("Build/Test Evidence is not available.")]
-        } else {
-            vec![
-                Line::from("Build and Test have not been run yet."),
-                Line::from("Press b to run Build or t to run Test."),
-            ]
-        };
-    };
-
-    evidence_detail_lines(kind, app.build_test_state(kind), rows)
-}
-
-fn evidence_detail_lines(
-    kind: BuildTestKind,
-    state: &BuildTestState,
-    rows: usize,
-) -> Vec<Line<'static>> {
-    let lines = match state {
-        BuildTestState::Unavailable => vec![Line::from("Unavailable")],
-        BuildTestState::NotRun => vec![
-            Line::from("Not run"),
-            Line::from(format!(
-                "Press {} to run {}.",
-                detail_key(kind),
-                detail_kind(kind)
-            )),
-        ],
-        BuildTestState::Running(run) => vec![
-            Line::from(run.command_label().to_owned()),
-            Line::from("Running"),
-        ],
-        BuildTestState::Completed(result) => completed_detail_lines(result),
-        BuildTestState::ExecutionError(error) => {
-            let mut lines = vec![
-                Line::from(error.command_label().to_owned()),
-                Line::from("Error"),
-            ];
-            lines.extend(
-                error
-                    .message()
-                    .lines()
-                    .map(|line| Line::from(line.to_owned())),
-            );
-            lines
-        }
-    };
-    lines.into_iter().take(rows).collect()
-}
-
-fn completed_detail_lines(result: &BuildTestResult) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(result.command_label().to_owned()),
-        Line::from(completed_status(result)),
-    ];
-    if !result.summary().is_empty() {
-        lines.push(Line::from(result.summary().to_owned()));
-    }
-    if let Some(diagnostic) = result.diagnostic() {
-        lines.extend(
-            diagnostic
-                .as_str()
-                .lines()
-                .map(|line| Line::from(line.to_owned())),
-        );
-    }
-    lines
-}
-
-fn completed_status(result: &BuildTestResult) -> String {
-    let outcome = match result.outcome() {
-        BuildTestOutcome::Passed => "Passed",
-        BuildTestOutcome::Failed => "Failed",
-    };
-    let freshness = match result.freshness() {
-        BuildTestFreshness::Fresh => "",
-        BuildTestFreshness::Stale => " · Stale",
-    };
-    let exit = result
-        .exit_code()
-        .map(|code| format!(" · exit {code}"))
-        .unwrap_or_default();
-    format!(
-        "{outcome}{freshness} · {}{exit}",
-        format_duration(result.duration())
-    )
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -1023,10 +947,12 @@ mod tests {
             panels,
         );
         let not_run = draw(&app, 80, 30);
-        assert!(not_run.contains("Preview: Build"));
+        assert!(not_run.contains("Detail: Build"));
         assert!(not_run.contains("Status"));
         assert!(not_run.contains("Not run"));
         assert!(not_run.contains("Press b to run Build."));
+        assert!(not_run.contains("> Build  Not run"));
+        assert!(not_run.contains("  Test  Not run"));
 
         app.apply_build_test_state(
             BuildTestKind::Build,
@@ -1037,7 +963,7 @@ mod tests {
             )),
         );
         let running = draw(&app, 80, 30);
-        assert!(running.contains("Running"));
+        assert!(running.contains("Build  Running"));
         assert!(running.contains("cargo check"));
 
         app.apply_build_test_state(
@@ -1072,6 +998,7 @@ mod tests {
         let stale = draw(&app, 80, 30);
         assert!(stale.contains("Passed"));
         assert!(stale.contains("Stale"));
+        assert!(stale.contains("> Build  Passed (stale)"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -1092,9 +1019,11 @@ mod tests {
             )),
         );
         let failed = draw(&app, 80, 30);
-        assert!(failed.contains("Preview: Test"));
+        assert!(failed.contains("Detail: Test"));
         assert!(failed.contains("Failed"));
         assert!(failed.contains("1 failed"));
+        assert!(failed.contains("  Build  Passed (stale)"));
+        assert!(failed.contains("> Test  Failed"));
 
         app.apply_build_test_state(
             BuildTestKind::Test,
@@ -1114,7 +1043,7 @@ mod tests {
             panels,
         );
         let output = draw(&app, 80, 30);
-        assert!(output.contains("Preview: Build"));
+        assert!(output.contains("Detail: Build"));
         assert!(output.contains("Unavailable"));
     }
     #[test]
@@ -1122,8 +1051,12 @@ mod tests {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Details: Build"));
+        assert!(draw(&app, 120, 30).contains("Evidence"));
         app.select_evidence_detail(BuildTestKind::Build);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            focusable_panels(120, 30),
+        );
         app.apply_build_test_state(
             BuildTestKind::Build,
             BuildTestState::Running(BuildTestRun::new(
@@ -1132,10 +1065,10 @@ mod tests {
                 "cargo check",
             )),
         );
-        let running = draw(&app, 80, 30);
-        assert!(running.contains("Details: Build"));
+        let running = draw(&app, 120, 30);
+        assert!(running.contains("Evidence"));
+        assert!(running.contains("Build  Running"));
         assert!(running.contains("cargo check"));
-        assert!(running.contains("Running"));
         assert!(!running.contains("hidden source"));
         app.apply_build_test_state(
             BuildTestKind::Build,
@@ -1151,8 +1084,8 @@ mod tests {
                 None,
             )),
         );
-        let passed = draw(&app, 80, 30);
-        assert!(passed.contains("Passed · 850ms · exit 0"));
+        let passed = draw(&app, 120, 30);
+        assert!(passed.contains("Build  Passed"));
         assert!(passed.contains("cargo check passed"));
     }
 
@@ -1160,6 +1093,10 @@ mod tests {
     fn renders_failed_stale_and_error_evidence_details() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.select_evidence_detail(BuildTestKind::Test);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            focusable_panels(120, 30),
+        );
         app.apply_build_test_state(
             BuildTestKind::Test,
             BuildTestState::Completed(BuildTestResult::new(
@@ -1176,10 +1113,11 @@ mod tests {
                 )),
             )),
         );
-        let failed = draw(&app, 80, 30);
-        assert!(failed.contains("Failed · 3.4s · exit 101"));
+        let failed = draw(&app, 120, 30);
+        assert!(failed.contains("Test  Failed"));
+        assert!(failed.contains("Evidence"));
         assert!(failed.contains("cargo test failed"));
-        assert!(failed.contains("first diagnostic"));
+        assert!(failed.contains("Result"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             completed_state(
@@ -1188,12 +1126,13 @@ mod tests {
                 BuildTestFreshness::Stale,
             ),
         );
-        assert!(draw(&app, 80, 30).contains("Failed · Stale"));
+        assert!(draw(&app, 120, 30).contains("Test  Failed (stale)"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             execution_error_state(BuildTestKind::Test),
         );
-        assert!(draw(&app, 80, 30).contains("a detailed execution error"));
+        assert!(draw(&app, 120, 30).contains("Test  Error"));
+        assert!(draw(&app, 120, 30).contains("a detailed execution error"));
     }
 
     #[test]
@@ -1278,8 +1217,13 @@ mod tests {
             execution_error_state(BuildTestKind::Build),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        let output = draw(&app, 80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            focusable_panels(120, 30),
+        );
+        let output = draw(&app, 120, 30);
         assert!(output.contains("Evidence   Build Error · Test Not run"));
+        assert!(output.contains("Build  Error"));
         assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
     }
@@ -1291,7 +1235,7 @@ mod tests {
         assert!(output.contains("b:Build"));
         assert!(output.contains("t:Test"));
         assert!(output.contains("r:Reload"));
-        assert!(output.contains("p:Preview"));
+        assert!(output.contains("p:Detail"));
         assert!(output.contains("q/Esc:Quit"));
     }
 
@@ -1608,13 +1552,13 @@ mod tests {
         let panels = focusable_panels(120, 30);
         let task_preview = draw(&app, 120, 30);
         assert!(task_preview.contains("Project Progress"));
-        assert!(task_preview.contains("Preview: Task"));
+        assert!(task_preview.contains("Detail: Task"));
         assert!(task_preview.contains("No task selected"));
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
         );
-        assert!(draw(&app, 120, 30).contains("Preview: Build"));
+        assert!(draw(&app, 120, 30).contains("Detail: Build"));
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
@@ -1627,7 +1571,7 @@ mod tests {
             staged: None,
         });
         let changed = draw(&app, 120, 30);
-        assert!(changed.contains("Preview: src/a.rs"));
+        assert!(changed.contains("Detail: src/a.rs"));
         assert!(changed.contains("+preview-a"));
         assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
         app.handle_key_with_focusable_panels(
@@ -1635,7 +1579,7 @@ mod tests {
             panels,
         );
         assert!(!app.preview_visible());
-        assert!(!draw(&app, 120, 30).contains("Preview: src/a.rs"));
+        assert!(!draw(&app, 120, 30).contains("Detail: src/a.rs"));
         assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
         assert_eq!(app.selected_changed_file(), Some(0));
         app.handle_key_with_focusable_panels(
@@ -1643,7 +1587,7 @@ mod tests {
             panels,
         );
         assert!(app.preview_visible());
-        assert!(draw(&app, 120, 30).contains("Preview: src/a.rs"));
+        assert!(draw(&app, 120, 30).contains("Detail: src/a.rs"));
     }
 
     #[test]
@@ -1683,7 +1627,7 @@ mod tests {
             }),
             staged: None,
         });
-        assert!(draw(&app, 120, 30).contains("Preview: src/b.rs"));
+        assert!(draw(&app, 120, 30).contains("Detail: src/b.rs"));
         assert!(draw(&app, 120, 30).contains("+preview-b"));
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -1715,16 +1659,16 @@ mod tests {
         preview_app.toggle_preview();
         assert!(!has_global_preview(80, 30, preview_app.preview_visible()));
         let fresh_app = app(TaskState::Unavailable, ActivityState::Unavailable);
-        assert!(draw(&fresh_app, 80, 30).contains("Preview: Task"));
-        assert!(!draw(&fresh_app, 77, 30).contains("Preview:"));
-        assert!(!draw(&fresh_app, 78, 24).contains("Preview:"));
+        assert!(draw(&fresh_app, 80, 30).contains("Detail: Task"));
+        assert!(!draw(&fresh_app, 77, 30).contains("Detail:"));
+        assert!(!draw(&fresh_app, 78, 24).contains("Detail:"));
     }
 
     #[test]
     fn footer_advertises_preview_only_when_the_layout_can_show_it() {
-        assert!(footer_text(80, 30).contains("p:Preview"));
-        assert!(!footer_text(77, 30).contains("p:Preview"));
-        assert!(!footer_text(80, 24).contains("p:Preview"));
+        assert!(footer_text(80, 30).contains("p:Detail"));
+        assert!(!footer_text(77, 30).contains("p:Detail"));
+        assert!(!footer_text(80, 24).contains("p:Detail"));
     }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {
@@ -1930,7 +1874,7 @@ mod tests {
         assert!(!medium.contains("Recent Commits"));
 
         let small = draw(&app, 40, 18);
-        assert!(small.contains("Task Summary"));
+        assert!(small.contains("Tasks"));
         assert!(!small.contains("Changed Files"));
         assert!(!small.contains("Recent Commits"));
 
@@ -1950,13 +1894,13 @@ mod tests {
             ActivityState::Unavailable,
         );
         let tasks_focused = draw(&app, 80, 30);
-        assert!(tasks_focused.contains("Task Summary"));
-        assert!(tasks_focused.contains("Details: Build"));
+        assert!(tasks_focused.contains("Tasks"));
+        assert!(tasks_focused.contains("Evidence"));
 
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         let evidence_focused = draw(&app, 80, 30);
-        assert!(evidence_focused.contains("Task Summary"));
-        assert!(evidence_focused.contains("Details: Build"));
+        assert!(evidence_focused.contains("Tasks"));
+        assert!(evidence_focused.contains("Evidence"));
         assert_ne!(tasks_focused, evidence_focused);
     }
     #[test]
@@ -2086,8 +2030,8 @@ mod tests {
         let output = draw(&app, 80, 30);
         for title in [
             " Project Progress ",
-            " Task Summary ",
-            " Details: Build ",
+            " Tasks ",
+            " Evidence ",
             " Changed Files ",
             " Recent Commits ",
         ] {

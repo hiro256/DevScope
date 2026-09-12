@@ -77,14 +77,16 @@ Change counts are secondary to path and status and may be omitted in narrow layo
 Changed File Detail uses optional on-demand Activity drill-down for file content changes.
 The overview remains compact; diff content belongs in detail rather than the Changed Files list.
 The primary overview keeps Project Progress full-width. Large and Medium layouts may expose a
-passive global Preview surface beside the navigation panels. Preview content follows the focused
-panel and its selection, and can be hidden without changing project state. Whole-screen Detail
-remains the deeper inspection mode.
-Global Preview availability is based on minimum usable navigation and preview widths rather than a single wide-screen cutoff.
-Task Preview surfaces source-grounded task context rather than generated interpretation. It may show
-the selected task text, source path, section, and nearby Markdown context.
-It intentionally exposes source quality rather than generating interpretation; improve ambiguous
-task text at the source or workflow level when appropriate. Markdown checkbox syntax is broader
-than accepted Plan semantics, and source classification remains an open design question.
-Evidence Preview surfaces the selected observed Build/Test state and its available execution details.
-Freshness is shown separately from the underlying outcome.
+passive right-side Detail Pane beside the navigation panels. It follows the focused panel and
+selection, can be hidden without changing project state, and carries richer context while left
+panels favor selection and concise state. Full Detail remains the explicitly opened deeper
+inspection mode.
+Detail Pane availability is based on minimum usable navigation and detail widths rather than a
+single wide-screen cutoff.
+Task Detail surfaces source-grounded task context rather than generated interpretation. It may show
+the selected task text, source path, section, and nearby Markdown context. It intentionally exposes
+source quality rather than generating interpretation; improve ambiguous task text at the source or
+workflow level when appropriate. Markdown checkbox syntax is broader than accepted Plan semantics,
+and source classification remains an open design question.
+Evidence Detail Pane surfaces the selected observed Build/Test state and its available execution
+details. Freshness is shown separately from the underlying outcome.
