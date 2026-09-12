@@ -47,6 +47,7 @@ pub fn observe_artifact(
     requested: &Path,
 ) -> Result<ArtifactObservation, ArtifactPathError> {
     let path = validate_artifact_path(requested)?;
+    ensure_artifact_inside_root(root, &path)?;
     let full_path = root.join(&path);
     let status = match fs::metadata(full_path) {
         Ok(metadata) => ArtifactStatus::Exists {
@@ -65,6 +66,36 @@ pub fn observe_artifact(
         },
     };
     Ok(ArtifactObservation { path, status })
+}
+fn ensure_artifact_inside_root(root: &Path, path: &Path) -> Result<(), ArtifactPathError> {
+    let canonical_root = fs::canonicalize(root).map_err(|_| ArtifactPathError {
+        message: "could not resolve project root".into(),
+    })?;
+    let mut existing = root.join(path);
+    loop {
+        match fs::canonicalize(&existing) {
+            Ok(resolved) => {
+                if resolved.starts_with(&canonical_root) {
+                    return Ok(());
+                }
+                return Err(ArtifactPathError {
+                    message: "artifact path resolves outside project root".into(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !existing.pop() {
+                    return Err(ArtifactPathError {
+                        message: "could not resolve artifact path".into(),
+                    });
+                }
+            }
+            Err(_) => {
+                return Err(ArtifactPathError {
+                    message: "could not resolve artifact path".into(),
+                });
+            }
+        }
+    }
 }
 fn validate_artifact_path(requested: &Path) -> Result<PathBuf, ArtifactPathError> {
     let raw = requested.to_string_lossy();
@@ -140,6 +171,24 @@ mod tests {
             }
         ));
         let _ = fs::remove_dir_all(root);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_escape_for_existing_and_missing_paths() {
+        use std::os::unix::fs::symlink;
+        let root = root();
+        let outside = root.parent().unwrap().join(format!(
+            "devscope-artifact-outside-{}",
+            ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("file"), "outside").unwrap();
+        symlink(&outside, root.join("outside-link")).unwrap();
+        for path in ["outside-link/file", "outside-link/missing"] {
+            assert!(observe_artifact(&root, Path::new(path)).is_err(), "{path}");
+        }
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
     #[test]
     fn rejects_unsafe_paths() {
