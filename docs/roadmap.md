@@ -109,7 +109,7 @@
 
 ### TUI
 
-- [ ] Validate Detail View drill-down for focused panels
+- [x] Validate Detail View drill-down for focused panels
 
 ### Core observation
 

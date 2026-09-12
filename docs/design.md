@@ -90,3 +90,38 @@ workflow level when appropriate. Markdown checkbox syntax is broader than accept
 and source classification remains an open design question.
 Evidence Detail Pane surfaces the selected observed Build/Test state and its available execution
 details. Freshness is shown separately from the underlying outcome.
+
+## Detail View experiment closure
+
+The Detail View experiment validated a passive right-side Detail Pane that follows the focused
+panel and selection. Left panels favor navigation and concise state; the Detail Pane carries richer
+context, can be toggled with `p`, and may be hidden responsively. This remained usable beside Codex
+at half-screen width, with the toggle serving as an effective escape hatch.
+
+Full Detail is an explicitly opened deeper inspection mode. It is opened with Enter only where a
+concrete need exists, supports deeper inspection and scrolling, and does not need to exist for every
+panel.
+
+The current panel roles are:
+
+```text
+Tasks          Detail Pane; no Full Detail
+Evidence       Detail Pane; no Full Detail
+Changed Files  Detail Pane and Full Detail
+Recent Commits overview-only
+```
+
+The Evidence left panel demonstrates the validated pattern: it is a Build/Test selector with concise
+status, while the Detail Pane presents the selected state. Detail Pane availability follows usable
+width; narrow layouts hide it, and resizing preserves the user's `p` toggle state.
+
+The interaction model is considered validated, but the exact contents remain provisional. Task
+Detail currently shows task text, source path, section, and Markdown context. Evidence Detail
+currently shows Status, Freshness, Command, Duration, and Result or Error. Changed File Detail
+currently shows status, change counts, and diff content, with Full Detail for scrolling. These are
+current useful contents, not final contracts: future observation sources and workflows may change
+them. Recent Commits remains overview-only until a concrete selection or drill-down need appears.
+
+Future Detail Pane work, if justified, may refine content density, examine a Recent Commits detail,
+or consider syntax highlighting and colors. It does not imply Detail Pane focus, scrolling, or Full
+Detail for Tasks or Evidence.
