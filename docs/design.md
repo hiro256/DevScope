@@ -171,3 +171,5 @@ Build/Test Evidence observes process execution, reports Passed or Failed, and ha
 Artifact paths are project-relative both lexically and physically. DevScope rejects paths that resolve outside the project root through symlinks, junctions, or similar filesystem indirection. This is an observation boundary, not a general filesystem sandbox or a TOCTOU-proof security mechanism.
 
 Broken filesystem indirection is treated as observation failure rather than Missing.
+
+The first registration experiment uses one optional project-configured Artifact target. `devscope artifact inspect` observes it, while an explicit path overrides configuration. Configuration defines the observation target and is not Evidence itself. Multiple targets, names, labels, and generic Evidence configuration remain deferred until a concrete need appears.

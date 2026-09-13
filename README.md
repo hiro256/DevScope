@@ -149,3 +149,14 @@ locally for restoration in a later TUI session. Freshness compares relevant proj
 DevScope v0.3.0 is a source-only release; binary packaging is not provided.
 
 See [docs/roadmap.md](docs/roadmap.md) for the planned work.
+
+## Artifact target
+
+One optional target may be declared in `.devscope/config.toml`:
+
+```toml
+[artifact]
+path = "target/debug/devscope.exe"
+```
+
+`devscope artifact inspect` observes the configured target; `devscope artifact inspect <path>` overrides it. Configuration defines what DevScope should observe; the observation result is Evidence.

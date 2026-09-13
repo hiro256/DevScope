@@ -403,6 +403,32 @@ mod tests {
         assert!(render_verify(&error).contains("Status: Execution error"));
     }
     #[test]
+    fn parses_artifact_inspect_modes_and_rejects_malformed_commands() {
+        assert_eq!(
+            parse_args([OsString::from("artifact"), OsString::from("inspect")]),
+            Ok(EntryMode::ArtifactInspect(None))
+        );
+        assert_eq!(
+            parse_args([
+                OsString::from("artifact"),
+                OsString::from("inspect"),
+                OsString::from("foo")
+            ]),
+            Ok(EntryMode::ArtifactInspect(Some(OsString::from("foo"))))
+        );
+        assert!(
+            parse_args(
+                ["artifact", "inspect", "foo", "bar"]
+                    .into_iter()
+                    .map(OsString::from)
+            )
+            .is_err()
+        );
+        assert!(parse_args(["artifact"].into_iter().map(OsString::from)).is_err());
+        assert!(parse_args(["artifact", "foo"].into_iter().map(OsString::from)).is_err());
+        assert!(usage().contains("devscope artifact inspect [path]"));
+    }
+    #[test]
     fn parses_supported_entry_modes() {
         assert_eq!(parse_args([]), Ok(EntryMode::Tui));
         assert_eq!(

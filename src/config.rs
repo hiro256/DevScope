@@ -323,6 +323,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_single_artifact_target_alongside_plan() {
+        let project = TempProject::new();
+        project.write_config("[artifact]\npath = \"target/debug/devscope.exe\"");
+        assert_eq!(
+            load_project_config(&project.0).unwrap().artifact().path(),
+            Some(Path::new("target/debug/devscope.exe"))
+        );
+        project.write_config("[plan]\nexclude = [\"target\"]\n\n[artifact]\npath = \"output.bin\"");
+        let config = load_project_config(&project.0).unwrap();
+        assert!(config.plan().excludes_path(Path::new("target/file")));
+        assert_eq!(config.artifact().path(), Some(Path::new("output.bin")));
+    }
+
+    #[test]
+    fn rejects_invalid_artifact_schema() {
+        let project = TempProject::new();
+        for contents in [
+            "artifact = \"foo\"",
+            "[artifact]\npath = 123",
+            "[artifact]\nfoo = \"bar\"",
+        ] {
+            project.write_config(contents);
+            assert!(matches!(
+                load_project_config(&project.0),
+                Err(ConfigError::InvalidSchema { .. })
+            ));
+        }
+    }
+    #[test]
     fn rejects_glob_and_negation_syntax() {
         let project = TempProject::new();
         for value in ["generated/*", "!translations"] {
