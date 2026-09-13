@@ -11,8 +11,12 @@ use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     config::{ConfigError, load_project_config},
     current_work::{
-        clear_current_work_active, load_current_work, mark_current_work_done,
+        CurrentWorkError, clear_current_work_active, load_current_work, mark_current_work_done,
         set_current_work_active,
+    },
+    current_work_history::{
+        read_current_work_history, record_active_update, record_completion,
+        render_current_work_history,
     },
     progress::{
         ArtifactObservation, BuildTestExecutionCompletion, BuildTestKind, BuildTestState,
@@ -29,6 +33,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::Context) => run_context(),
         Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::WorkList) => run_work_list(),
+        Ok(EntryMode::WorkHistory) => run_work_history(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
         Ok(EntryMode::WorkActive(number)) => run_work_active(number),
         Ok(EntryMode::WorkActiveClear) => run_work_active_clear(),
@@ -98,23 +103,11 @@ fn run_work_list() -> ExitCode {
         Err(error) => report_runtime_error(error),
     }
 }
-fn run_work_done(number: usize) -> ExitCode {
+fn run_work_history() -> ExitCode {
     match env::current_dir() {
-        Ok(root) => match mark_current_work_done(&root, number) {
-            Ok(result) => {
-                print!("{}", cli::render_work_done(&result));
-                ExitCode::SUCCESS
-            }
-            Err(error) => report_runtime_error(error),
-        },
-        Err(error) => report_runtime_error(error),
-    }
-}
-fn run_work_active(number: usize) -> ExitCode {
-    match env::current_dir() {
-        Ok(root) => match set_current_work_active(&root, number) {
-            Ok(result) => {
-                print!("{}", cli::render_work_active(&result));
+        Ok(root) => match read_current_work_history(&root) {
+            Ok(events) => {
+                print!("{}", render_current_work_history(&events));
                 ExitCode::SUCCESS
             }
             Err(error) => report_runtime_error(error),
@@ -123,13 +116,60 @@ fn run_work_active(number: usize) -> ExitCode {
     }
 }
 
+fn run_work_done(number: usize) -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match load_current_work(&root) {
+            Ok(Some(before)) => match mark_current_work_done(&root, number) {
+                Ok(result) => {
+                    print!("{}", cli::render_work_done(&result));
+                    if let Err(error) = record_completion(&root, &before, &result) {
+                        eprintln!("warning: could not append Current Work history: {error}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => report_runtime_error(error),
+            },
+            Ok(None) => report_runtime_error(CurrentWorkError::NotSet),
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+
+fn run_work_active(number: usize) -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match load_current_work(&root) {
+            Ok(Some(before)) => match set_current_work_active(&root, number) {
+                Ok(result) => {
+                    print!("{}", cli::render_work_active(&result));
+                    if let Err(error) = record_active_update(&root, &before, &result) {
+                        eprintln!("warning: could not append Current Work history: {error}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => report_runtime_error(error),
+            },
+            Ok(None) => report_runtime_error(CurrentWorkError::NotSet),
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+
 fn run_work_active_clear() -> ExitCode {
     match env::current_dir() {
-        Ok(root) => match clear_current_work_active(&root) {
-            Ok(result) => {
-                print!("{}", cli::render_work_active(&result));
-                ExitCode::SUCCESS
-            }
+        Ok(root) => match load_current_work(&root) {
+            Ok(Some(before)) => match clear_current_work_active(&root) {
+                Ok(result) => {
+                    print!("{}", cli::render_work_active(&result));
+                    if let Err(error) = record_active_update(&root, &before, &result) {
+                        eprintln!("warning: could not append Current Work history: {error}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => report_runtime_error(error),
+            },
+            Ok(None) => report_runtime_error(CurrentWorkError::NotSet),
             Err(error) => report_runtime_error(error),
         },
         Err(error) => report_runtime_error(error),

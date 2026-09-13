@@ -25,6 +25,7 @@ pub enum EntryMode {
     Context,
     TaskList,
     WorkList,
+    WorkHistory,
     WorkDone(usize),
     WorkActive(usize),
     WorkActiveClear,
@@ -79,6 +80,9 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
+        [first, second] if first == OsStr::new("work") && second == OsStr::new("history") => {
+            Ok(EntryMode::WorkHistory)
+        }
         [first, second] if first == OsStr::new("artifact") && second == OsStr::new("inspect") => {
             Ok(EntryMode::ArtifactInspect(None))
         }
@@ -105,7 +109,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
             message: "expected `devscope task list`",
         }),
         [first, ..] if first == OsStr::new("work") => Err(UsageError {
-            message: "expected `devscope work list`, `devscope work done <number>`, or `devscope work active <number>|clear`",
+            message: "expected `devscope work list`, `devscope work history`, `devscope work done <number>`, or `devscope work active <number>|clear`",
         }),
         _ => Err(UsageError {
             message: "unrecognized command or arguments",
@@ -114,7 +118,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -643,6 +647,10 @@ mod tests {
         assert_eq!(
             parse_args([OsString::from("work"), OsString::from("list")]),
             Ok(EntryMode::WorkList)
+        );
+        assert_eq!(
+            parse_args([OsString::from("work"), OsString::from("history")]),
+            Ok(EntryMode::WorkHistory)
         );
         for args in [
             vec![OsString::from("work")],

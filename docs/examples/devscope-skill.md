@@ -67,6 +67,12 @@ Do not invent or invoke `work add`, `work start`, `work clear`, `work reopen`, o
 `work undo`. Do not normally edit `.devscope/work/current.md` directly; use an existing
 narrow CLI write when one exists.
 
+## Current Work history
+
+Use `devscope work history` only when recent explicit Current Work mutations would help
+resume or explain an interruption. It is optional, read-only Recorded history rather
+than Current Work truth or Evidence; do not treat its timestamps as actual work or
+verification times.
 ## Task-writing guidance
 
 When creating or refining Plan or Current Work tasks, prefer self-explanatory text

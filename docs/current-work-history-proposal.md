@@ -2,10 +2,17 @@
 
 ## Status
 
-This is an exploratory semantics proposal for the `Progress history experiment`. It
-does not introduce a generic event model, persistence implementation, CLI command,
-or TUI surface. The roadmap item remains incomplete until a concrete experiment has
-been implemented and dogfooded.
+This proposal now has a first concrete implementation: source-specific Current Work
+JSONL append and the read-only `devscope work history` CLI. It still does not introduce
+a generic event model or a TUI surface. The roadmap item remains incomplete until the
+experiment is dogfooded and its utility is assessed.
+
+The implemented contract is intentionally supplemental: DevScope first persists the
+Current Work mutation, then appends history. An append failure does not roll back the
+successful mutation or change the CLI success exit code; it is reported as a warning.
+No-op active, clear, and already-completed operations do not create history entries.
+The reader returns newest first for resumption, treats no file as empty success, and
+reports malformed JSON, unknown versions, and unknown kinds as explicit line errors.
 
 ## Purpose and boundary
 
