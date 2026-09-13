@@ -2,10 +2,10 @@
 
 ## Status
 
-This proposal now has a first concrete implementation: source-specific Current Work
-JSONL append and the read-only `devscope work history` CLI. It still does not introduce
-a generic event model or a TUI surface. The roadmap item remains incomplete until the
-experiment is dogfooded and its utility is assessed.
+This proposal has a concrete implementation and two resumption dogfoods:
+source-specific Current Work JSONL append and the read-only `devscope work history`
+CLI. It does not introduce a generic event model or a TUI surface. The experiment is
+closed as useful within this narrow scope.
 
 The implemented contract is intentionally supplemental: DevScope first persists the
 Current Work mutation, then appends history. An append failure does not roll back the
@@ -190,3 +190,28 @@ read-surface decision only; the JSONL schema and writer remain unchanged.
 The CLI still shows only time-of-day. Whether date should be shown for cross-day
 resumption remains a separate evaluation; this experiment does not infer freshness or
 interpret mutation timestamps as actual work times.
+
+## Second dogfood result and closure
+
+A second resumption dogfood created an actual `A -> B -> A` sequence through explicit
+Current Work CLI mutations. Newest-first output retained that timeline: the later A
+events appeared first, B appeared as a separate intervening group, and the earlier A
+events retained their own repeated `Parent > Task` header. Group spacing and the
+repeated header made context ownership, the active switch, B completion, and A's
+explicit Active clear readable without regrouping the timeline.
+
+`context`, `work list`, and `work history` together were sufficient to distinguish the
+current Recorded state from the most recent mutation flow. History helped answer what
+DevScope had last recorded, but did not replace the Current Work file or imply when
+real work began or ended. Item number plus text remained meaningful in the CLI output.
+
+The dogfood used only same-day events. The compact time-of-day display was sufficient
+for that resumption decision, and no concrete cross-day ambiguity blocked reading the
+record. Date display is therefore not added on theoretical grounds. Retention also did
+not create a current usability problem: 26 local events occupied about 6.5 KiB and the
+newest-first read surface remained low-noise for the short history examined. No generic
+history, history-derived freshness state, or TUI history surface is justified.
+
+The Progress history experiment is closed. Current Work is the concrete source for
+which explicit mutation history proved useful; extending this result to Plan, Git,
+Evidence, Artifact, or Agent history would require a separate demonstrated need.

@@ -115,7 +115,7 @@
 
 - [x] Explore verification integration for Build/Test Evidence
 - [x] Explore Artifact Evidence as a second Evidence source
-- [ ] Progress history experiment
+- [x] Progress history experiment
 
 ### External surfaces
 
