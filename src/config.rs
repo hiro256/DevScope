@@ -13,11 +13,26 @@ pub const CONFIG_PATH: &str = ".devscope/config.toml";
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectConfig {
     plan: PlanConfig,
+    artifact: ArtifactConfig,
 }
 
 impl ProjectConfig {
+    pub fn artifact(&self) -> &ArtifactConfig {
+        &self.artifact
+    }
+
     pub fn plan(&self) -> &PlanConfig {
         &self.plan
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtifactConfig {
+    path: Option<PathBuf>,
+}
+impl ArtifactConfig {
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 }
 
@@ -126,7 +141,7 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
     })?;
 
     for key in table.keys() {
-        if key != "plan" {
+        if key != "plan" && key != "artifact" {
             return Err(unknown_key(path, key, "top level"));
         }
     }
@@ -165,8 +180,34 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
             .collect::<Result<Vec<_>, _>>()?,
     };
 
+    let artifact = match table.get("artifact") {
+        None => ArtifactConfig::default(),
+        Some(value) => {
+            let table = value.as_table().ok_or_else(|| ConfigError::InvalidSchema {
+                path: path.to_path_buf(),
+                message: "`artifact` must be a table".into(),
+            })?;
+            if table.keys().any(|key| key != "path") {
+                return Err(ConfigError::InvalidSchema {
+                    path: path.to_path_buf(),
+                    message: "unknown key in [artifact]".into(),
+                });
+            }
+            let value = table
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| ConfigError::InvalidSchema {
+                    path: path.to_path_buf(),
+                    message: "`artifact.path` must be a string".into(),
+                })?;
+            ArtifactConfig {
+                path: Some(PathBuf::from(value)),
+            }
+        }
+    };
     Ok(ProjectConfig {
         plan: PlanConfig { excludes },
+        artifact,
     })
 }
 

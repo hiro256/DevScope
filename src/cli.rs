@@ -27,7 +27,7 @@ pub enum EntryMode {
     WorkList,
     WorkDone(usize),
     Verify(devscope::progress::BuildTestKind),
-    ArtifactInspect(OsString),
+    ArtifactInspect(Option<OsString>),
     Help,
     Version,
 }
@@ -76,10 +76,10 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second, path]
             if first == OsStr::new("artifact") && second == OsStr::new("inspect") =>
         {
-            Ok(EntryMode::ArtifactInspect(path.clone()))
+            Ok(EntryMode::ArtifactInspect(Some(path.clone())))
         }
         [first, ..] if first == OsStr::new("artifact") => Err(UsageError {
-            message: "expected `devscope artifact inspect <path>`",
+            message: "expected `devscope artifact inspect [path]`",
         }),
         [first, second] if first == OsStr::new("verify") => match second.to_string_lossy().as_ref()
         {
@@ -105,7 +105,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect <path>\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(

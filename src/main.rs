@@ -9,6 +9,7 @@ use std::{env, io, process::ExitCode};
 use app::{App, CurrentWorkState};
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
+    config::load_project_config,
     current_work::{load_current_work, mark_current_work_done},
     progress::{
         BuildTestExecutionCompletion, BuildTestKind, BuildTestState, cargo_build_test_command,
@@ -104,11 +105,24 @@ fn run_work_done(number: usize) -> ExitCode {
         Err(error) => report_runtime_error(error),
     }
 }
-fn run_artifact_inspect(path: std::ffi::OsString) -> ExitCode {
+fn run_artifact_inspect(path: Option<std::ffi::OsString>) -> ExitCode {
     let Ok(root) = env::current_dir() else {
         return ExitCode::FAILURE;
     };
-    match devscope::progress::observe_artifact(&root, std::path::Path::new(&path)) {
+    let path = match path {
+        Some(path) => std::path::PathBuf::from(path),
+        None => match load_project_config(&root) {
+            Ok(config) => match config.artifact().path() {
+                Some(path) => path.to_path_buf(),
+                None => {
+                    eprintln!("error: no Artifact target is configured");
+                    return ExitCode::FAILURE;
+                }
+            },
+            Err(error) => return report_runtime_error(error),
+        },
+    };
+    match devscope::progress::observe_artifact(&root, &path) {
         Ok(observation) => {
             print!("{}", cli::render_artifact(&observation));
             if observation.observation_failed() {
