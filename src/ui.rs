@@ -5,8 +5,8 @@ use crate::app::{
     RefreshSource, TaskState,
 };
 use devscope::progress::{
-    BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, BuildTestStatus,
-    GitChangeCounts, GitDiffText, GitFileDiff, GitFileDiffUnavailable, GitFileStatus,
+    BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, GitChangeCounts,
+    GitDiffText, GitFileDiff, GitFileDiffUnavailable, GitFileStatus,
 };
 use ratatui::{
     Frame,
@@ -237,28 +237,31 @@ fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
         } else {
             "  "
         };
-        let status = match artifact.status() {
-            devscope::progress::ArtifactStatus::Exists { .. } => "Exists",
-            devscope::progress::ArtifactStatus::Missing => "Missing",
-            devscope::progress::ArtifactStatus::ObservationError { .. } => "Error",
-        };
+        let status = artifact_selector_status(artifact.status());
         lines.push(Line::from(format!("{marker}Artifact  {status}")));
     }
     lines
 }
 fn evidence_selector_status(state: &BuildTestState) -> String {
     match state {
-        BuildTestState::Completed(result) => {
-            let outcome = match result.outcome() {
-                BuildTestOutcome::Passed => "Passed",
-                BuildTestOutcome::Failed => "Failed",
-            };
-            match result.freshness() {
-                BuildTestFreshness::Fresh => outcome.into(),
-                BuildTestFreshness::Stale => format!("{outcome} (stale)"),
-            }
-        }
-        _ => build_test_status(state).into(),
+        BuildTestState::Completed(result) => match (result.outcome(), result.freshness()) {
+            (BuildTestOutcome::Passed, BuildTestFreshness::Fresh) => "✓ Passed".into(),
+            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "! Passed (stale)".into(),
+            (BuildTestOutcome::Failed, BuildTestFreshness::Fresh) => "✕ Failed".into(),
+            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "✕ Failed (stale)".into(),
+        },
+        BuildTestState::Unavailable => "? Unavailable".into(),
+        BuildTestState::NotRun => "· Not run".into(),
+        BuildTestState::Running(_) => "▶ Running".into(),
+        BuildTestState::ExecutionError(_) => "! Error".into(),
+    }
+}
+
+fn artifact_selector_status(status: &devscope::progress::ArtifactStatus) -> &'static str {
+    match status {
+        devscope::progress::ArtifactStatus::Exists { .. } => "✓ Exists",
+        devscope::progress::ArtifactStatus::Missing => "· Missing",
+        devscope::progress::ArtifactStatus::ObservationError { .. } => "! Error",
     }
 }
 
@@ -592,21 +595,9 @@ fn evidence(app: &App) -> String {
 
     format!(
         "Build {} · Test {}",
-        build_test_status(build),
-        build_test_status(test)
+        evidence_selector_status(build),
+        evidence_selector_status(test)
     )
-}
-
-fn build_test_status(state: &BuildTestState) -> &'static str {
-    match state.status() {
-        BuildTestStatus::Unavailable => "Unavailable",
-        BuildTestStatus::NotRun => "Not run",
-        BuildTestStatus::Running => "Running",
-        BuildTestStatus::Passed => "Passed",
-        BuildTestStatus::Failed => "Failed",
-        BuildTestStatus::Stale => "Stale",
-        BuildTestStatus::ExecutionError => "Error",
-    }
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -1109,8 +1100,8 @@ mod tests {
         assert!(not_run.contains("Status"));
         assert!(not_run.contains("Not run"));
         assert!(not_run.contains("Press b to run Build."));
-        assert!(not_run.contains("> Build  Not run"));
-        assert!(not_run.contains("  Test  Not run"));
+        assert!(not_run.contains("> Build  · Not run"));
+        assert!(not_run.contains("  Test  · Not run"));
 
         app.apply_build_test_state(
             BuildTestKind::Build,
@@ -1121,7 +1112,7 @@ mod tests {
             )),
         );
         let running = draw(&app, 80, 30);
-        assert!(running.contains("Build  Running"));
+        assert!(running.contains("Build  ▶ Running"));
         assert!(running.contains("cargo check"));
 
         app.apply_build_test_state(
@@ -1156,7 +1147,7 @@ mod tests {
         let stale = draw(&app, 80, 30);
         assert!(stale.contains("Passed"));
         assert!(stale.contains("Stale"));
-        assert!(stale.contains("> Build  Passed (stale)"));
+        assert!(stale.contains("> Build  ! Passed (stale)"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -1180,8 +1171,8 @@ mod tests {
         assert!(failed.contains("Detail: Test"));
         assert!(failed.contains("Failed"));
         assert!(failed.contains("1 failed"));
-        assert!(failed.contains("  Build  Passed (stale)"));
-        assert!(failed.contains("> Test  Failed"));
+        assert!(failed.contains("  Build  ! Passed (stale)"));
+        assert!(failed.contains("> Test  ✕ Failed"));
 
         app.apply_build_test_state(
             BuildTestKind::Test,
@@ -1190,6 +1181,79 @@ mod tests {
         let error = draw(&app, 80, 30);
         assert!(error.contains("Execution error"));
         assert!(error.contains("a detailed execution error"));
+    }
+
+    #[test]
+    fn evidence_status_markers_preserve_source_specific_meaning() {
+        assert_eq!(
+            evidence_selector_status(&completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            )),
+            "✓ Passed"
+        );
+        assert_eq!(
+            evidence_selector_status(&completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Stale,
+            )),
+            "! Passed (stale)"
+        );
+        assert_eq!(
+            evidence_selector_status(&completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+            )),
+            "✕ Failed"
+        );
+        assert_eq!(
+            evidence_selector_status(&BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+            ))),
+            "▶ Running"
+        );
+        assert!(
+            !evidence_selector_status(&BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Build,
+                "cargo",
+                "cargo check",
+            )))
+            .contains('●')
+        );
+        assert_eq!(
+            evidence_selector_status(&execution_error_state(BuildTestKind::Build)),
+            "! Error"
+        );
+        assert_eq!(
+            evidence_selector_status(&BuildTestState::NotRun),
+            "· Not run"
+        );
+        assert_eq!(
+            evidence_selector_status(&BuildTestState::Unavailable),
+            "? Unavailable"
+        );
+        assert_eq!(
+            artifact_selector_status(&devscope::progress::ArtifactStatus::Exists {
+                kind: devscope::progress::ArtifactKind::File,
+                size: 0,
+            }),
+            "✓ Exists"
+        );
+        assert_eq!(
+            artifact_selector_status(&devscope::progress::ArtifactStatus::Missing),
+            "· Missing"
+        );
+        assert_eq!(
+            artifact_selector_status(&devscope::progress::ArtifactStatus::ObservationError {
+                message: "denied".into(),
+            }),
+            "! Error"
+        );
     }
 
     #[test]
@@ -1221,7 +1285,7 @@ mod tests {
 
         assert_eq!(
             evidence_selector_lines(&app)[2],
-            Line::from("> Artifact  Error")
+            Line::from("> Artifact  ! Error")
         );
         let (title, detail) = artifact_preview(app.artifact());
         assert_eq!(title, "Detail: Artifact");
@@ -1263,7 +1327,7 @@ mod tests {
         );
         let running = draw(&app, 120, 30);
         assert!(running.contains("Evidence"));
-        assert!(running.contains("Build  Running"));
+        assert!(running.contains("Build  ▶ Running"));
         assert!(running.contains("cargo check"));
         assert!(!running.contains("hidden source"));
         app.apply_build_test_state(
@@ -1281,7 +1345,7 @@ mod tests {
             )),
         );
         let passed = draw(&app, 120, 30);
-        assert!(passed.contains("Build  Passed"));
+        assert!(passed.contains("Build  ✓ Passed"));
         assert!(passed.contains("cargo check passed"));
     }
 
@@ -1310,7 +1374,7 @@ mod tests {
             )),
         );
         let failed = draw(&app, 120, 30);
-        assert!(failed.contains("Test  Failed"));
+        assert!(failed.contains("Test  ✕ Failed"));
         assert!(failed.contains("Evidence"));
         assert!(failed.contains("cargo test failed"));
         assert!(failed.contains("Result"));
@@ -1322,12 +1386,12 @@ mod tests {
                 BuildTestFreshness::Stale,
             ),
         );
-        assert!(draw(&app, 120, 30).contains("Test  Failed (stale)"));
+        assert!(draw(&app, 120, 30).contains("Test  ✕ Failed (stale)"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             execution_error_state(BuildTestKind::Test),
         );
-        assert!(draw(&app, 120, 30).contains("Test  Error"));
+        assert!(draw(&app, 120, 30).contains("Test  ! Error"));
         assert!(draw(&app, 120, 30).contains("a detailed execution error"));
     }
 
@@ -1350,7 +1414,7 @@ mod tests {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Evidence   Build Not run · Test Not run"));
+        assert!(draw(&app, 80, 30).contains("Evidence   Build · Not run · Test · Not run"));
     }
 
     #[test]
@@ -1365,7 +1429,7 @@ mod tests {
             )),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Evidence   Build Running · Test Not run"));
+        assert!(draw(&app, 80, 30).contains("Evidence   Build ▶ Running · Test · Not run"));
     }
 
     #[test]
@@ -1387,7 +1451,7 @@ mod tests {
                 BuildTestFreshness::Fresh,
             ),
         );
-        assert!(draw(&app, 80, 30).contains("Evidence   Build Passed · Test Failed"));
+        assert!(draw(&app, 80, 30).contains("Evidence   Build ✓ Passed · Test ✕ Failed"));
     }
 
     #[test]
@@ -1402,7 +1466,9 @@ mod tests {
             ),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
-        assert!(draw(&app, 80, 30).contains("Evidence   Build Stale · Test Unavailable"));
+        assert!(
+            draw(&app, 80, 30).contains("Evidence   Build ! Passed (stale) · Test ? Unavailable")
+        );
     }
 
     #[test]
@@ -1418,8 +1484,8 @@ mod tests {
             focusable_panels(120, 30),
         );
         let output = draw(&app, 120, 30);
-        assert!(output.contains("Evidence   Build Error · Test Not run"));
-        assert!(output.contains("Build  Error"));
+        assert!(output.contains("Evidence   Build ! Error · Test · Not run"));
+        assert!(output.contains("Build  ! Error"));
         assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
     }

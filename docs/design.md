@@ -121,6 +121,11 @@ focus target. `p` toggles Preview visibility only when the responsive layout can
 opens deeper detail only for an item that provides it. Esc returns from Full Detail; on the overview
 it retains the existing quit behavior. `q` quits in either state.
 
+Status markers are source-state cues, separate from focus, selection, Current Work association, and
+NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`
+neutral state, and `?` unavailable. They retain source-specific semantics: Stale keeps its Build/Test
+outcome, and Artifact Missing remains a successful observation of an absent target rather than failure.
+
 The Evidence left panel demonstrates the validated pattern: it is a Build/Test selector with concise
 status, while the Detail Pane presents the selected state. Detail Pane availability follows usable
 width; narrow layouts hide it, and resizing preserves the user's `p` toggle state.
