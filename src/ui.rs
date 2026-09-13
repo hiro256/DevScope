@@ -435,7 +435,7 @@ fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
         lines.extend(task.context().iter().enumerate().map(|(index, line)| {
             let line_number = task.context_start_line() + index;
             let marker = if line_number == task.line() {
-                "> "
+                "│ "
             } else {
                 "  "
             };
@@ -1684,7 +1684,8 @@ mod tests {
         assert!(first.contains("Section"));
         assert!(first.contains("TUI"));
         assert!(first.contains("Context"));
-        assert!(first.contains("> - [ ] Detail View experiment"));
+        assert!(first.contains("│ - [ ] Detail View experiment"));
+        assert!(!first.contains("> - [ ] Detail View experiment"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -1693,7 +1694,8 @@ mod tests {
         let second = draw(&app, 80, 30);
         assert!(second.contains("Artifact Evidence experiment"));
         assert!(second.contains("Core observation"));
-        assert!(second.contains("> - [ ] Artifact Evidence experiment"));
+        assert!(second.contains("│ - [ ] Artifact Evidence experiment"));
+        assert!(!second.contains("> - [ ] Artifact Evidence experiment"));
     }
 
     fn line_text(line: &Line<'_>) -> String {
