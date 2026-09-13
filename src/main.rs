@@ -9,7 +9,7 @@ use std::{env, io, process::ExitCode};
 use app::{App, CurrentWorkState};
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
-    config::load_project_config,
+    config::{ConfigError, load_project_config},
     current_work::{load_current_work, mark_current_work_done},
     progress::{
         ArtifactObservation, BuildTestExecutionCompletion, BuildTestKind, BuildTestState,
@@ -187,7 +187,7 @@ fn run_tui() -> io::Result<()> {
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);
     restore_tui_build_test_states(project_root.as_deref(), &mut app);
-    app.apply_artifact(load_tui_artifact(project_root.as_deref()));
+    app.apply_artifact(load_tui_artifact(project_root.as_deref()).map_err(io::Error::other)?);
     app.apply_current_work(load_tui_current_work(project_root.as_deref()));
     event_loop::run(terminal.terminal_mut(), project_root.as_deref(), &mut app)
         .and(terminal.restore())
@@ -210,13 +210,19 @@ fn load_tui_current_work(root: Option<&std::path::Path>) -> CurrentWorkState {
         Err(_) => CurrentWorkState::Unavailable,
     }
 }
-fn load_tui_artifact(root: Option<&std::path::Path>) -> Option<ArtifactObservation> {
-    let root = root?;
-    let config = load_project_config(root).ok()?;
-    let path = config.artifact().path()?;
-    Some(observe_artifact(root, path).unwrap_or_else(|error| {
+fn load_tui_artifact(
+    root: Option<&std::path::Path>,
+) -> Result<Option<ArtifactObservation>, ConfigError> {
+    let Some(root) = root else {
+        return Ok(None);
+    };
+    let config = load_project_config(root)?;
+    let Some(path) = config.artifact().path() else {
+        return Ok(None);
+    };
+    Ok(Some(observe_artifact(root, path).unwrap_or_else(|error| {
         ArtifactObservation::observation_error(path.to_path_buf(), error.to_string())
-    }))
+    })))
 }
 fn report_runtime_error(error: impl std::fmt::Display) -> ExitCode {
     eprintln!("error: {error}");

@@ -176,3 +176,5 @@ The first registration experiment uses one optional project-configured Artifact 
 When an Artifact target is configured, the Evidence panel includes it as a selectable third observed source. Its Detail Pane shows the recorded path and current observation status, with kind and size for an existing target or an error message when observation fails. Artifact Evidence has no Fresh/Stale interpretation, persistence, or dedicated panel.
 
 The TUI observes the configured target on startup and when project state is refreshed. It remains a passive filesystem observation: no watch service, automatic verification, or inference about artifact validity is introduced.
+
+An invalid project configuration is not treated as an unconfigured Artifact target. Configuration failures use the existing TUI startup or refresh error path, while Artifact `Error` remains reserved for failures during filesystem observation.

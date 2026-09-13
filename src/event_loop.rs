@@ -12,7 +12,7 @@ use devscope::{
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
         MarkdownChange, MarkdownChangeDetector,
     },
-    config::load_project_config,
+    config::{ConfigError, load_project_config},
     current_work::load_current_work,
     progress::{
         ArtifactObservation, BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
@@ -119,21 +119,26 @@ fn refresh_current_work(root: Option<&Path>, app: &mut App) -> bool {
     app.apply_current_work(current_work);
     true
 }
-fn load_artifact_observation(root: &Path) -> Option<ArtifactObservation> {
-    let config = load_project_config(root).ok()?;
-    let path = config.artifact().path()?;
-    Some(observe_artifact(root, path).unwrap_or_else(|error| {
+fn load_artifact_observation(root: &Path) -> Result<Option<ArtifactObservation>, ConfigError> {
+    let config = load_project_config(root)?;
+    let Some(path) = config.artifact().path() else {
+        return Ok(None);
+    };
+    Ok(Some(observe_artifact(root, path).unwrap_or_else(|error| {
         ArtifactObservation::observation_error(path.to_path_buf(), error.to_string())
-    }))
+    })))
 }
 
-fn refresh_artifact(root: Option<&Path>, app: &mut App) -> bool {
-    let observation = root.and_then(load_artifact_observation);
+fn refresh_artifact(root: Option<&Path>, app: &mut App) -> Result<bool, ConfigError> {
+    let observation = match root {
+        Some(root) => load_artifact_observation(root)?,
+        None => None,
+    };
     if app.artifact() == observation.as_ref() {
-        return false;
+        return Ok(false);
     }
     app.apply_artifact(observation);
-    true
+    Ok(true)
 }
 fn check_git_worktree_changes(
     project_root: Option<&Path>,
@@ -275,7 +280,9 @@ fn apply_pending_refreshes(
             Ok((plan, tasks)) => {
                 app.apply_markdown_state(plan, tasks);
                 app.clear_refresh_error();
-                refresh_artifact(Some(root), app);
+                if let Err(error) = refresh_artifact(Some(root), app) {
+                    app.set_refresh_error(error.to_string());
+                }
                 outcome.markdown = true;
             }
             Err(error) => app.set_refresh_error(error.to_string()),
@@ -628,7 +635,9 @@ pub fn run(
                             refresh_changed_file_preview(Some(root), app);
                         }
                         refresh_current_work(Some(root), app);
-                        refresh_artifact(Some(root), app);
+                        if let Err(error) = refresh_artifact(Some(root), app) {
+                            app.set_refresh_error(error.to_string());
+                        }
                         requests.clear();
                         app.record_refresh(RefreshSource::Manual, session_start.elapsed());
                         app.set_refresh_pending(false);
@@ -1536,9 +1545,18 @@ mod tests {
         fs::write(root.join("tasks.md"), "- [ ] Root").unwrap();
         fs::create_dir_all(root.join("translations")).unwrap();
         fs::write(root.join("translations/ja.md"), "- [ ] Translation").unwrap();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[artifact]\npath = \"output.bin\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("output.bin"), "artifact").unwrap();
         let mut app = App::new(collect_project_snapshot(&root));
+        assert!(refresh_artifact(Some(&root), &mut app).unwrap());
         let previous_plan = app.plan();
         let previous_tasks = app.tasks().clone();
+        let previous_artifact = app.artifact().cloned();
         let mut markdown = Some(MarkdownChangeDetector::new(&root));
         let mut worktree = None;
         let mut metadata = Some(GitMetadataChangeDetector::new(&root));
@@ -1553,8 +1571,12 @@ mod tests {
             &mut requests,
         );
         assert!(!requests.markdown);
-        fs::create_dir_all(root.join(".devscope")).unwrap();
-        fs::write(root.join(".devscope/config.toml"), "[plan").unwrap();
+
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[artifact]\npath = 123\n",
+        )
+        .unwrap();
         collect_change_requests(
             Some(&root),
             &mut markdown,
@@ -1574,9 +1596,12 @@ mod tests {
         );
         assert_eq!(app.plan(), previous_plan);
         assert_eq!(app.tasks(), &previous_tasks);
+        assert_eq!(app.artifact(), previous_artifact.as_ref());
+
+        fs::write(root.join("recovered.bin"), "recovered").unwrap();
         fs::write(
             root.join(".devscope/config.toml"),
-            "[plan]\nexclude = [\"translations\"]\n",
+            "[plan]\nexclude = [\"translations\"]\n\n[artifact]\npath = \"recovered.bin\"\n",
         )
         .unwrap();
         collect_change_requests(
@@ -1593,6 +1618,10 @@ mod tests {
         assert!(outcome.markdown);
         assert!(app.refresh_error().is_none());
         assert_eq!(app.plan(), PlanState::Available(PlanSummary::new(0, 1)));
+        assert!(matches!(
+            app.artifact().map(|artifact| artifact.status()),
+            Some(ArtifactStatus::Exists { .. })
+        ));
         let _ = fs::remove_dir_all(root);
     }
     #[test]
@@ -1922,8 +1951,14 @@ mod tests {
     }
 
     #[test]
-    fn refresh_artifact_observes_the_configured_target_and_removes_missing_configuration() {
+    fn artifact_observation_distinguishes_unconfigured_configured_and_invalid_config() {
         let root = temp_root();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+
+        assert!(matches!(load_artifact_observation(&root), Ok(None)));
+        assert!(!refresh_artifact(Some(&root), &mut app).unwrap());
+        assert!(app.artifact().is_none());
+
         fs::create_dir_all(root.join(".devscope")).unwrap();
         fs::write(
             root.join(".devscope/config.toml"),
@@ -1931,23 +1966,39 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("output.bin"), "artifact").unwrap();
-        let mut app = App::new(ProjectSnapshot::unavailable());
-
-        assert!(refresh_artifact(Some(&root), &mut app));
+        assert!(matches!(
+            load_artifact_observation(&root),
+            Ok(Some(ArtifactObservation { .. }))
+        ));
+        assert!(refresh_artifact(Some(&root), &mut app).unwrap());
         assert!(matches!(
             app.artifact().map(|artifact| artifact.status()),
             Some(ArtifactStatus::Exists { .. })
         ));
+        let previous = app.artifact().cloned();
 
-        fs::remove_file(root.join("output.bin")).unwrap();
-        assert!(refresh_artifact(Some(&root), &mut app));
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[artifact]\npath = 123\n",
+        )
+        .unwrap();
+        assert!(load_artifact_observation(&root).is_err());
+        assert!(refresh_artifact(Some(&root), &mut app).is_err());
+        assert_eq!(app.artifact(), previous.as_ref());
+
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[artifact]\npath = \"missing.bin\"\n",
+        )
+        .unwrap();
+        assert!(refresh_artifact(Some(&root), &mut app).unwrap());
         assert!(matches!(
             app.artifact().map(|artifact| artifact.status()),
             Some(ArtifactStatus::Missing)
         ));
 
         fs::remove_file(root.join(".devscope/config.toml")).unwrap();
-        assert!(refresh_artifact(Some(&root), &mut app));
+        assert!(refresh_artifact(Some(&root), &mut app).unwrap());
         assert!(app.artifact().is_none());
         let _ = fs::remove_dir_all(root);
     }
