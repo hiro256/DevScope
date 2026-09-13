@@ -73,6 +73,9 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
+        [first, second] if first == OsStr::new("artifact") && second == OsStr::new("inspect") => {
+            Ok(EntryMode::ArtifactInspect(None))
+        }
         [first, second, path]
             if first == OsStr::new("artifact") && second == OsStr::new("inspect") =>
         {

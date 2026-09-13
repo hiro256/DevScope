@@ -146,22 +146,20 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
         }
     }
 
-    let Some(plan_value) = table.get("plan") else {
-        return Ok(ProjectConfig::default());
-    };
-    let plan_table = plan_value
-        .as_table()
-        .ok_or_else(|| ConfigError::InvalidSchema {
+    let plan_table = match table.get("plan") {
+        Some(value) => Some(value.as_table().ok_or_else(|| ConfigError::InvalidSchema {
             path: path.to_path_buf(),
             message: "`plan` must be a table".to_owned(),
-        })?;
-    for key in plan_table.keys() {
+        })?),
+        None => None,
+    };
+    for key in plan_table.into_iter().flat_map(|table| table.keys()) {
         if key != "exclude" {
             return Err(unknown_key(path, key, "[plan]"));
         }
     }
 
-    let excludes = match plan_table.get("exclude") {
+    let excludes = match plan_table.and_then(|table| table.get("exclude")) {
         None => Vec::new(),
         Some(value) => value
             .as_array()
