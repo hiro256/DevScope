@@ -12,6 +12,10 @@ authority source.
 2. Orient from Plan state, Current Work parent/progress/next item when present, Git
    Activity, Evidence availability, and the remaining tasks it shows.
 3. Treat `context` as orientation, not a complete specification.
+4. Follow the [Setup Guide](../guides/devscope-setup.md) when `devscope` is
+   unavailable, project observation does not match the repository, required Cargo
+   verification is unavailable, Config is invalid, or existing Config no longer fits
+   after a project-structure change. Return here after validation.
 
 ## Read details only when needed
 
@@ -134,20 +138,14 @@ instructions, or an explicit workflow instruction.
 
 ```text
 Config = project-specific observation policy
-       != Plan, Current Work, Evidence, or AI memory/notes
+       != Plan, Current Work, Evidence, or AI memory
 ```
 
-Start with defaults and inspect actual DevScope behavior. Consider Config only for a
-concrete mismatch; otherwise leave the project zero-config. Do not add exclusions
-merely to make Plan output cleaner or shorter. A justified reason is a derived,
-generated, duplicated, intentionally non-authoritative, or semantically irrelevant
-Plan source.
-
-When authorized to change the project file, make the smallest explicit rule that
-resolves the mismatch. Re-run the relevant DevScope behavior, confirm the mismatch is
-resolved and unrelated observations remain correct, then review the Config diff.
-Remove or simplify a rule that becomes obsolete. A Config change may legitimately make
-completed Build/Test Evidence stale because Config is a project-relevant input.
+Use defaults unless a concrete observation mismatch exists. For CLI availability,
+zero-config observation, supported Config rules, and validation, follow the
+[Setup Guide](../guides/devscope-setup.md). Do not add Config merely to shorten output
+or store workflow context. A Config change may legitimately make completed Build/Test
+Evidence stale.
 
 ## Stop
 

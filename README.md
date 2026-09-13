@@ -108,6 +108,10 @@ cargo build --release
 
 The initial read-only and Current Work CLI experiments completed successfully. The
 commands remain experimental while the later Skill and workflow work continues.
+
+For project onboarding, use the [Setup Guide](docs/guides/devscope-setup.md). After
+setup, use the [Skill prototype](docs/examples/devscope-skill.md) for daily
+AI/human workflow.
 For development checks, use Cargo:
 
 ```powershell
@@ -142,7 +146,6 @@ locally for restoration in a later TUI session. Freshness compares relevant proj
 
 - Scrollable, full-screen Evidence diagnostics and history
 - Agent adapters, including a Codex adapter
-- Configuration files
 - Task editing and Git write operations
 - Task weighting, progress history, and IDE or Web/API frontends
 
