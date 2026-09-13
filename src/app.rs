@@ -897,6 +897,19 @@ mod tests {
     }
 
     #[test]
+    fn preview_toggle_does_not_change_changed_file_detail_behavior() {
+        let mut app = app(1);
+        app.apply_activity_state(activity_with_files(1));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('p')), ALL_PANELS);
+        assert!(!app.preview_visible());
+
+        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        assert!(app.has_detail_view());
+    }
+
+    #[test]
     fn detail_target_refreshes_change_counts_from_activity() {
         let mut app = app(1);
         let activity = |additions, deletions| {

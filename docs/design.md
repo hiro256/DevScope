@@ -115,6 +115,12 @@ Changed Files  Detail Pane and Full Detail
 Recent Commits overview-only
 ```
 
+Navigation uses Tab / Shift+Tab for panel focus and j/k for selection within the focused panel.
+The Preview is a passive common detail area that follows that focus and selection; it is not a
+focus target. `p` toggles Preview visibility only when the responsive layout can show it. Enter
+opens deeper detail only for an item that provides it. Esc returns from Full Detail; on the overview
+it retains the existing quit behavior. `q` quits in either state.
+
 The Evidence left panel demonstrates the validated pattern: it is a Build/Test selector with concise
 status, while the Detail Pane presents the selected state. Detail Pane availability follows usable
 width; narrow layouts hide it, and resizing preserves the user's `p` toggle state.

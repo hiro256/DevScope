@@ -143,10 +143,10 @@ fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
 fn footer_text(width: u16, height: u16) -> &'static str {
     match (width >= 96, preview_layout_available(width, height)) {
         (true, true) => {
-            "Tab:Panel  j/k:Move  Enter:Detail  p:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit"
+            "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
         }
         (true, false) => "Tab:Panel  j/k:Move  Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
-        (false, true) => "Tab:Panel  j/k:Move  p:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
+        (false, true) => "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit",
         (false, false) => "Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit",
     }
 }
@@ -1431,7 +1431,7 @@ mod tests {
         assert!(output.contains("b:Build"));
         assert!(output.contains("t:Test"));
         assert!(output.contains("r:Reload"));
-        assert!(output.contains("p:Detail"));
+        assert!(output.contains("p:Preview"));
         assert!(output.contains("q/Esc:Quit"));
     }
 
@@ -1982,9 +1982,9 @@ mod tests {
 
     #[test]
     fn footer_advertises_preview_only_when_the_layout_can_show_it() {
-        assert!(footer_text(80, 30).contains("p:Detail"));
-        assert!(!footer_text(77, 30).contains("p:Detail"));
-        assert!(!footer_text(80, 24).contains("p:Detail"));
+        assert!(footer_text(80, 30).contains("p:Preview"));
+        assert!(!footer_text(77, 30).contains("p:Preview"));
+        assert!(!footer_text(80, 24).contains("p:Preview"));
     }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {
