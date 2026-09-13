@@ -94,8 +94,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from("DevScope").style(Style::default().add_modifier(Modifier::BOLD)),
-            Line::from(refresh_status(app)),
+            Line::from(header_title(app, usize::from(area.width)))
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+            Line::from(now_label(app.current_work(), usize::from(area.width))),
         ]),
         outer[0],
     );
@@ -116,6 +117,29 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 }
 
+fn header_title(app: &App, width: usize) -> String {
+    const TITLE: &str = "DevScope";
+    const GAP: &str = "  ";
+    let refresh = refresh_status(app);
+    if Line::from(format!("{TITLE}{GAP}{refresh}")).width() <= width {
+        format!("{TITLE}{GAP}{refresh}")
+    } else {
+        truncate_text(TITLE, width)
+    }
+}
+
+fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
+    const PREFIX: &str = "● NOW  ";
+    let value = match current_work {
+        CurrentWorkState::Available(work) => {
+            work.active_item().map_or("Not set", |item| item.text())
+        }
+        CurrentWorkState::NotSet => "Not set",
+        CurrentWorkState::Unavailable => "Unavailable",
+    };
+    let available = width.saturating_sub(Line::from(PREFIX).width());
+    format!("{PREFIX}{}", truncate_text(value, available))
+}
 fn footer_text(width: u16, height: u16) -> &'static str {
     match (width >= 96, preview_layout_available(width, height)) {
         (true, true) => {
@@ -803,11 +827,11 @@ fn task_line(
     if reserved > width {
         return Line::from(format!("{prefix}{}", task.text()));
     }
-    let text = truncate_task_text(task.text(), width.saturating_sub(reserved));
+    let text = truncate_text(task.text(), width.saturating_sub(reserved));
     Line::from(format!("{prefix}{text}{INDICATOR}"))
 }
 
-fn truncate_task_text(text: &str, width: usize) -> String {
+fn truncate_text(text: &str, width: usize) -> String {
     if Line::from(text.to_owned()).width() <= width {
         return text.to_owned();
     }
@@ -2192,6 +2216,38 @@ mod tests {
         assert!(evidence_focused.contains("Tasks"));
         assert!(evidence_focused.contains("Evidence"));
         assert_ne!(tasks_focused, evidence_focused);
+    }
+    #[test]
+    fn now_uses_only_the_explicit_active_item() {
+        let no_active = work_state("- [ ] Next candidate\n- [ ] Other item\n");
+        let no_active_label = now_label(&no_active, 80);
+        assert!(no_active_label.contains("Not set"));
+        assert!(!no_active_label.contains("Next candidate"));
+
+        let active = work_state("Active: 2\n- [ ] Next candidate\n- [ ] Explicit active item\n");
+        let active_label = now_label(&active, 80);
+        assert!(active_label.contains("Explicit active item"));
+        assert!(!active_label.contains("Next candidate"));
+        assert!(now_label(&CurrentWorkState::NotSet, 80).contains("Not set"));
+        assert!(now_label(&CurrentWorkState::Unavailable, 80).contains("Unavailable"));
+    }
+
+    #[test]
+    fn now_truncates_and_refreshes_with_current_work_state() {
+        let long = "A deliberately long explicit Active Current Work item that must remain on one header line";
+        let active = work_state(&format!("Active: 1\n- [ ] {long}\n"));
+        let label = now_label(&active, 40);
+        assert!(label.contains('…'));
+        assert!(Line::from(label).width() <= 40);
+
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_current_work(active);
+        assert!(draw(&app, 80, 30).contains("● NOW  A deliberately long"));
+        app.apply_current_work(work_state("- [ ] Next candidate\n"));
+        let refreshed = draw(&app, 40, 18);
+        assert!(refreshed.contains("NOW"));
+        assert!(refreshed.contains("Not set"));
+        assert!(!refreshed.contains("Next candidate"));
     }
     #[test]
     fn renders_current_work_states_with_the_shared_progress_visual() {
