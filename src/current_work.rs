@@ -8,6 +8,7 @@ use std::{
 pub struct CurrentWork {
     parent_path: PathBuf,
     parent_task: String,
+    active: Option<usize>,
     items: Vec<CurrentWorkItem>,
 }
 
@@ -20,6 +21,12 @@ impl CurrentWork {
     }
     pub fn items(&self) -> &[CurrentWorkItem] {
         &self.items
+    }
+    pub fn active_index(&self) -> Option<usize> {
+        self.active
+    }
+    pub fn active_item(&self) -> Option<&CurrentWorkItem> {
+        self.active.and_then(|index| self.items.get(index))
     }
     pub fn total(&self) -> usize {
         self.items.len()
@@ -55,6 +62,12 @@ pub enum CurrentWorkDone {
     AlreadyComplete { number: usize, text: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurrentWorkActiveUpdate {
+    Set { number: usize, text: String },
+    Cleared { previous: Option<(usize, String)> },
+}
+
 #[derive(Debug)]
 pub enum CurrentWorkError {
     Read { path: PathBuf, source: io::Error },
@@ -62,6 +75,7 @@ pub enum CurrentWorkError {
     Format { message: String },
     NotSet,
     ItemDoesNotExist { number: usize },
+    ItemAlreadyComplete { number: usize },
 }
 impl fmt::Display for CurrentWorkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -81,6 +95,9 @@ impl fmt::Display for CurrentWorkError {
             Self::ItemDoesNotExist { number } => {
                 write!(f, "Current Work item {number} does not exist")
             }
+            Self::ItemAlreadyComplete { number } => {
+                write!(f, "Current Work item {number} is already complete")
+            }
         }
     }
 }
@@ -96,6 +113,7 @@ impl Error for CurrentWorkError {
 struct ParsedCurrentWork {
     work: CurrentWork,
     marker_offsets: Vec<usize>,
+    active_line_range: Option<std::ops::Range<usize>>,
 }
 
 pub fn current_work_path(root: &Path) -> PathBuf {
@@ -116,16 +134,7 @@ pub fn mark_current_work_done(
     number: usize,
 ) -> Result<CurrentWorkDone, CurrentWorkError> {
     let path = current_work_path(root);
-    let text = fs::read_to_string(&path).map_err(|source| {
-        if source.kind() == io::ErrorKind::NotFound {
-            CurrentWorkError::NotSet
-        } else {
-            CurrentWorkError::Read {
-                path: path.clone(),
-                source,
-            }
-        }
-    })?;
+    let text = read_current_work_for_update(&path)?;
     let parsed = parse_current_work(&text)?;
     let index = number
         .checked_sub(1)
@@ -141,23 +150,122 @@ pub fn mark_current_work_done(
             text: item.text.clone(),
         });
     }
-    let offset = *parsed
+
+    let mut updated = text;
+    let mut offset = *parsed
         .marker_offsets
         .get(index)
         .ok_or(CurrentWorkError::ItemDoesNotExist { number })?;
-    let mut updated = text;
+    if parsed.work.active_index() == Some(index) {
+        let range = parsed
+            .active_line_range
+            .ok_or_else(|| CurrentWorkError::Format {
+                message: "missing Active metadata".to_owned(),
+            })?;
+        if offset > range.start {
+            offset -= range.end - range.start;
+        }
+        updated.replace_range(range, "");
+    }
     updated.replace_range(offset..offset + 1, "x");
-    fs::write(&path, updated).map_err(|source| CurrentWorkError::Write { path, source })?;
+    write_current_work(&path, &updated)?;
     Ok(CurrentWorkDone::Completed {
         number,
         text: item.text.clone(),
     })
 }
 
+pub fn set_current_work_active(
+    root: &Path,
+    number: usize,
+) -> Result<CurrentWorkActiveUpdate, CurrentWorkError> {
+    let path = current_work_path(root);
+    let text = read_current_work_for_update(&path)?;
+    let parsed = parse_current_work(&text)?;
+    let index = number
+        .checked_sub(1)
+        .ok_or(CurrentWorkError::ItemDoesNotExist { number })?;
+    let item = parsed
+        .work
+        .items
+        .get(index)
+        .ok_or(CurrentWorkError::ItemDoesNotExist { number })?;
+    if item.completed {
+        return Err(CurrentWorkError::ItemAlreadyComplete { number });
+    }
+    let item_text = item.text.clone();
+    if parsed.work.active_index() != Some(index) {
+        let mut work = parsed.work;
+        work.active = Some(index);
+        write_current_work(&path, &serialize_current_work(&work))?;
+    }
+    Ok(CurrentWorkActiveUpdate::Set {
+        number,
+        text: item_text,
+    })
+}
+
+pub fn clear_current_work_active(root: &Path) -> Result<CurrentWorkActiveUpdate, CurrentWorkError> {
+    let path = current_work_path(root);
+    let text = read_current_work_for_update(&path)?;
+    let parsed = parse_current_work(&text)?;
+    let previous = parsed
+        .work
+        .active_index()
+        .map(|index| (index + 1, parsed.work.items[index].text.clone()));
+    if let Some(range) = parsed.active_line_range {
+        let mut updated = text;
+        updated.replace_range(range, "");
+        write_current_work(&path, &updated)?;
+    }
+    Ok(CurrentWorkActiveUpdate::Cleared { previous })
+}
+
+fn read_current_work_for_update(path: &Path) -> Result<String, CurrentWorkError> {
+    fs::read_to_string(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            CurrentWorkError::NotSet
+        } else {
+            CurrentWorkError::Read {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })
+}
+
+fn write_current_work(path: &Path, text: &str) -> Result<(), CurrentWorkError> {
+    fs::write(path, text).map_err(|source| CurrentWorkError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn serialize_current_work(work: &CurrentWork) -> String {
+    let mut text = format!(
+        "# Current Work\n\nParent: {}\nTask: {}\n",
+        work.parent_path.display(),
+        work.parent_task
+    );
+    if let Some(active) = work.active_index() {
+        text.push_str(&format!("Active: {}\n", active + 1));
+    }
+    if !work.items.is_empty() {
+        text.push('\n');
+        for item in &work.items {
+            let marker = if item.completed() { 'x' } else { ' ' };
+            text.push_str(&format!("- [{marker}] {}\n", item.text()));
+        }
+    }
+    text
+}
+
 fn parse_current_work(text: &str) -> Result<ParsedCurrentWork, CurrentWorkError> {
     let mut header = false;
     let mut parent = None;
     let mut task = None;
+    let mut active_number = None;
+    let mut active_line_range = None;
     let mut items = Vec::new();
     let mut marker_offsets = Vec::new();
     let mut line_start = 0;
@@ -203,6 +311,20 @@ fn parse_current_work(text: &str) -> Result<ParsedCurrentWork, CurrentWorkError>
                 return format_error("Task must not be empty");
             }
             task = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("Active:") {
+            if active_number.is_some() {
+                return format_error("duplicate Active metadata");
+            }
+            let number = value
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|number| *number > 0)
+                .ok_or_else(|| CurrentWorkError::Format {
+                    message: "Active must be a positive item number".to_owned(),
+                })?;
+            active_number = Some(number);
+            active_line_range = Some(line_start..line_start + raw_with_newline.len());
         } else if line.starts_with('-') {
             let status = line.as_bytes().get(3).copied();
             let rest = line.get(5..);
@@ -235,15 +357,31 @@ fn parse_current_work(text: &str) -> Result<ParsedCurrentWork, CurrentWorkError>
     let Some(parent_task) = task else {
         return format_error("missing Task metadata");
     };
+    let active = match active_number {
+        None => None,
+        Some(number) => {
+            let index = number - 1;
+            let item = items.get(index).ok_or_else(|| CurrentWorkError::Format {
+                message: "Active item is out of range".to_owned(),
+            })?;
+            if item.completed() {
+                return format_error("Active item must not be complete");
+            }
+            Some(index)
+        }
+    };
     Ok(ParsedCurrentWork {
         work: CurrentWork {
             parent_path,
             parent_task,
+            active,
             items,
         },
         marker_offsets,
+        active_line_range,
     })
 }
+
 fn format_error<T>(message: &str) -> Result<T, CurrentWorkError> {
     Err(CurrentWorkError::Format {
         message: message.to_owned(),
@@ -269,6 +407,7 @@ mod tests {
     fn write(root: &Path, text: &str) {
         fs::write(current_work_path(root), text).unwrap();
     }
+
     #[test]
     fn parses_valid_work_and_derived_counts() {
         let work = parse_current_work(valid()).unwrap().work;
@@ -276,7 +415,41 @@ mod tests {
             (work.total(), work.completed(), work.remaining()),
             (3, 2, 1)
         );
+        assert_eq!(work.active_index(), None);
+        assert_eq!(work.active_item(), None);
         assert_eq!(work.items()[2].text(), "日本語 item");
+    }
+    #[test]
+    fn parses_active_item_without_using_it_as_next() {
+        let work = parse_current_work(
+            "# Current Work\nParent: docs/a.md\nTask: Work\nActive: 2\n- [ ] First\n- [ ] Second\n",
+        )
+        .unwrap()
+        .work;
+        assert_eq!(work.active_index(), Some(1));
+        assert_eq!(
+            work.active_item().map(CurrentWorkItem::text),
+            Some("Second")
+        );
+        assert_eq!(
+            work.first_incomplete().map(CurrentWorkItem::text),
+            Some("First")
+        );
+    }
+    #[test]
+    fn rejects_invalid_active_metadata() {
+        for text in [
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 1\nActive: 2\n- [ ] One\n- [ ] Two\n",
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 0\n- [ ] One\n",
+            "# Current Work\nParent: a.md\nTask: Work\nActive: nope\n- [ ] One\n",
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 2\n- [ ] One\n",
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 1\n- [x] One\n",
+        ] {
+            assert!(matches!(
+                parse_current_work(text),
+                Err(CurrentWorkError::Format { .. })
+            ));
+        }
     }
     #[test]
     fn accepts_zero_items() {
@@ -326,6 +499,14 @@ mod tests {
             mark_current_work_done(&root, 1),
             Err(CurrentWorkError::NotSet)
         ));
+        assert!(matches!(
+            set_current_work_active(&root, 1),
+            Err(CurrentWorkError::NotSet)
+        ));
+        assert!(matches!(
+            clear_current_work_active(&root),
+            Err(CurrentWorkError::NotSet)
+        ));
     }
     #[test]
     fn marks_one_item_without_reformatting_other_text() {
@@ -342,6 +523,107 @@ mod tests {
         assert_eq!(
             fs::read_to_string(current_work_path(&root)).unwrap(),
             before.replacen("- [ ] 日本語", "- [x] 日本語", 1)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn sets_switches_and_rejects_active_items() {
+        let root = root();
+        write(
+            &root,
+            "# Current Work\nParent: a.md\nTask: Work\n- [ ] One\n- [ ] Two\n- [x] Done\n",
+        );
+        assert_eq!(
+            set_current_work_active(&root, 2).unwrap(),
+            CurrentWorkActiveUpdate::Set {
+                number: 2,
+                text: "Two".to_owned()
+            }
+        );
+        assert_eq!(
+            load_current_work(&root).unwrap().unwrap().active_index(),
+            Some(1)
+        );
+        assert_eq!(
+            set_current_work_active(&root, 1).unwrap(),
+            CurrentWorkActiveUpdate::Set {
+                number: 1,
+                text: "One".to_owned()
+            }
+        );
+        assert_eq!(
+            set_current_work_active(&root, 1).unwrap(),
+            CurrentWorkActiveUpdate::Set {
+                number: 1,
+                text: "One".to_owned()
+            }
+        );
+        assert!(matches!(
+            set_current_work_active(&root, 3),
+            Err(CurrentWorkError::ItemAlreadyComplete { number: 3 })
+        ));
+        assert!(matches!(
+            set_current_work_active(&root, 4),
+            Err(CurrentWorkError::ItemDoesNotExist { number: 4 })
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn clears_active_metadata_and_is_idempotent() {
+        let root = root();
+        write(
+            &root,
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 2\n- [ ] One\n- [ ] Two\n",
+        );
+        assert_eq!(
+            clear_current_work_active(&root).unwrap(),
+            CurrentWorkActiveUpdate::Cleared {
+                previous: Some((2, "Two".to_owned()))
+            }
+        );
+        let cleared = fs::read_to_string(current_work_path(&root)).unwrap();
+        assert!(!cleared.contains("Active:"));
+        assert_eq!(
+            clear_current_work_active(&root).unwrap(),
+            CurrentWorkActiveUpdate::Cleared { previous: None }
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn completing_active_clears_it_without_auto_advance() {
+        let root = root();
+        write(
+            &root,
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 1\n- [ ] One\n- [ ] Two\n- [ ] Three\n",
+        );
+        assert!(matches!(
+            mark_current_work_done(&root, 1).unwrap(),
+            CurrentWorkDone::Completed { .. }
+        ));
+        let work = load_current_work(&root).unwrap().unwrap();
+        assert_eq!(work.active_index(), None);
+        assert_eq!(
+            work.first_incomplete().map(CurrentWorkItem::text),
+            Some("Two")
+        );
+        assert!(
+            !fs::read_to_string(current_work_path(&root))
+                .unwrap()
+                .contains("Active:")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn completing_non_active_preserves_active() {
+        let root = root();
+        write(
+            &root,
+            "# Current Work\nParent: a.md\nTask: Work\nActive: 2\n- [ ] One\n- [ ] Two\n",
+        );
+        mark_current_work_done(&root, 1).unwrap();
+        assert_eq!(
+            load_current_work(&root).unwrap().unwrap().active_index(),
+            Some(1)
         );
         let _ = fs::remove_dir_all(root);
     }

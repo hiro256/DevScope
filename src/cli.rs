@@ -26,6 +26,8 @@ pub enum EntryMode {
     TaskList,
     WorkList,
     WorkDone(usize),
+    WorkActive(usize),
+    WorkActiveClear,
     Verify(devscope::progress::BuildTestKind),
     ArtifactInspect(Option<OsString>),
     Help,
@@ -59,17 +61,21 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [argument] if matches!(argument.as_os_str(), value if value == OsStr::new("-V") || value == OsStr::new("--version")) => {
             Ok(EntryMode::Version)
         }
-        [first, second, number] if first == OsStr::new("work") && second == OsStr::new("done") => {
-            number
-                .to_string_lossy()
-                .parse::<usize>()
-                .ok()
-                .filter(|number| *number > 0)
-                .map(EntryMode::WorkDone)
-                .ok_or(UsageError {
-                    message: "expected `devscope work done <number>`",
-                })
-        }
+        [first, second, argument] if first == OsStr::new("work") && second == OsStr::new("active") && argument == OsStr::new("clear") => Ok(EntryMode::WorkActiveClear),
+        [first, second, number] if first == OsStr::new("work") && second == OsStr::new("active") => number
+            .to_string_lossy()
+            .parse::<usize>()
+            .ok()
+            .filter(|number| *number > 0)
+            .map(EntryMode::WorkActive)
+            .ok_or(UsageError { message: "expected `devscope work active <number>` or `devscope work active clear`" }),
+        [first, second, number] if first == OsStr::new("work") && second == OsStr::new("done") => number
+            .to_string_lossy()
+            .parse::<usize>()
+            .ok()
+            .filter(|number| *number > 0)
+            .map(EntryMode::WorkDone)
+            .ok_or(UsageError { message: "expected `devscope work done <number>`" }),
         [first, second] if first == OsStr::new("work") && second == OsStr::new("list") => {
             Ok(EntryMode::WorkList)
         }
@@ -99,7 +105,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
             message: "expected `devscope task list`",
         }),
         [first, ..] if first == OsStr::new("work") => Err(UsageError {
-            message: "expected `devscope work list` or `devscope work done <number>`",
+            message: "expected `devscope work list`, `devscope work done <number>`, or `devscope work active <number>|clear`",
         }),
         _ => Err(UsageError {
             message: "unrecognized command or arguments",
@@ -108,7 +114,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -156,6 +162,8 @@ fn append_current_work_summary(output: &mut String, current_work: CurrentWorkCon
                 work.total()
             ));
             output.push_str(&format!("Parent: {}\n", work.parent_task()));
+            let active = work.active_item().map_or("none", CurrentWorkItem::text);
+            output.push_str(&format!("Active: {active}\n"));
             let next = work
                 .first_incomplete()
                 .map_or("none", CurrentWorkItem::text);
@@ -194,11 +202,38 @@ pub fn render_work_list(work: &CurrentWork) -> String {
         work.completed(),
         work.total()
     );
+    if let Some(active) = work.active_index() {
+        output.push_str(&format!("Active: {}\n", active + 1));
+    }
     for (index, item) in work.items().iter().enumerate() {
         let marker = if item.completed() { "x" } else { " " };
-        output.push_str(&format!("{}. [{marker}] {}\n", index + 1, item.text()));
+        let active = if work.active_index() == Some(index) {
+            "  [active]"
+        } else {
+            ""
+        };
+        output.push_str(&format!(
+            "{}. [{marker}] {}{active}\n",
+            index + 1,
+            item.text()
+        ));
     }
     output
+}
+pub fn render_work_active(result: &devscope::current_work::CurrentWorkActiveUpdate) -> String {
+    match result {
+        devscope::current_work::CurrentWorkActiveUpdate::Set { number, text } => {
+            format!("Active work item {number}: {text}\n")
+        }
+        devscope::current_work::CurrentWorkActiveUpdate::Cleared {
+            previous: Some((number, text)),
+        } => {
+            format!("Cleared active work item {number}: {text}\n")
+        }
+        devscope::current_work::CurrentWorkActiveUpdate::Cleared { previous: None } => {
+            "Active work item is already clear\n".to_owned()
+        }
+    }
 }
 pub fn render_work_done(result: &devscope::current_work::CurrentWorkDone) -> String {
     match result {
@@ -673,6 +708,56 @@ mod tests {
         }
     }
     #[test]
+    fn parses_active_work_modes_and_renders_active_separately_from_next() {
+        assert_eq!(
+            parse_args([
+                OsString::from("work"),
+                OsString::from("active"),
+                OsString::from("2")
+            ]),
+            Ok(EntryMode::WorkActive(2))
+        );
+        assert_eq!(
+            parse_args([
+                OsString::from("work"),
+                OsString::from("active"),
+                OsString::from("clear")
+            ]),
+            Ok(EntryMode::WorkActiveClear)
+        );
+        assert!(
+            parse_args([
+                OsString::from("work"),
+                OsString::from("active"),
+                OsString::from("0")
+            ])
+            .is_err()
+        );
+        assert!(usage().contains("devscope work active <number>"));
+
+        let project = TempProject::new();
+        let path = project.path().join(".devscope/work/current.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "# Current Work\nParent: docs/roadmap.md\nTask: Parent\nActive: 2\n- [ ] Next item\n- [ ] Active item\n").unwrap();
+        let work = load_current_work(project.path()).unwrap().unwrap();
+        let context = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::Available(&work),
+        );
+        assert!(context.contains("Active: Active item\nNext: Next item\n"));
+        assert!(
+            render_work_list(&work)
+                .contains("Active: 2\n1. [ ] Next item\n2. [ ] Active item  [active]\n")
+        );
+        assert!(
+            render_work_active(&devscope::current_work::CurrentWorkActiveUpdate::Cleared {
+                previous: None
+            })
+            .contains("already clear")
+        );
+    }
+    #[test]
     fn renders_compact_current_work_context_states() {
         let project = TempProject::new();
         let path = project.path().join(".devscope/work/current.md");
@@ -688,7 +773,11 @@ mod tests {
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Available(&work),
         );
-        assert!(output.contains("Current Work: 1/2\nParent: 日本語 Parent\nNext: 次の作業\n"));
+        assert!(
+            output.contains(
+                "Current Work: 1/2\nParent: 日本語 Parent\nActive: none\nNext: 次の作業\n"
+            )
+        );
         assert!(!output.contains("1. [x] Done"));
         assert!(!output.contains(".devscope/work/current.md"));
 
@@ -699,7 +788,9 @@ mod tests {
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Available(&empty),
         );
-        assert!(empty_output.contains("Current Work: 0/0\nParent: Empty\nNext: none\n"));
+        assert!(
+            empty_output.contains("Current Work: 0/0\nParent: Empty\nActive: none\nNext: none\n")
+        );
 
         let unavailable = render_context(
             project.path(),

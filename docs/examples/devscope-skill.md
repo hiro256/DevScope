@@ -15,7 +15,7 @@ authority source.
 
 ## Read details only when needed
 
-- Run `devscope work list` only for all Current Work items, a current `work done`
+- Run `devscope work list` only for all Current Work items, a current `work active` or `work done`
   number, or the explicit error behind `Current Work: unavailable`.
 - Run `devscope task list` only to find remaining Plan tasks not shown by `context`.
 - Read source Markdown only for acceptance criteria, detailed specification, or design
@@ -26,10 +26,12 @@ authority source.
 ```text
 context
   -> needed details
+  -> work list when a Current Work number is needed
+  -> work active N when actually beginning or switching work
   -> small implementation step
   -> appropriate verification
   -> logical boundary
-  -> work list, then work done N when needed
+  -> work done N when appropriate
 ```
 
 Use only existing DevScope commands:
@@ -38,6 +40,8 @@ Use only existing DevScope commands:
 devscope context
 devscope task list
 devscope work list
+devscope work active <number>
+devscope work active clear
 devscope work done <number>
 ```
 
@@ -48,10 +52,16 @@ Plan          = canonical project intent
 Current Work  = temporary recorded working state
 ```
 
-Current Work completion does not complete its parent Plan task. The only Current Work
-write in this workflow is `devscope work done <number>`. Immediately before it, run
-`devscope work list` and confirm the latest number: it is a current display-order
-position, not a persistent ID.
+Current Work completion does not complete its parent Plan task. Active is explicit
+Recorded Current Work state, not an inference from the first incomplete item. Before
+setting Active or completing an item, run `devscope work list` and confirm the latest
+number: it is a current display-order position, not a persistent ID.
+
+Use `devscope work active <number>` only when actually beginning or switching active
+work. `devscope work active clear` removes that claim during an interruption or when no
+item should be active. Completing the active item with `devscope work done <number>`
+clears Active; it does not automatically make the next item active. `Next` remains the
+first incomplete item and is separate from Active.
 
 Do not invent or invoke `work add`, `work start`, `work clear`, `work reopen`, or
 `work undo`. Do not normally edit `.devscope/work/current.md` directly; use an existing

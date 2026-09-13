@@ -57,7 +57,7 @@ The initial panel-focus experiment validated Tasks, Evidence, and Changed Files 
 Hidden panels are excluded from navigation, and panel-local selection persists independently.
 
 Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
-Current Work changes update independently from Plan and Activity observation.
+Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 

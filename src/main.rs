@@ -10,7 +10,10 @@ use app::{App, CurrentWorkState};
 use cli::{CurrentWorkContext, EntryMode};
 use devscope::{
     config::{ConfigError, load_project_config},
-    current_work::{load_current_work, mark_current_work_done},
+    current_work::{
+        clear_current_work_active, load_current_work, mark_current_work_done,
+        set_current_work_active,
+    },
     progress::{
         ArtifactObservation, BuildTestExecutionCompletion, BuildTestKind, BuildTestState,
         cargo_build_test_command, evaluate_completed_build_test_freshness, load_build_test_states,
@@ -27,6 +30,8 @@ fn main() -> ExitCode {
         Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
+        Ok(EntryMode::WorkActive(number)) => run_work_active(number),
+        Ok(EntryMode::WorkActiveClear) => run_work_active_clear(),
         Ok(EntryMode::Verify(kind)) => run_verify(kind),
         Ok(EntryMode::ArtifactInspect(path)) => run_artifact_inspect(path),
         Ok(EntryMode::Help) => {
@@ -98,6 +103,31 @@ fn run_work_done(number: usize) -> ExitCode {
         Ok(root) => match mark_current_work_done(&root, number) {
             Ok(result) => {
                 print!("{}", cli::render_work_done(&result));
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+fn run_work_active(number: usize) -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match set_current_work_active(&root, number) {
+            Ok(result) => {
+                print!("{}", cli::render_work_active(&result));
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+
+fn run_work_active_clear() -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match clear_current_work_active(&root) {
+            Ok(result) => {
+                print!("{}", cli::render_work_active(&result));
                 ExitCode::SUCCESS
             }
             Err(error) => report_runtime_error(error),
