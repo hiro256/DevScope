@@ -594,7 +594,7 @@ fn evidence(app: &App) -> String {
     }
 
     format!(
-        "Build {} · Test {}",
+        "Build {} | Test {}",
         evidence_selector_status(build),
         evidence_selector_status(test)
     )
@@ -1414,7 +1414,8 @@ mod tests {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Evidence   Build · Not run · Test · Not run"));
+        assert_eq!(evidence(&app), "Build · Not run | Test · Not run");
+        assert!(draw(&app, 80, 30).contains("Evidence   Build · Not run | Test · Not run"));
     }
 
     #[test]
@@ -1429,7 +1430,7 @@ mod tests {
             )),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 80, 30).contains("Evidence   Build ▶ Running · Test · Not run"));
+        assert!(draw(&app, 80, 30).contains("Evidence   Build ▶ Running | Test · Not run"));
     }
 
     #[test]
@@ -1451,7 +1452,7 @@ mod tests {
                 BuildTestFreshness::Fresh,
             ),
         );
-        assert!(draw(&app, 80, 30).contains("Evidence   Build ✓ Passed · Test ✕ Failed"));
+        assert!(draw(&app, 80, 30).contains("Evidence   Build ✓ Passed | Test ✕ Failed"));
     }
 
     #[test]
@@ -1467,7 +1468,7 @@ mod tests {
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
         assert!(
-            draw(&app, 80, 30).contains("Evidence   Build ! Passed (stale) · Test ? Unavailable")
+            draw(&app, 80, 30).contains("Evidence   Build ! Passed (stale) | Test ? Unavailable")
         );
     }
 
@@ -1484,7 +1485,7 @@ mod tests {
             focusable_panels(120, 30),
         );
         let output = draw(&app, 120, 30);
-        assert!(output.contains("Evidence   Build ! Error · Test · Not run"));
+        assert!(output.contains("Evidence   Build ! Error | Test · Not run"));
         assert!(output.contains("Build  ! Error"));
         assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
