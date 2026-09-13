@@ -178,3 +178,65 @@ When an Artifact target is configured, the Evidence panel includes it as a selec
 The TUI observes the configured target on startup and when project state is refreshed. It remains a passive filesystem observation: no watch service, automatic verification, or inference about artifact validity is introduced.
 
 An invalid project configuration is not treated as an unconfigured Artifact target. Configuration failures use the existing TUI startup or refresh error path, while Artifact `Error` remains reserved for failures during filesystem observation.
+
+### Artifact Evidence experiment closure
+
+The Artifact Evidence experiment is complete. Artifact is a second concrete Observed
+Evidence source whose final shape is deliberately small:
+
+```text
+source              filesystem observation
+target              one optional project-configured path
+status              Exists / Missing / Observation error
+detail              path / kind / size / error
+freshness           none
+persistence         none
+observation timing  CLI explicit inspect / TUI startup / TUI refresh
+TUI                 Evidence panel third selectable source / Detail Pane
+```
+
+Configuration answers what DevScope should observe; an Artifact observation is the
+Evidence. `Missing` means that observation succeeded and the target is absent. Broken
+filesystem indirection, an unsafe resolved path, and filesystem observation failures
+are observation errors rather than Missing. A Config error is distinct from an
+Artifact Error: it fails before observation begins.
+
+Artifact paths are project-relative both lexically and physically. DevScope rejects a
+symlink, junction, or other resolved path that escapes the project root. This is an
+observation boundary, not a general filesystem sandbox or a TOCTOU-proof security
+guarantee.
+
+Build/Test and Artifact are both Observed Evidence and both have a label, summary
+status, observation source, and Detail Pane view. Their important source-specific
+differences remain explicit:
+
+```text
+Build/Test  source: process execution; status: Passed / Failed
+            detail: command / duration / result / error
+            freshness: Fresh / Stale; persistence: latest result persisted
+
+Artifact    source: filesystem state; status: Exists / Missing / Error
+            detail: path / kind / size / error
+            freshness: not defined; persistence: none
+```
+
+Fresh/Stale, command, duration, size, kind, persistence, and error semantics are not
+common concepts. Two concrete sources are still not enough to justify a generic
+Evidence API: their shared surface is thin, their differences are substantial, and a
+shared abstraction could force unrelated meanings into one model. Accordingly, this
+experiment does not stabilize `trait EvidenceSource`, `enum Evidence`,
+`GenericEvidenceStatus`, or `GenericEvidenceStore`. Reassess a generic API after the
+Progress history experiment or when a third concrete Evidence source creates a clear
+need.
+
+The Evidence panel plus Detail Pane was sufficient; no dedicated Artifact panel was
+needed. One optional configured target was also sufficient. Multiple targets, names,
+labels, IDs, and globs remain deferred. Artifact freshness is not defined: mtime and
+size do not prove validity or recency. Observation is not persisted; DevScope
+re-observes current filesystem state at startup or refresh without a filesystem
+watcher. Artifact history remains outside this experiment and separate from the
+Progress history experiment.
+
+Future validation may explore a hash, content validation, expected shape, or a
+generated-by relation when a concrete workflow requires it. None is a current
+roadmap commitment.

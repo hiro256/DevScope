@@ -114,7 +114,7 @@
 ### Core observation
 
 - [x] Explore verification integration for Build/Test Evidence
-- [ ] Explore Artifact Evidence as a second Evidence source
+- [x] Explore Artifact Evidence as a second Evidence source
 - [ ] Progress history experiment
 
 ### External surfaces
