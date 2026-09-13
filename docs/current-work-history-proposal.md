@@ -176,3 +176,17 @@ entries remain low-noise and semantically explicit, timestamps help human judgme
 without automatic inference, and no generic event model is needed. If the history is
 not useful enough to justify its manual write points and local file, stop rather than
 expanding it to Plan, Git, Evidence, or agent data.
+## First dogfood result and context boundaries
+
+The first resumption dogfood found Current Work history useful: newest-first entries made
+recent Active changes, explicit clears, and completions faster to understand alongside
+the current Current Work file. Mixed Current Work contexts were the readability issue.
+
+The CLI therefore renders a `Parent > Task` boundary from each existing event snapshot
+whenever the adjacent event has a different `(parent, task)` pair. It retains newest-first
+append order and does not regroup separated occurrences of the same context. This is a
+read-surface decision only; the JSONL schema and writer remain unchanged.
+
+The CLI still shows only time-of-day. Whether date should be shown for cross-day
+resumption remains a separate evaluation; this experiment does not infer freshness or
+interpret mutation timestamps as actual work times.

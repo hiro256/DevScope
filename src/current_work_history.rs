@@ -186,6 +186,15 @@ impl CurrentWorkHistoryEvent {
         }
     }
 
+    fn context(&self) -> (&str, &str) {
+        match self {
+            Self::ActiveSet { parent, task, .. }
+            | Self::ActiveChanged { parent, task, .. }
+            | Self::ActiveCleared { parent, task, .. }
+            | Self::WorkCompleted { parent, task, .. } => (parent, task),
+        }
+    }
+
     fn line(&self) -> String {
         let time = OffsetDateTime::parse(self.timestamp(), &Rfc3339)
             .expect("Current Work history timestamps are validated before rendering")
@@ -365,7 +374,20 @@ pub fn render_current_work_history(events: &[CurrentWorkHistoryEvent]) -> String
         return "Current Work history: empty\n".to_owned();
     }
     let mut output = String::from("Current Work history:\n");
+    let mut previous_context = None;
     for event in events {
+        let context = event.context();
+        if previous_context != Some(context) {
+            if previous_context.is_some() {
+                output.push('\n');
+            }
+            output.push_str(context.0);
+            output.push_str(" > ");
+            output.push_str(context.1);
+            output.push('\n');
+            previous_context = Some(context);
+        }
+        output.push_str("  ");
         output.push_str(&event.line());
         output.push('\n');
     }
@@ -415,6 +437,23 @@ mod tests {
 
     fn before(root: &Path) -> CurrentWork {
         load_current_work(root).unwrap().unwrap()
+    }
+    fn rendered_event(
+        parent: &str,
+        task: &str,
+        number: usize,
+        text: &str,
+    ) -> CurrentWorkHistoryEvent {
+        CurrentWorkHistoryEvent::ActiveSet {
+            version: HISTORY_VERSION,
+            timestamp: "2026-09-13T16:00:00+09:00".to_owned(),
+            parent: parent.to_owned(),
+            task: task.to_owned(),
+            item: ItemReference {
+                number,
+                text: text.to_owned(),
+            },
+        }
     }
 
     #[test]
@@ -557,6 +596,75 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn renders_one_context_header_for_adjacent_events_with_the_same_parent_and_task() {
+        let output = render_current_work_history(&[
+            rendered_event("docs/a.md", "Task A", 2, "Second"),
+            rendered_event("docs/a.md", "Task A", 1, "First"),
+        ]);
+        assert_eq!(output.matches("docs/a.md > Task A").count(), 1);
+        assert!(output.contains("  16:00 Active set      #2 Second\n"));
+        assert!(output.contains("  16:00 Active set      #1 First\n"));
+    }
+
+    #[test]
+    fn renders_context_switches_with_blank_lines_in_newest_first_order() {
+        let output = render_current_work_history(&[
+            rendered_event("docs/a.md", "Task A", 4, "Newest A"),
+            rendered_event("docs/a.md", "Task A", 3, "Older A"),
+            rendered_event("docs/b.md", "Task B", 2, "Newer B"),
+            rendered_event("docs/b.md", "Task B", 1, "Older B"),
+        ]);
+        let newest = output.find("#4 Newest A").unwrap();
+        let older = output.find("#3 Older A").unwrap();
+        let newer_b = output.find("#2 Newer B").unwrap();
+        let older_b = output.find("#1 Older B").unwrap();
+        assert!(newest < older && older < newer_b && newer_b < older_b);
+        assert_eq!(output.matches("docs/a.md > Task A").count(), 1);
+        assert_eq!(output.matches("docs/b.md > Task B").count(), 1);
+        assert!(output.contains("#3 Older A\n\ndocs/b.md > Task B"));
+    }
+
+    #[test]
+    fn renders_a_reappearing_context_as_a_new_timeline_group() {
+        let output = render_current_work_history(&[
+            rendered_event("docs/a.md", "Task A", 4, "Newest A"),
+            rendered_event("docs/a.md", "Task A", 3, "Older A"),
+            rendered_event("docs/b.md", "Task B", 2, "B"),
+            rendered_event("docs/a.md", "Task A", 1, "Oldest A"),
+        ]);
+        assert_eq!(output.matches("docs/a.md > Task A").count(), 2);
+        assert_eq!(output.matches("docs/b.md > Task B").count(), 1);
+        assert!(output.contains("#2 B\n\ndocs/a.md > Task A"));
+    }
+    #[test]
+    fn treats_a_parent_or_task_change_as_a_distinct_context_group() {
+        let output = render_current_work_history(&[
+            rendered_event("docs/a.md", "Shared task", 1, "First"),
+            rendered_event("docs/b.md", "Shared task", 2, "Second"),
+            rendered_event("docs/b.md", "Other task", 3, "Third"),
+        ]);
+        assert_eq!(output.matches("docs/a.md > Shared task").count(), 1);
+        assert_eq!(output.matches("docs/b.md > Shared task").count(), 1);
+        assert_eq!(output.matches("docs/b.md > Other task").count(), 1);
+    }
+
+    #[test]
+    fn preserves_existing_event_text_inside_context_groups() {
+        let event = CurrentWorkHistoryEvent::WorkCompleted {
+            version: HISTORY_VERSION,
+            timestamp: "2026-09-13T16:00:00+09:00".to_owned(),
+            parent: "docs/a.md".to_owned(),
+            task: "Task A".to_owned(),
+            item: ItemReference {
+                number: 3,
+                text: "Completed item".to_owned(),
+            },
+            cleared_active: true,
+        };
+        let output = render_current_work_history(&[event]);
+        assert!(output.contains("  16:00 Completed       #3 Completed item; Active cleared"));
+    }
     #[test]
     fn rejects_malformed_unknown_version_and_unknown_kind_history_lines() {
         for line in [
