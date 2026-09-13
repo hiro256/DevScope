@@ -173,3 +173,6 @@ Artifact paths are project-relative both lexically and physically. DevScope reje
 Broken filesystem indirection is treated as observation failure rather than Missing.
 
 The first registration experiment uses one optional project-configured Artifact target. `devscope artifact inspect` observes it, while an explicit path overrides configuration. Configuration defines the observation target and is not Evidence itself. Multiple targets, names, labels, and generic Evidence configuration remain deferred until a concrete need appears.
+When an Artifact target is configured, the Evidence panel includes it as a selectable third observed source. Its Detail Pane shows the recorded path and current observation status, with kind and size for an existing target or an error message when observation fails. Artifact Evidence has no Fresh/Stale interpretation, persistence, or dedicated panel.
+
+The TUI observes the configured target on startup and when project state is refreshed. It remains a passive filesystem observation: no watch service, automatic verification, or inference about artifact validity is introduced.

@@ -3,7 +3,10 @@ use std::{path::PathBuf, time::Duration};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use devscope::{
     current_work::CurrentWork,
-    progress::{BuildTestKind, BuildTestState, GitChangeCounts, GitFileDiff, GitFileStatus},
+    progress::{
+        ArtifactObservation, BuildTestKind, BuildTestState, GitChangeCounts, GitFileDiff,
+        GitFileStatus,
+    },
     project::ProjectSnapshot,
 };
 
@@ -54,6 +57,12 @@ pub enum CurrentWorkState {
     Unavailable,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EvidenceSelection {
+    Build,
+    Test,
+    Artifact,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusedPanel {
     Tasks,
     Evidence,
@@ -76,7 +85,8 @@ pub struct App {
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_test: BuildTestState,
-    evidence_detail_kind: Option<BuildTestKind>,
+    evidence_selection: EvidenceSelection,
+    artifact: Option<ArtifactObservation>,
     focused_panel: FocusedPanel,
     selected_task: Option<usize>,
     selected_changed_file: Option<usize>,
@@ -99,7 +109,8 @@ impl App {
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
-            evidence_detail_kind: Some(BuildTestKind::Build),
+            evidence_selection: EvidenceSelection::Build,
+            artifact: None,
             focused_panel: FocusedPanel::Tasks,
             selected_task: None,
             selected_changed_file: None,
@@ -236,11 +247,29 @@ impl App {
     }
 
     pub const fn evidence_detail_kind(&self) -> Option<BuildTestKind> {
-        self.evidence_detail_kind
+        match self.evidence_selection {
+            EvidenceSelection::Build => Some(BuildTestKind::Build),
+            EvidenceSelection::Test => Some(BuildTestKind::Test),
+            EvidenceSelection::Artifact => None,
+        }
     }
-
+    pub const fn evidence_selection(&self) -> EvidenceSelection {
+        self.evidence_selection
+    }
     pub fn select_evidence_detail(&mut self, kind: BuildTestKind) {
-        self.evidence_detail_kind = Some(kind);
+        self.evidence_selection = match kind {
+            BuildTestKind::Build => EvidenceSelection::Build,
+            BuildTestKind::Test => EvidenceSelection::Test,
+        };
+    }
+    pub fn artifact(&self) -> Option<&ArtifactObservation> {
+        self.artifact.as_ref()
+    }
+    pub fn apply_artifact(&mut self, artifact: Option<ArtifactObservation>) {
+        self.artifact = artifact;
+        if self.artifact.is_none() && self.evidence_selection == EvidenceSelection::Artifact {
+            self.evidence_selection = EvidenceSelection::Build;
+        }
     }
 
     pub const fn focused_panel(&self) -> FocusedPanel {
@@ -420,12 +449,18 @@ impl App {
     }
 
     fn move_evidence_selection(&mut self, delta: isize) {
-        let current = self.evidence_detail_kind.unwrap_or(BuildTestKind::Build);
-        self.evidence_detail_kind = Some(match (current, delta.is_positive()) {
-            (BuildTestKind::Build, true) => BuildTestKind::Test,
-            (BuildTestKind::Test, false) => BuildTestKind::Build,
-            (kind, _) => kind,
-        });
+        self.evidence_selection = match (
+            self.evidence_selection,
+            delta.is_positive(),
+            self.artifact.is_some(),
+        ) {
+            (EvidenceSelection::Build, true, _) => EvidenceSelection::Test,
+            (EvidenceSelection::Test, true, true) => EvidenceSelection::Artifact,
+            (EvidenceSelection::Artifact, true, _) => EvidenceSelection::Artifact,
+            (EvidenceSelection::Test, false, _) => EvidenceSelection::Build,
+            (EvidenceSelection::Artifact, false, _) => EvidenceSelection::Test,
+            (selection, _, _) => selection,
+        };
     }
 
     fn move_changed_file_selection(&mut self, delta: isize) {
@@ -577,6 +612,16 @@ mod tests {
         assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
         app.select_evidence_detail(BuildTestKind::Test);
         assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+        app.apply_artifact(Some(ArtifactObservation::observation_error(
+            PathBuf::from("output.log"),
+            "unavailable",
+        )));
+        app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        assert_eq!(app.evidence_selection(), EvidenceSelection::Artifact);
+        assert_eq!(app.evidence_detail_kind(), None);
+        app.apply_artifact(None);
+        assert_eq!(app.evidence_selection(), EvidenceSelection::Build);
     }
     #[test]
     fn navigation_clamps() {

@@ -9,6 +9,14 @@ pub struct ArtifactObservation {
     status: ArtifactStatus,
 }
 impl ArtifactObservation {
+    pub fn observation_error(path: PathBuf, message: impl Into<String>) -> Self {
+        Self {
+            path,
+            status: ArtifactStatus::ObservationError {
+                message: message.into(),
+            },
+        }
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }

@@ -12,12 +12,14 @@ use devscope::{
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
         MarkdownChange, MarkdownChangeDetector,
     },
+    config::load_project_config,
     current_work::load_current_work,
     progress::{
-        BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
+        ArtifactObservation, BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
         GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
-        evaluate_completed_build_test_freshness, is_cargo_project, save_build_test_state,
+        evaluate_completed_build_test_freshness, is_cargo_project, observe_artifact,
+        save_build_test_state,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -115,6 +117,22 @@ fn refresh_current_work(root: Option<&Path>, app: &mut App) -> bool {
         return false;
     }
     app.apply_current_work(current_work);
+    true
+}
+fn load_artifact_observation(root: &Path) -> Option<ArtifactObservation> {
+    let config = load_project_config(root).ok()?;
+    let path = config.artifact().path()?;
+    Some(observe_artifact(root, path).unwrap_or_else(|error| {
+        ArtifactObservation::observation_error(path.to_path_buf(), error.to_string())
+    }))
+}
+
+fn refresh_artifact(root: Option<&Path>, app: &mut App) -> bool {
+    let observation = root.and_then(load_artifact_observation);
+    if app.artifact() == observation.as_ref() {
+        return false;
+    }
+    app.apply_artifact(observation);
     true
 }
 fn check_git_worktree_changes(
@@ -257,6 +275,7 @@ fn apply_pending_refreshes(
             Ok((plan, tasks)) => {
                 app.apply_markdown_state(plan, tasks);
                 app.clear_refresh_error();
+                refresh_artifact(Some(root), app);
                 outcome.markdown = true;
             }
             Err(error) => app.set_refresh_error(error.to_string()),
@@ -609,6 +628,7 @@ pub fn run(
                             refresh_changed_file_preview(Some(root), app);
                         }
                         refresh_current_work(Some(root), app);
+                        refresh_artifact(Some(root), app);
                         requests.clear();
                         app.record_refresh(RefreshSource::Manual, session_start.elapsed());
                         app.set_refresh_pending(false);
@@ -704,7 +724,7 @@ mod tests {
     use devscope::{
         change::{GitWorktreeChange, MarkdownChange},
         progress::{
-            BuildTestCommandSpec, BuildTestExecution, BuildTestExecutionCompletion,
+            ArtifactStatus, BuildTestCommandSpec, BuildTestExecution, BuildTestExecutionCompletion,
             BuildTestExecutionError, BuildTestFreshness, BuildTestFreshnessBaseline, BuildTestKind,
             BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, PlanSummary,
         },
@@ -1901,6 +1921,36 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn refresh_artifact_observes_the_configured_target_and_removes_missing_configuration() {
+        let root = temp_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[artifact]\npath = \"output.bin\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("output.bin"), "artifact").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+
+        assert!(refresh_artifact(Some(&root), &mut app));
+        assert!(matches!(
+            app.artifact().map(|artifact| artifact.status()),
+            Some(ArtifactStatus::Exists { .. })
+        ));
+
+        fs::remove_file(root.join("output.bin")).unwrap();
+        assert!(refresh_artifact(Some(&root), &mut app));
+        assert!(matches!(
+            app.artifact().map(|artifact| artifact.status()),
+            Some(ArtifactStatus::Missing)
+        ));
+
+        fs::remove_file(root.join(".devscope/config.toml")).unwrap();
+        assert!(refresh_artifact(Some(&root), &mut app));
+        assert!(app.artifact().is_none());
+        let _ = fs::remove_dir_all(root);
+    }
     fn temp_root() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "devscope-event-loop-{}-{}",

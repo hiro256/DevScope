@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::app::{
-    ActivityState, App, CurrentWorkState, DetailTarget, FocusedPanel, PlanState, RefreshSource,
-    TaskState,
+    ActivityState, App, CurrentWorkState, DetailTarget, EvidenceSelection, FocusedPanel, PlanState,
+    RefreshSource, TaskState,
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, BuildTestStatus,
@@ -188,10 +188,14 @@ fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
-    [BuildTestKind::Build, BuildTestKind::Test]
+    let mut lines = [BuildTestKind::Build, BuildTestKind::Test]
         .into_iter()
         .map(|kind| {
-            let marker = if app.evidence_detail_kind() == Some(kind) {
+            let selection = match kind {
+                BuildTestKind::Build => EvidenceSelection::Build,
+                BuildTestKind::Test => EvidenceSelection::Test,
+            };
+            let marker = if app.evidence_selection() == selection {
                 "> "
             } else {
                 "  "
@@ -202,9 +206,22 @@ fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
                 evidence_selector_status(app.build_test_state(kind))
             ))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if let Some(artifact) = app.artifact() {
+        let marker = if app.evidence_selection() == EvidenceSelection::Artifact {
+            "> "
+        } else {
+            "  "
+        };
+        let status = match artifact.status() {
+            devscope::progress::ArtifactStatus::Exists { .. } => "Exists",
+            devscope::progress::ArtifactStatus::Missing => "Missing",
+            devscope::progress::ArtifactStatus::ObservationError { .. } => "Error",
+        };
+        lines.push(Line::from(format!("{marker}Artifact  {status}")));
+    }
+    lines
 }
-
 fn evidence_selector_status(state: &BuildTestState) -> String {
     match state {
         BuildTestState::Completed(result) => {
@@ -269,13 +286,44 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn evidence_preview(app: &App) -> (String, Vec<Line<'static>>) {
+    if app.evidence_selection() == EvidenceSelection::Artifact {
+        return artifact_preview(app.artifact());
+    }
     let kind = app.evidence_detail_kind().unwrap_or(BuildTestKind::Build);
     (
         format!("Detail: {}", detail_kind(kind)),
         evidence_preview_lines(kind, app.build_test_state(kind)),
     )
 }
-
+fn artifact_preview(
+    artifact: Option<&devscope::progress::ArtifactObservation>,
+) -> (String, Vec<Line<'static>>) {
+    use devscope::progress::{ArtifactKind, ArtifactStatus};
+    let Some(artifact) = artifact else {
+        return ("Detail: Artifact".into(), vec![Line::from("Unavailable")]);
+    };
+    let mut lines = preview_field("Path", &artifact.path().display().to_string());
+    match artifact.status() {
+        ArtifactStatus::Exists { kind, size } => {
+            lines.extend(preview_field("Status", "Exists"));
+            lines.extend(preview_field(
+                "Kind",
+                match kind {
+                    ArtifactKind::File => "File",
+                    ArtifactKind::Directory => "Directory",
+                    ArtifactKind::Other => "Other",
+                },
+            ));
+            lines.extend(preview_field("Size", &format!("{size} bytes")));
+        }
+        ArtifactStatus::Missing => lines.extend(preview_field("Status", "Missing")),
+        ArtifactStatus::ObservationError { message } => {
+            lines.extend(preview_field("Status", "Observation error"));
+            lines.extend(preview_field("Error", message));
+        }
+    }
+    ("Detail: Artifact".into(), lines)
+}
 fn evidence_preview_lines(kind: BuildTestKind, state: &BuildTestState) -> Vec<Line<'static>> {
     match state {
         BuildTestState::Unavailable => preview_field("Status", "Unavailable"),
@@ -1120,6 +1168,44 @@ mod tests {
         assert!(error.contains("a detailed execution error"));
     }
 
+    #[test]
+    fn evidence_selector_and_preview_render_configured_artifact() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_artifact(Some(
+            devscope::progress::ArtifactObservation::observation_error(
+                "target/output.bin".into(),
+                "permission denied",
+            ),
+        ));
+        let panels = focusable_panels(100, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            panels,
+        );
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            focusable_panels(100, 30),
+        );
+
+        assert_eq!(
+            evidence_selector_lines(&app)[2],
+            Line::from("> Artifact  Error")
+        );
+        let (title, detail) = artifact_preview(app.artifact());
+        assert_eq!(title, "Detail: Artifact");
+        let detail = format!("{detail:?}");
+        assert!(detail.contains("target/output.bin"));
+        assert!(detail.contains("permission denied"));
+        assert!(!detail.contains("Freshness"));
+    }
     #[test]
     fn evidence_preview_handles_unavailable_state() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
