@@ -113,7 +113,7 @@
 
 ### Core observation
 
-- [ ] Configurable Build/Test command resolution and freshness exclusions
+- [x] Configurable Build/Test command resolution and freshness exclusions
 
 - [x] Explore verification integration for Build/Test Evidence
 - [x] Explore Artifact Evidence as a second Evidence source

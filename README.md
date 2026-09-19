@@ -75,8 +75,8 @@ operations.
 ```text
 Up / k      Previous task
 Down / j    Next task
-b           Run Build evidence (cargo check)
-t           Run Test evidence (cargo test)
+b           Run Build evidence
+t           Run Test evidence
 r           Manual full reload
 q / Esc     Quit
 ```
@@ -85,7 +85,7 @@ q / Esc     Quit
 
 - Git must be available on `PATH` for Git Activity collection.
 - A Rust toolchain is required to build from source.
-- Cargo must be available on `PATH` to execute Cargo Build/Test Evidence.
+- Build/Test Evidence needs either project-configured executable commands or, for a Cargo root, Cargo on `PATH`.
 - Windows is the primary verified platform for v0.3.0.
 
 ## Build and run
@@ -138,9 +138,10 @@ output is not mixed with compact CLI output:
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
 are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
-TUI. The CLI reports Cargo Build/Test source availability in `context`. `verify build` and
-`verify test` run the corresponding Cargo command, then persist the observed current result
-locally for restoration in a later TUI session. Freshness compares relevant project inputs around the verification run.
+TUI. The CLI reports Build/Test availability resolved from project Config or the Cargo
+fallback in `context`. `verify build` and `verify test` run the resolved command, then
+persist the observed current result locally for restoration in a later TUI session.
+Freshness compares relevant project inputs around the verification run.
 
 ## Not yet implemented
 

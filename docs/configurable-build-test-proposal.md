@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a design proposal only. It does not change Core, CLI, TUI, Config schema, or the .NET fixture. It is not a completed roadmap task.
+Implemented and dogfooded. This proposal records the adopted command-resolution and Freshness-exclusion boundary; it does not add generic Evidence APIs, additional verification slots, or automatic execution.
 
 ## Motivation and scope
 
@@ -96,9 +96,9 @@ Rust/Cargo works naturally with no Config. .NET, Python/pytest, Python/uv, Node/
 
 ## Freshness and `verify.exclude`
 
-The current scanner excludes `.git`, every `target` directory, and `.devscope/work` and `.devscope/evidence`. It does not exclude .NET `bin` or `obj`. The .NET fixture produces both under application and test projects. An isolated scanner reproduction captured a baseline, invoked a .NET build, and observed `Changed` after the generated directory entries appeared; the minimal isolated project did not complete successfully because its standalone framework setup was incomplete. Together with the successful external fixture `dotnet build`/`dotnet test` run and the scanner rules, this is F1: .NET verification output changes the current freshness input set unless excluded. Future implementation must make successful .NET Build and Test freshness cases focused fixture tests before completion.
+The current scanner excludes `.git`, every `target` directory, and `.devscope/work` and `.devscope/evidence`. It does not exclude .NET `bin` or `obj`. The .NET fixture produces both under application and test projects. An isolated scanner reproduction captured a baseline, invoked a .NET build, and observed `Changed` after the generated directory entries appeared; the minimal isolated project did not complete successfully because its standalone framework setup was incomplete. Together with the successful external fixture `dotnet build`/`dotnet test` run and the scanner rules, this established that .NET verification output changes the current freshness input set unless excluded. Focused Build/Test Freshness tests now cover generated-output exclusions and relevant input changes.
 
-Accordingly, `verify.exclude` belongs in the same future slice:
+The implemented `verify.exclude` is part of the same command-resolution boundary:
 
 ```toml
 [verify]
@@ -126,7 +126,7 @@ No command resolved is Unavailable. A missing executable is ExecutionError. A no
 
 This proposal adds neither lint/format/typecheck/integration slots nor automatic language detection. It defers subdirectory cwd for monorepos, command chains, environment variables and secrets, timeouts, multiple suites, generated inputs that should remain relevant, and large-repository scan cost. It does not create a `VerificationSource` trait, Evidence registry, or shared Artifact/process abstraction.
 
-## Future implementation acceptance criteria
+## Completed acceptance criteria
 
 - A Config-free Cargo root still resolves to `cargo check` and `cargo test`, with unchanged Evidence/freshness behavior.
 - The .NET fixture with configured `dotnet build` and `dotnet test` reaches available, Not run, Passed/Fresh, stale after a source edit, Fresh after rerun, and restored persisted state after restart.
@@ -136,8 +136,8 @@ This proposal adds neither lint/format/typecheck/integration slots nor automatic
 
 ## Migration and documentation impact
 
-Existing `[plan]` and `[artifact]` Config remains valid. A future parser accepts top-level `verify` while preserving unknown-key rejection; Config absence is unchanged. Implementation would update README, Setup Guide, Skill guidance, Config documentation, Evidence/design documents, the decision log if adopted, and the roadmap. This proposal changes none of them.
+Existing `[plan]` and `[artifact]` Config remains valid. The parser accepts top-level `verify` while preserving unknown-key rejection, and Config absence remains unchanged. The README, Setup Guide, Skill guidance, Decision Log, and roadmap now reflect the adopted boundary.
 
 ## Roadmap recommendation
 
-When accepted, add one narrow unchecked item: **Configurable Build/Test command resolution and freshness exclusions**. Do not call it broad “multi-language support,” and do not check it through this proposal. The next smallest implementation slice is resolver and Config-model tests only; runner and UI behavior should remain unchanged until that boundary is proven.
+The narrow **Configurable Build/Test command resolution and freshness exclusions** roadmap item is complete. This is not broad multi-language support: it retains the two existing Build/Test slots and their explicit execution model.

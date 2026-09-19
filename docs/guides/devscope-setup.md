@@ -53,11 +53,13 @@ default-valued `.devscope/config.toml` merely because setup is occurring.
 ## 3. Classify a concrete mismatch
 
 The current project Config is optional observation policy, not Plan, Current Work,
-Evidence, or AI memory. It can address only the implemented project-specific cases:
+Evidence, or AI memory. It can address implemented project-specific cases:
 
 - `[plan].exclude` for a literal project-relative file or directory that should not be
-  observed as Plan, such as a derived or duplicated Markdown source; and
-- `[artifact].path` for one optional project-relative Artifact observation target.
+  observed as Plan, such as a derived or duplicated Markdown source;
+- `[artifact].path` for one optional project-relative Artifact observation target; and
+- `[verify]`, `[verify.build]`, and `[verify.test]` for Build/Test command resolution
+  and freshness-only exclusions.
 
 For example:
 
@@ -74,16 +76,55 @@ parent-directory traversal, and cannot re-include mandatory exclusions. An Artif
 configuration is optional. A missing configured target is an observed `Missing` result,
 not necessarily a setup failure.
 
-Cargo Build/Test verification is fixed in the current implementation. A project root
-with a regular `Cargo.toml` can use:
+### Build/Test verification
+
+A Config-free project root with a regular `Cargo.toml` uses the Cargo defaults:
 
 ```powershell
 devscope verify build  # cargo check
 devscope verify test   # cargo test
 ```
 
-Non-Cargo projects do not currently receive configurable Build/Test commands. Do not
-add a Config command override to work around that limitation.
+A configured kind overrides that Cargo default. A non-Cargo project has an available
+Build or Test slot only when that kind is configured; partial configuration is valid. For
+example, configuring only Test leaves Build on its Cargo fallback when applicable, or
+Unavailable for a non-Cargo project.
+
+The following `.NET` project Config enables both kinds and excludes generated outputs
+from freshness observation:
+
+```toml
+[verify]
+exclude = [
+  "src/DogfoodApp/bin",
+  "src/DogfoodApp/obj",
+  "tests/DogfoodApp.Tests/bin",
+  "tests/DogfoodApp.Tests/obj",
+]
+
+[verify.build]
+program = "dotnet"
+args = ["build"]
+
+[verify.test]
+program = "dotnet"
+args = ["test"]
+```
+
+`program` is the executable name or path, and `args` is an argv array: each value is one
+argument. DevScope does not interpret shell command strings, `&&`, pipes, redirects, or
+other shell syntax. Commands run with the project root as their working directory.
+
+`verify.exclude` affects only Freshness observation, not the command's execution, Plan,
+Git Activity, or Artifact observation. Every value is a literal project-relative path; a
+directory excludes its subtree. Globs, negation, absolute paths, and `..` are rejected.
+
+A result is Fresh when DevScope has not observed a relevant project-input change after
+verification. It is Stale when a relevant input changed or Freshness could not be
+confirmed. Generated outputs such as .NET `bin` and `obj` can be excluded, while Config
+changes themselves remain relevant and make completed Evidence stale.
+
+`.devscope/evidence/` stores local observed Evidence state. It is normally not committed.
 
 ## 4. Change minimally and validate
 
@@ -108,7 +149,7 @@ Setup is complete when:
 - the target repository root can be observed;
 - zero-config behavior has been checked;
 - any concrete mismatch has a minimal validated Config rule;
-- Cargo verification availability is understood; and
+- Build/Test verification availability and its command source are understood; and
 - optional Artifact behavior is understood when configured.
 
 Return to the [DevScope Skill prototype](../examples/devscope-skill.md) for the normal
@@ -125,9 +166,9 @@ setup:
 3. Inspect zero-config observation.
 4. Record any mismatch.
 5. Apply and validate only a supported minimal Config rule when justified.
-6. Check Cargo verification availability.
+6. Check Build/Test verification availability.
 7. Return to the normal Skill workflow.
 
-Current project-specific limits worth testing are Cargo-only fixed Build/Test commands,
-one optional Artifact target, literal Plan exclusions only, root-recursive Markdown
-discovery, and Windows as the primary verified environment.
+Current project-specific limits worth testing are per-kind configured Build/Test commands,
+one optional Artifact target, literal Plan and Freshness exclusions only, root-recursive
+Markdown discovery, and Windows as the primary verified environment.

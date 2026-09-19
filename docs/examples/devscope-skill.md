@@ -13,7 +13,7 @@ authority source.
    Activity, Evidence availability, and the remaining tasks it shows.
 3. Treat `context` as orientation, not a complete specification.
 4. Follow the [Setup Guide](../guides/devscope-setup.md) when `devscope` is
-   unavailable, project observation does not match the repository, required Cargo
+   unavailable, project observation does not match the repository, required Build/Test
    verification is unavailable, Config is invalid, or existing Config no longer fits
    after a project-structure change. Return here after validation.
 
@@ -116,10 +116,10 @@ devscope verify build
 devscope verify test
 ```
 
-over directly running `cargo check` or `cargo test`. This lets DevScope run the command,
-observe its result, and retain it as local Observed Evidence for a later TUI session. If
-DevScope verification is unavailable or fails to start, use the project's native verification
-command when needed.
+over directly running a project-native verification command. This lets DevScope run the
+resolved command, observe its result, and retain it as local Observed Evidence for a later
+TUI session. If DevScope verification is unavailable or fails to start, use the project's
+native verification command when needed.
 
 ## Authority
 
