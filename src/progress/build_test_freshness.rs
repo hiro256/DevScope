@@ -581,6 +581,201 @@ mod tests {
     }
 
     #[test]
+    fn configured_exclusions_support_exact_file_paths() {
+        let project = TempProject::new();
+        project.write("generated/version.txt", "before");
+        project.write("generated/other.txt", "before");
+        let exclusions = [PathBuf::from("generated/version.txt")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write("generated/version.txt", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        project.write("generated/other.txt", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
+    #[test]
+    fn configured_directory_exclusion_keeps_siblings_relevant() {
+        let project = TempProject::new();
+        project.write("src/App/bin/Debug/net10.0/output.dll", "before");
+        project.write("src/App/obj/project.assets.json", "before");
+        let exclusions = [PathBuf::from("src/App/bin")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write("src/App/bin/Debug/net10.0/nested/output.dll", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        project.write("src/App/obj/project.assets.json", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
+    #[test]
+    fn configured_multiple_exclusions_ignore_dotnet_generated_outputs() {
+        let project = TempProject::new();
+        for path in [
+            "src/DogfoodApp/bin/Debug/net10.0/DogfoodApp.exe",
+            "src/DogfoodApp/obj/project.assets.json",
+            "tests/DogfoodApp.Tests/bin/Debug/net10.0/tests.dll",
+            "tests/DogfoodApp.Tests/obj/project.assets.json",
+        ] {
+            project.write(path, "before");
+        }
+        let exclusions = [
+            PathBuf::from("src/DogfoodApp/bin"),
+            PathBuf::from("src/DogfoodApp/obj"),
+            PathBuf::from("tests/DogfoodApp.Tests/bin"),
+            PathBuf::from("tests/DogfoodApp.Tests/obj"),
+        ];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        for path in [
+            "src/DogfoodApp/bin/Debug/net10.0/DogfoodApp.exe",
+            "src/DogfoodApp/obj/project.assets.json",
+            "tests/DogfoodApp.Tests/bin/Debug/net10.0/tests.dll",
+            "tests/DogfoodApp.Tests/obj/project.assets.json",
+        ] {
+            project.write(path, "after");
+        }
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn dotnet_generated_outputs_are_ignored_but_source_edits_are_relevant() {
+        let project = TempProject::new();
+        project.write("src/DogfoodApp/Program.cs", "before");
+        project.write("src/DogfoodApp/bin/Debug/net10.0/DogfoodApp.exe", "before");
+        project.write("src/DogfoodApp/obj/project.assets.json", "before");
+        let exclusions = [
+            PathBuf::from("src/DogfoodApp/bin"),
+            PathBuf::from("src/DogfoodApp/obj"),
+        ];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write("src/DogfoodApp/bin/Debug/net10.0/DogfoodApp.exe", "after");
+        project.write("src/DogfoodApp/obj/project.assets.json", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        project.write("src/DogfoodApp/Program.cs", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
+    #[test]
+    fn configured_exclusions_keep_config_and_policy_edits_relevant() {
+        let project = TempProject::new();
+        project.write("generated/output.bin", "before");
+        project.write(
+            ".devscope/config.toml",
+            r#"[verify]
+exclude = ["bin"]
+"#,
+        );
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write("generated/output.bin", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+
+        project.write(
+            ".devscope/config.toml",
+            r#"[verify]
+exclude = ["bin", "obj"]
+"#,
+        );
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
+    #[test]
+    fn configured_exclusions_preserve_builtin_work_evidence_and_target_ignores() {
+        let project = TempProject::new();
+        project.write(".devscope/work/current.md", "before");
+        project.write(".devscope/evidence/build-test-v1.tsv", "before");
+        project.write("target/debug/app.exe", "before");
+        project.write("nested/target/file", "before");
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write(".devscope/work/current.md", "after");
+        project.write(".devscope/evidence/build-test-v1.tsv", "after");
+        project.write("target/debug/app.exe", "after");
+        project.write("nested/target/file", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn configured_exclusions_support_unicode_paths() {
+        let project = TempProject::new();
+        project.write("生成物/output.txt", "before");
+        let exclusions = [PathBuf::from("生成物")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+
+        project.write("生成物/output.txt", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+    }
+
+    #[test]
     fn ignores_git_metadata_changes() {
         let project = TempProject::new();
         let baseline = project.capture();
