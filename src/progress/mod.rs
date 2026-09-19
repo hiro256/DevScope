@@ -18,6 +18,7 @@ pub use build_test::{
 pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
     evaluate_completed_build_test_freshness,
+    evaluate_completed_build_test_freshness_with_exclusions,
 };
 pub use build_test_resolver::resolve_build_test_command;
 pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion, run_build_test};

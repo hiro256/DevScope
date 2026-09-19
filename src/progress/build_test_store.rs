@@ -1,6 +1,10 @@
 //! Local-only persistence for observed Cargo Build/Test results.
 
-use std::{fs, io, path::Path, time::Duration};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use super::{
     BuildTestExecutionError, BuildTestFreshness, BuildTestFreshnessBaseline, BuildTestKind,
@@ -18,9 +22,14 @@ pub struct PersistedBuildTestState {
 
 impl PersistedBuildTestState {
     pub fn restore_freshness(&mut self, root: &Path) {
+        self.restore_freshness_with_exclusions(root, &[]);
+    }
+
+    pub fn restore_freshness_with_exclusions(&mut self, root: &Path, exclusions: &[PathBuf]) {
         if let (BuildTestState::Completed(result), Some(expected)) =
             (&mut self.state, self.baseline_fingerprint)
-            && BuildTestFreshnessBaseline::fingerprint(root).ok() != Some(expected)
+            && BuildTestFreshnessBaseline::fingerprint_with_exclusions(root, exclusions).ok()
+                != Some(expected)
         {
             result.mark_stale();
         }
@@ -300,6 +309,95 @@ mod tests {
         restored.restore_freshness(&root);
         assert_eq!(
             restored.state.status(),
+            super::super::BuildTestStatus::Stale
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restore_with_exclusions_keeps_generated_only_changes_fresh() {
+        let root = root();
+        fs::create_dir_all(root.join("generated")).unwrap();
+        fs::write(root.join("generated/output"), "before").unwrap();
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&root, &exclusions).unwrap();
+        save_build_test_state(
+            &root,
+            BuildTestKind::Build,
+            &result(BuildTestKind::Build),
+            Some(&baseline),
+        )
+        .unwrap();
+
+        fs::write(root.join("generated/output"), "after").unwrap();
+        let mut restored = load_build_test_states(&root).pop().unwrap();
+        restored.restore_freshness_with_exclusions(&root, &exclusions);
+        assert_eq!(
+            restored.state.status(),
+            super::super::BuildTestStatus::Passed
+        );
+
+        let mut wrong_policy = load_build_test_states(&root).pop().unwrap();
+        wrong_policy.restore_freshness(&root);
+        assert_eq!(
+            wrong_policy.state.status(),
+            super::super::BuildTestStatus::Stale
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restore_with_exclusions_stales_source_and_config_changes() {
+        let source_root = root();
+        fs::create_dir_all(source_root.join("generated")).unwrap();
+        fs::create_dir_all(source_root.join(".devscope")).unwrap();
+        fs::write(source_root.join("generated/output"), "before").unwrap();
+        fs::write(source_root.join(".devscope/config.toml"), "before").unwrap();
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&source_root, &exclusions).unwrap();
+        save_build_test_state(
+            &source_root,
+            BuildTestKind::Build,
+            &result(BuildTestKind::Build),
+            Some(&baseline),
+        )
+        .unwrap();
+
+        fs::write(source_root.join("input.rs"), "two").unwrap();
+        let mut source_changed = load_build_test_states(&source_root).pop().unwrap();
+        source_changed.restore_freshness_with_exclusions(&source_root, &exclusions);
+        assert_eq!(
+            source_changed.state.status(),
+            super::super::BuildTestStatus::Stale
+        );
+
+        let root = root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            r#"exclude = ["generated"]"#,
+        )
+        .unwrap();
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&root, &exclusions).unwrap();
+        save_build_test_state(
+            &root,
+            BuildTestKind::Build,
+            &result(BuildTestKind::Build),
+            Some(&baseline),
+        )
+        .unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            r#"exclude = ["generated", "obj"]"#,
+        )
+        .unwrap();
+        let mut config_changed = load_build_test_states(&root).pop().unwrap();
+        config_changed.restore_freshness_with_exclusions(&root, &exclusions);
+        assert_eq!(
+            config_changed.state.status(),
             super::super::BuildTestStatus::Stale
         );
         let _ = fs::remove_dir_all(root);

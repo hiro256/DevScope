@@ -133,12 +133,29 @@ pub fn evaluate_completed_build_test_freshness(
     super::BuildTestFreshness,
     Option<BuildTestFreshnessBaseline>,
 ) {
+    evaluate_completed_build_test_freshness_with_exclusions(
+        root,
+        &[],
+        started_baseline,
+        inputs_changed_while_running,
+    )
+}
+
+pub fn evaluate_completed_build_test_freshness_with_exclusions(
+    root: &Path,
+    exclusions: &[PathBuf],
+    started_baseline: Option<&BuildTestFreshnessBaseline>,
+    inputs_changed_while_running: bool,
+) -> (
+    super::BuildTestFreshness,
+    Option<BuildTestFreshnessBaseline>,
+) {
     let Some(started_baseline) = started_baseline else {
         return (super::BuildTestFreshness::Stale, None);
     };
 
     let inputs_changed_after_start = matches!(
-        started_baseline.check(root),
+        started_baseline.check_with_exclusions(root, exclusions),
         Ok(BuildTestInputChange::Changed) | Err(_)
     );
     if inputs_changed_while_running || inputs_changed_after_start {

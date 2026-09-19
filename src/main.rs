@@ -20,8 +20,8 @@ use devscope::{
     },
     progress::{
         ArtifactObservation, BuildTestExecutionCompletion, BuildTestKind, BuildTestState,
-        cargo_build_test_command, evaluate_completed_build_test_freshness, load_build_test_states,
-        observe_artifact, run_build_test, save_build_test_state,
+        cargo_build_test_command, evaluate_completed_build_test_freshness_with_exclusions,
+        load_build_test_states, observe_artifact, run_build_test, save_build_test_state,
     },
     project::{ProjectSnapshot, try_collect_project_snapshot},
 };
@@ -208,16 +208,27 @@ fn run_verify(kind: BuildTestKind) -> ExitCode {
     let Ok(root) = env::current_dir() else {
         return ExitCode::FAILURE;
     };
+    let config = match load_project_config(&root) {
+        Ok(config) => config,
+        Err(error) => return report_runtime_error(error),
+    };
+    let exclusions = config.verify().excludes();
     let Some(spec) = cargo_build_test_command(&root, kind) else {
         eprintln!("error: Cargo Build/Test is unavailable for this project");
         return ExitCode::FAILURE;
     };
-    let baseline = devscope::progress::BuildTestFreshnessBaseline::capture(&root).ok();
+    let baseline =
+        devscope::progress::BuildTestFreshnessBaseline::capture_with_exclusions(&root, exclusions)
+            .ok();
     let mut completion = run_build_test(spec);
     let persisted_baseline = match &mut completion {
         BuildTestExecutionCompletion::Completed(result) => {
-            let (freshness, baseline) =
-                evaluate_completed_build_test_freshness(&root, baseline.as_ref(), false);
+            let (freshness, baseline) = evaluate_completed_build_test_freshness_with_exclusions(
+                &root,
+                exclusions,
+                baseline.as_ref(),
+                false,
+            );
             if matches!(freshness, devscope::progress::BuildTestFreshness::Stale) {
                 result.mark_stale();
             }
@@ -256,19 +267,24 @@ fn run_tui() -> io::Result<()> {
 
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);
-    restore_tui_build_test_states(project_root.as_deref(), &mut app);
+    restore_tui_build_test_states(project_root.as_deref(), &mut app).map_err(io::Error::other)?;
     app.apply_artifact(load_tui_artifact(project_root.as_deref()).map_err(io::Error::other)?);
     app.apply_current_work(load_tui_current_work(project_root.as_deref()));
     event_loop::run(terminal.terminal_mut(), project_root.as_deref(), &mut app)
         .and(terminal.restore())
 }
 
-fn restore_tui_build_test_states(root: Option<&std::path::Path>, app: &mut App) {
-    let Some(root) = root else { return };
+fn restore_tui_build_test_states(
+    root: Option<&std::path::Path>,
+    app: &mut App,
+) -> Result<(), ConfigError> {
+    let Some(root) = root else { return Ok(()) };
+    let config = load_project_config(root)?;
     for mut stored in load_build_test_states(root) {
-        stored.restore_freshness(root);
+        stored.restore_freshness_with_exclusions(root, config.verify().excludes());
         app.apply_build_test_state(stored.kind, stored.state);
     }
+    Ok(())
 }
 fn load_tui_current_work(root: Option<&std::path::Path>) -> CurrentWorkState {
     let Some(root) = root else {

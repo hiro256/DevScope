@@ -1,6 +1,6 @@
 use std::{
     io,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -18,8 +18,8 @@ use devscope::{
         ArtifactObservation, BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
         GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
-        evaluate_completed_build_test_freshness, is_cargo_project, observe_artifact,
-        save_build_test_state,
+        evaluate_completed_build_test_freshness_with_exclusions, is_cargo_project,
+        observe_artifact, save_build_test_state,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -323,6 +323,7 @@ struct BuildTestRuntime {
     test_baseline: Option<BuildTestFreshnessBaseline>,
     active_baseline: Option<BuildTestFreshnessBaseline>,
     active_inputs_changed: bool,
+    exclusions: Vec<PathBuf>,
 }
 
 impl BuildTestRuntime {
@@ -389,7 +390,8 @@ fn start_manual_build_test(
         return true;
     };
 
-    runtime.active_baseline = BuildTestFreshnessBaseline::capture(root).ok();
+    runtime.active_baseline =
+        BuildTestFreshnessBaseline::capture_with_exclusions(root, &runtime.exclusions).ok();
     match BuildTestExecution::start(spec) {
         Ok(execution) => {
             app.apply_build_test_state(kind, BuildTestState::Running(execution.run().clone()));
@@ -419,8 +421,9 @@ fn apply_build_test_completion(
             let kind = result.kind();
             let (freshness, persisted_baseline) =
                 project_root.map_or((BuildTestFreshness::Stale, None), |root| {
-                    evaluate_completed_build_test_freshness(
+                    evaluate_completed_build_test_freshness_with_exclusions(
                         root,
+                        &runtime.exclusions,
                         started_baseline.as_ref(),
                         inputs_changed,
                     )
@@ -462,6 +465,7 @@ fn check_completed_build_test_freshness(
     app: &mut App,
     baseline: Option<&BuildTestFreshnessBaseline>,
     kind: BuildTestKind,
+    exclusions: &[PathBuf],
 ) -> bool {
     let BuildTestState::Completed(mut result) = app.build_test_state(kind).clone() else {
         return false;
@@ -473,7 +477,7 @@ fn check_completed_build_test_freshness(
         return false;
     };
     if !matches!(
-        baseline.check(project_root),
+        baseline.check_with_exclusions(project_root, exclusions),
         Ok(BuildTestInputChange::Changed)
     ) {
         return false;
@@ -498,11 +502,13 @@ fn check_build_test_freshness(
         app,
         runtime.build_baseline.as_ref(),
         BuildTestKind::Build,
+        &runtime.exclusions,
     ) | check_completed_build_test_freshness(
         project_root,
         app,
         runtime.test_baseline.as_ref(),
         BuildTestKind::Test,
+        &runtime.exclusions,
     )
 }
 fn observe_active_build_test_inputs(project_root: Option<&Path>, runtime: &mut BuildTestRuntime) {
@@ -510,8 +516,10 @@ fn observe_active_build_test_inputs(project_root: Option<&Path>, runtime: &mut B
         return;
     }
     if let (Some(root), Some(baseline)) = (project_root, runtime.active_baseline.as_ref()) {
-        runtime.active_inputs_changed =
-            matches!(baseline.check(root), Ok(BuildTestInputChange::Changed));
+        runtime.active_inputs_changed = matches!(
+            baseline.check_with_exclusions(root, &runtime.exclusions),
+            Ok(BuildTestInputChange::Changed)
+        );
     }
 }
 
@@ -579,14 +587,26 @@ pub fn run(
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
     let mut requests = RefreshRequest::default();
-    let mut build_test_runtime = BuildTestRuntime::default();
+    let mut build_test_runtime = BuildTestRuntime {
+        exclusions: project_root
+            .and_then(|root| load_project_config(root).ok())
+            .map(|config| config.verify().excludes().to_vec())
+            .unwrap_or_default(),
+        ..Default::default()
+    };
     initialize_build_test_availability(project_root, app);
     for kind in [BuildTestKind::Build, BuildTestKind::Test] {
         if matches!(app.build_test_state(kind), BuildTestState::Completed(result) if matches!(result.freshness(), BuildTestFreshness::Fresh))
         {
             build_test_runtime.set_baseline(
                 kind,
-                project_root.and_then(|root| BuildTestFreshnessBaseline::capture(root).ok()),
+                project_root.and_then(|root| {
+                    BuildTestFreshnessBaseline::capture_with_exclusions(
+                        root,
+                        &build_test_runtime.exclusions,
+                    )
+                    .ok()
+                }),
             );
         }
     }
