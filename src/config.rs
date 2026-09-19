@@ -528,4 +528,50 @@ mod tests {
             ));
         }
     }
+    #[test]
+    fn parses_verify_commands_excludes_and_existing_sections() {
+        let project = TempProject::new();
+        project.write_config("[plan]\nexclude = [\"generated\"]\n[artifact]\npath = \"output.bin\"\n[verify]\nexclude = [\"bin\"]\n[verify.build]\nprogram = \"dotnet\"\nargs = [\"build\"]\n[verify.test]\nprogram = \"python\"\nargs = [\"-m\", \"pytest\"]");
+        let config = load_project_config(&project.0).unwrap();
+        assert_eq!(config.verify().build().unwrap().program(), "dotnet");
+        assert_eq!(config.verify().build().unwrap().args(), ["build"]);
+        assert_eq!(config.verify().test().unwrap().args(), ["-m", "pytest"]);
+        assert_eq!(config.verify().excludes(), [PathBuf::from("bin")]);
+        assert_eq!(config.artifact().path(), Some(Path::new("output.bin")));
+    }
+
+    #[test]
+    fn verify_args_default_to_empty_and_invalid_verify_values_are_rejected() {
+        let project = TempProject::new();
+        project.write_config("[verify.test]\nprogram = \"pytest\"");
+        assert!(
+            load_project_config(&project.0)
+                .unwrap()
+                .verify()
+                .test()
+                .unwrap()
+                .args()
+                .is_empty()
+        );
+        for contents in [
+            "verify = \"foo\"",
+            "[verify]\nfoo = \"bar\"",
+            "[verify.build]\nargs = [\"build\"]",
+            "[verify.build]\nprogram = 123",
+            "[verify.build]\nprogram = \"dotnet\"\nargs = \"build\"",
+            "[verify.build]\nprogram = \"dotnet\"\nargs = [\"build\", 1]",
+            "[verify.build]\nprogram = \"\"",
+            "[verify.build]\nprogram = \"   \"",
+            "[verify]\nexclude = [\"generated/*\"]",
+            "[verify]\nexclude = [\"!generated\"]",
+            "[verify]\nexclude = [\"../outside\"]",
+            "[verify]\nexclude = [\"notes\\\\todo\"]",
+        ] {
+            project.write_config(contents);
+            assert!(matches!(
+                load_project_config(&project.0),
+                Err(ConfigError::InvalidSchema { .. }) | Err(ConfigError::InvalidPath { .. })
+            ));
+        }
+    }
 }
