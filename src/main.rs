@@ -67,8 +67,13 @@ fn run_context() -> ExitCode {
                 Ok(None) => CurrentWorkContext::NotSet,
                 Err(_) => CurrentWorkContext::Unavailable,
             };
-            print!("{}", cli::render_context(&root, &snapshot, current_work));
-            ExitCode::SUCCESS
+            match cli::render_context(&root, &snapshot, current_work) {
+                Ok(output) => {
+                    print!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => report_runtime_error(error),
+            }
         }
         Err(error) => report_runtime_error(error),
     }

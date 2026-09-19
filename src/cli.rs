@@ -4,7 +4,7 @@ use std::{
 };
 
 use devscope::{
-    config::load_project_config,
+    config::{ConfigError, load_project_config},
     current_work::{CurrentWork, CurrentWorkItem},
     progress::{ActivitySummary, BuildTestKind, resolve_build_test_command},
     project::{
@@ -126,14 +126,14 @@ pub fn render_context(
     root: &Path,
     snapshot: &ProjectSnapshot,
     current_work: CurrentWorkContext<'_>,
-) -> String {
+) -> Result<String, ConfigError> {
     let mut output = format!(
         "Project: {}\n{}\n{}\n{}\n{}\n",
         project_name(root),
         render_plan(snapshot),
         render_tasks_summary(snapshot),
         render_activity(snapshot),
-        render_evidence(root),
+        render_evidence(root)?,
     );
 
     append_current_work_summary(&mut output, current_work);
@@ -153,7 +153,7 @@ pub fn render_context(
         }
     }
 
-    output
+    Ok(output)
 }
 
 fn append_current_work_summary(output: &mut String, current_work: CurrentWorkContext<'_>) {
@@ -280,17 +280,17 @@ fn format_activity(activity: &ActivitySummary) -> String {
     )
 }
 
-fn render_evidence(root: &Path) -> String {
-    let config = load_project_config(root).unwrap_or_default();
+fn render_evidence(root: &Path) -> Result<String, ConfigError> {
+    let config = load_project_config(root)?;
     let build_available = resolve_build_test_command(root, &config, BuildTestKind::Build).is_some();
     let test_available = resolve_build_test_command(root, &config, BuildTestKind::Test).is_some();
-    match (build_available, test_available) {
+    Ok(match (build_available, test_available) {
         (true, true) => "Evidence: Build/Test available; run state not exposed by CLI",
         (true, false) => "Evidence: Build available; Test unavailable",
         (false, true) => "Evidence: Build unavailable; Test available",
         (false, false) => "Evidence: Build/Test unavailable",
     }
-    .to_owned()
+    .to_owned())
 }
 
 fn append_tasks<'a>(
@@ -392,6 +392,14 @@ pub fn render_artifact(observation: &devscope::progress::ArtifactObservation) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_context_ok(
+        root: &Path,
+        snapshot: &ProjectSnapshot,
+        current_work: CurrentWorkContext<'_>,
+    ) -> String {
+        render_context(root, snapshot, current_work).unwrap()
+    }
     use devscope::{
         current_work::load_current_work,
         progress::{
@@ -530,7 +538,7 @@ mod tests {
             TaskState::Available(TaskSummary::new(7, items)),
         );
 
-        let output = render_context(project.path(), &snapshot, CurrentWorkContext::NotSet);
+        let output = render_context_ok(project.path(), &snapshot, CurrentWorkContext::NotSet);
         assert!(output.contains("Plan: 1/7"));
         assert!(output.contains("Tasks: 6 remaining"));
         assert!(output.contains("Activity: not a Git repository"));
@@ -563,11 +571,11 @@ mod tests {
             TaskState::Available(TaskSummary::new(0, vec![])),
         );
         assert!(
-            render_context(root, &available, CurrentWorkContext::NotSet)
+            render_context_ok(root, &available, CurrentWorkContext::NotSet)
                 .contains("Activity: 1 changed files, 1 recent commits")
         );
 
-        let unavailable = render_context(
+        let unavailable = render_context_ok(
             root,
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
@@ -588,7 +596,7 @@ mod tests {
         )
         .unwrap();
 
-        let output = render_context(
+        let output = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
@@ -596,6 +604,44 @@ mod tests {
 
         assert!(output.contains("Evidence: Build unavailable; Test available"));
         assert!(!output.contains("Cargo Build/Test"));
+    }
+
+    #[test]
+    fn malformed_config_is_not_rendered_as_generic_availability() {
+        let project = TempProject::new();
+        fs::create_dir_all(project.path().join(".devscope")).unwrap();
+        fs::write(
+            project.path().join(".devscope/config.toml"),
+            "[verify.test]\nprogram = ",
+        )
+        .unwrap();
+
+        let result = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+
+        assert!(matches!(result, Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn invalid_verify_program_is_reported_as_a_config_error() {
+        let project = TempProject::new();
+        fs::create_dir_all(project.path().join(".devscope")).unwrap();
+        fs::write(
+            project.path().join(".devscope/config.toml"),
+            "[verify.build]\nprogram = \"   \"\n",
+        )
+        .unwrap();
+
+        let result = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+
+        assert!(matches!(result, Err(ConfigError::InvalidSchema { .. })));
     }
 
     #[test]
@@ -772,7 +818,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "# Current Work\nParent: docs/roadmap.md\nTask: Parent\nActive: 2\n- [ ] Next item\n- [ ] Active item\n").unwrap();
         let work = load_current_work(project.path()).unwrap().unwrap();
-        let context = render_context(
+        let context = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Available(&work),
@@ -800,7 +846,7 @@ mod tests {
         )
         .unwrap();
         let work = load_current_work(project.path()).unwrap().unwrap();
-        let output = render_context(
+        let output = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Available(&work),
@@ -815,7 +861,7 @@ mod tests {
 
         fs::write(&path, "# Current Work\nParent: a.md\nTask: Empty\n").unwrap();
         let empty = load_current_work(project.path()).unwrap().unwrap();
-        let empty_output = render_context(
+        let empty_output = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Available(&empty),
@@ -824,7 +870,7 @@ mod tests {
             empty_output.contains("Current Work: 0/0\nParent: Empty\nActive: none\nNext: none\n")
         );
 
-        let unavailable = render_context(
+        let unavailable = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::Unavailable,
