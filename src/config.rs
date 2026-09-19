@@ -1,6 +1,6 @@
 //! Optional, project-local observation policy.
 //!
-//! The first Config slice intentionally supports only `[plan].exclude`.
+//! Narrow, project-local observation policy.
 
 use std::{
     error::Error,
@@ -14,6 +14,7 @@ pub const CONFIG_PATH: &str = ".devscope/config.toml";
 pub struct ProjectConfig {
     plan: PlanConfig,
     artifact: ArtifactConfig,
+    verify: VerifyConfig,
 }
 
 impl ProjectConfig {
@@ -23,6 +24,10 @@ impl ProjectConfig {
 
     pub fn plan(&self) -> &PlanConfig {
         &self.plan
+    }
+
+    pub fn verify(&self) -> &VerifyConfig {
+        &self.verify
     }
 }
 
@@ -55,6 +60,37 @@ impl PlanConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerifyConfig {
+    build: Option<VerifyCommandConfig>,
+    test: Option<VerifyCommandConfig>,
+    excludes: Vec<PathBuf>,
+}
+impl VerifyConfig {
+    pub fn build(&self) -> Option<&VerifyCommandConfig> {
+        self.build.as_ref()
+    }
+    pub fn test(&self) -> Option<&VerifyCommandConfig> {
+        self.test.as_ref()
+    }
+    pub fn excludes(&self) -> &[PathBuf] {
+        &self.excludes
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyCommandConfig {
+    program: String,
+    args: Vec<String>,
+}
+impl VerifyCommandConfig {
+    pub fn program(&self) -> &str {
+        &self.program
+    }
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Read {
@@ -71,6 +107,7 @@ pub enum ConfigError {
     },
     InvalidPath {
         path: PathBuf,
+        setting: &'static str,
         value: String,
         reason: &'static str,
     },
@@ -94,12 +131,13 @@ impl fmt::Display for ConfigError {
             }
             Self::InvalidPath {
                 path,
+                setting,
                 value,
                 reason,
             } => {
                 write!(
                     formatter,
-                    "invalid plan.exclude path `{value}` in {}: {reason}",
+                    "invalid {setting} path `{value}` in {}: {reason}",
                     path.display()
                 )
             }
@@ -141,7 +179,7 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
     })?;
 
     for key in table.keys() {
-        if key != "plan" && key != "artifact" {
+        if key != "plan" && key != "artifact" && key != "verify" {
             return Err(unknown_key(path, key, "top level"));
         }
     }
@@ -173,7 +211,7 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
                     path: path.to_path_buf(),
                     message: "`plan.exclude` must be an array of strings".to_owned(),
                 })?;
-                validate_exclude_path(path, value)
+                validate_exclude_path(path, "plan.exclude", value)
             })
             .collect::<Result<Vec<_>, _>>()?,
     };
@@ -203,12 +241,118 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
             }
         }
     };
+    let verify = parse_verify_config(path, table.get("verify"))?;
     Ok(ProjectConfig {
         plan: PlanConfig { excludes },
         artifact,
+        verify,
     })
 }
 
+fn parse_verify_config(
+    path: &Path,
+    value: Option<&toml::Value>,
+) -> Result<VerifyConfig, ConfigError> {
+    let Some(value) = value else {
+        return Ok(VerifyConfig::default());
+    };
+    let table = value.as_table().ok_or_else(|| ConfigError::InvalidSchema {
+        path: path.to_path_buf(),
+        message: "`verify` must be a table".into(),
+    })?;
+    for key in table.keys() {
+        if key != "exclude" && key != "build" && key != "test" {
+            return Err(unknown_key(path, key, "[verify]"));
+        }
+    }
+    Ok(VerifyConfig {
+        build: parse_verify_command(path, table.get("build"), "build")?,
+        test: parse_verify_command(path, table.get("test"), "test")?,
+        excludes: parse_excludes(path, table.get("exclude"), "verify.exclude")?,
+    })
+}
+
+fn parse_verify_command(
+    path: &Path,
+    value: Option<&toml::Value>,
+    kind: &str,
+) -> Result<Option<VerifyCommandConfig>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let table = value.as_table().ok_or_else(|| ConfigError::InvalidSchema {
+        path: path.to_path_buf(),
+        message: format!("`verify.{kind}` must be a table"),
+    })?;
+    for key in table.keys() {
+        if key != "program" && key != "args" {
+            return Err(unknown_key(path, key, &format!("[verify.{kind}]")));
+        }
+    }
+    let program = table
+        .get("program")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| ConfigError::InvalidSchema {
+            path: path.to_path_buf(),
+            message: format!("`verify.{kind}.program` must be a non-empty string"),
+        })?;
+    if program.trim().is_empty() {
+        return Err(ConfigError::InvalidSchema {
+            path: path.to_path_buf(),
+            message: format!("`verify.{kind}.program` must be a non-empty string"),
+        });
+    }
+    let args = match table.get("args") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| ConfigError::InvalidSchema {
+                path: path.to_path_buf(),
+                message: format!("`verify.{kind}.args` must be an array of strings"),
+            })?
+            .iter()
+            .map(|arg| {
+                arg.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| ConfigError::InvalidSchema {
+                        path: path.to_path_buf(),
+                        message: format!("`verify.{kind}.args` must be an array of strings"),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    Ok(Some(VerifyCommandConfig {
+        program: program.into(),
+        args,
+    }))
+}
+
+fn parse_excludes(
+    path: &Path,
+    value: Option<&toml::Value>,
+    setting: &'static str,
+) -> Result<Vec<PathBuf>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .ok_or_else(|| ConfigError::InvalidSchema {
+            path: path.to_path_buf(),
+            message: format!("`{setting}` must be an array of strings"),
+        })?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| ConfigError::InvalidSchema {
+                    path: path.to_path_buf(),
+                    message: format!("`{setting}` must be an array of strings"),
+                })
+                .and_then(|value| validate_exclude_path(path, setting, value))
+        })
+        .collect()
+}
 fn unknown_key(path: &Path, key: &str, scope: &str) -> ConfigError {
     ConfigError::InvalidSchema {
         path: path.to_path_buf(),
@@ -216,9 +360,14 @@ fn unknown_key(path: &Path, key: &str, scope: &str) -> ConfigError {
     }
 }
 
-fn validate_exclude_path(config_path: &Path, value: &str) -> Result<PathBuf, ConfigError> {
+fn validate_exclude_path(
+    config_path: &Path,
+    setting: &'static str,
+    value: &str,
+) -> Result<PathBuf, ConfigError> {
     let invalid = |reason| ConfigError::InvalidPath {
         path: config_path.to_path_buf(),
+        setting,
         value: value.to_owned(),
         reason,
     };

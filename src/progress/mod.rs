@@ -2,6 +2,7 @@
 mod artifact;
 mod build_test;
 mod build_test_freshness;
+mod build_test_resolver;
 mod build_test_runner;
 mod build_test_source;
 mod build_test_store;
@@ -18,6 +19,7 @@ pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
     evaluate_completed_build_test_freshness,
 };
+pub use build_test_resolver::resolve_build_test_command;
 pub use build_test_runner::{BuildTestExecution, BuildTestExecutionCompletion, run_build_test};
 pub use build_test_source::BuildTestCommandSpec;
 pub use build_test_store::{

@@ -65,3 +65,9 @@
 - **Reason:** This avoids Build/Test overfitting and speculative abstraction. The
   earlier Evidence decision defines the initial v0.3 Build/Test source, not the
   permanent definition of every future Evidence source.
+
+## 2026-09-19 — Configured Build/Test command boundary
+
+- **Date:** 2026-09-19
+- **Decision:** Add per-kind project Config commands as program plus argument vector, with configured commands overriding the Cargo default and project-root working directory. Do not parse shell command strings.
+- **Reason:** This retains Cargo zero-config behavior while providing a small, tool-neutral process boundary. erify.exclude is parsed now but is not connected to freshness until a later slice.
