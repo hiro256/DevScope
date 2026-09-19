@@ -12,14 +12,14 @@ use devscope::{
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
         MarkdownChange, MarkdownChangeDetector,
     },
-    config::{ConfigError, load_project_config},
+    config::{ConfigError, ProjectConfig, load_project_config},
     current_work::load_current_work,
     progress::{
         ArtifactObservation, BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
-        GitFileDiff, GitFileDiffUnavailable, cargo_build_test_command, collect_git_file_diff,
-        evaluate_completed_build_test_freshness_with_exclusions, is_cargo_project,
-        observe_artifact, save_build_test_state,
+        GitFileDiff, GitFileDiffUnavailable, collect_git_file_diff,
+        evaluate_completed_build_test_freshness_with_exclusions, observe_artifact,
+        resolve_build_test_command, save_build_test_state,
     },
     project::{collect_activity_state, collect_markdown_state, try_collect_project_snapshot},
 };
@@ -323,7 +323,7 @@ struct BuildTestRuntime {
     test_baseline: Option<BuildTestFreshnessBaseline>,
     active_baseline: Option<BuildTestFreshnessBaseline>,
     active_inputs_changed: bool,
-    exclusions: Vec<PathBuf>,
+    config: ProjectConfig,
 }
 
 impl BuildTestRuntime {
@@ -342,15 +342,19 @@ impl BuildTestRuntime {
     }
 }
 
-fn initialize_build_test_availability(project_root: Option<&Path>, app: &mut App) {
-    if !project_root.is_some_and(is_cargo_project) {
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::Unavailable);
-        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
-        return;
-    }
+fn initialize_build_test_availability(
+    project_root: Option<&Path>,
+    config: &ProjectConfig,
+    app: &mut App,
+) {
     for kind in [BuildTestKind::Build, BuildTestKind::Test] {
-        if matches!(app.build_test_state(kind), BuildTestState::Unavailable) {
-            app.apply_build_test_state(kind, BuildTestState::NotRun);
+        if project_root.is_some_and(|root| resolve_build_test_command(root, config, kind).is_some())
+        {
+            if matches!(app.build_test_state(kind), BuildTestState::Unavailable) {
+                app.apply_build_test_state(kind, BuildTestState::NotRun);
+            }
+        } else {
+            app.apply_build_test_state(kind, BuildTestState::Unavailable);
         }
     }
 }
@@ -385,13 +389,16 @@ fn start_manual_build_test(
         app.apply_build_test_state(kind, BuildTestState::Unavailable);
         return true;
     };
-    let Some(spec) = cargo_build_test_command(root, kind) else {
+    let Some(spec) = resolve_build_test_command(root, &runtime.config, kind) else {
         app.apply_build_test_state(kind, BuildTestState::Unavailable);
         return true;
     };
 
-    runtime.active_baseline =
-        BuildTestFreshnessBaseline::capture_with_exclusions(root, &runtime.exclusions).ok();
+    runtime.active_baseline = BuildTestFreshnessBaseline::capture_with_exclusions(
+        root,
+        runtime.config.verify().excludes(),
+    )
+    .ok();
     match BuildTestExecution::start(spec) {
         Ok(execution) => {
             app.apply_build_test_state(kind, BuildTestState::Running(execution.run().clone()));
@@ -423,7 +430,7 @@ fn apply_build_test_completion(
                 project_root.map_or((BuildTestFreshness::Stale, None), |root| {
                     evaluate_completed_build_test_freshness_with_exclusions(
                         root,
-                        &runtime.exclusions,
+                        runtime.config.verify().excludes(),
                         started_baseline.as_ref(),
                         inputs_changed,
                     )
@@ -502,13 +509,13 @@ fn check_build_test_freshness(
         app,
         runtime.build_baseline.as_ref(),
         BuildTestKind::Build,
-        &runtime.exclusions,
+        runtime.config.verify().excludes(),
     ) | check_completed_build_test_freshness(
         project_root,
         app,
         runtime.test_baseline.as_ref(),
         BuildTestKind::Test,
-        &runtime.exclusions,
+        runtime.config.verify().excludes(),
     )
 }
 fn observe_active_build_test_inputs(project_root: Option<&Path>, runtime: &mut BuildTestRuntime) {
@@ -517,7 +524,7 @@ fn observe_active_build_test_inputs(project_root: Option<&Path>, runtime: &mut B
     }
     if let (Some(root), Some(baseline)) = (project_root, runtime.active_baseline.as_ref()) {
         runtime.active_inputs_changed = matches!(
-            baseline.check_with_exclusions(root, &runtime.exclusions),
+            baseline.check_with_exclusions(root, runtime.config.verify().excludes()),
             Ok(BuildTestInputChange::Changed)
         );
     }
@@ -576,6 +583,7 @@ fn poll_build_test_execution(
 pub fn run(
     terminal: &mut AppTerminal,
     project_root: Option<&Path>,
+    config: &ProjectConfig,
     app: &mut App,
 ) -> io::Result<()> {
     let session_start = Instant::now();
@@ -588,13 +596,10 @@ pub fn run(
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
     let mut requests = RefreshRequest::default();
     let mut build_test_runtime = BuildTestRuntime {
-        exclusions: project_root
-            .and_then(|root| load_project_config(root).ok())
-            .map(|config| config.verify().excludes().to_vec())
-            .unwrap_or_default(),
+        config: config.clone(),
         ..Default::default()
     };
-    initialize_build_test_availability(project_root, app);
+    initialize_build_test_availability(project_root, config, app);
     for kind in [BuildTestKind::Build, BuildTestKind::Test] {
         if matches!(app.build_test_state(kind), BuildTestState::Completed(result) if matches!(result.freshness(), BuildTestFreshness::Fresh))
         {
@@ -603,7 +608,7 @@ pub fn run(
                 project_root.and_then(|root| {
                     BuildTestFreshnessBaseline::capture_with_exclusions(
                         root,
-                        &build_test_runtime.exclusions,
+                        build_test_runtime.config.verify().excludes(),
                     )
                     .ok()
                 }),
@@ -756,6 +761,7 @@ mod tests {
             ArtifactStatus, BuildTestCommandSpec, BuildTestExecution, BuildTestExecutionCompletion,
             BuildTestExecutionError, BuildTestFreshness, BuildTestFreshnessBaseline, BuildTestKind,
             BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, PlanSummary,
+            resolve_build_test_command, run_build_test,
         },
         project::{ProjectSnapshot, collect_project_snapshot},
     };
@@ -887,7 +893,11 @@ mod tests {
         let cargo_root = temp_root();
         fs::write(cargo_root.join("Cargo.toml"), "[package]").unwrap();
         let mut cargo_app = App::new(ProjectSnapshot::unavailable());
-        initialize_build_test_availability(Some(&cargo_root), &mut cargo_app);
+        initialize_build_test_availability(
+            Some(&cargo_root),
+            &ProjectConfig::default(),
+            &mut cargo_app,
+        );
         assert_eq!(
             cargo_app.build_test_state(BuildTestKind::Build),
             &BuildTestState::NotRun
@@ -899,7 +909,11 @@ mod tests {
 
         let non_cargo_root = temp_root();
         let mut non_cargo_app = App::new(ProjectSnapshot::unavailable());
-        initialize_build_test_availability(Some(&non_cargo_root), &mut non_cargo_app);
+        initialize_build_test_availability(
+            Some(&non_cargo_root),
+            &ProjectConfig::default(),
+            &mut non_cargo_app,
+        );
         assert_eq!(
             non_cargo_app.build_test_state(BuildTestKind::Build),
             &BuildTestState::Unavailable
@@ -910,6 +924,141 @@ mod tests {
         );
         let _ = fs::remove_dir_all(cargo_root);
         let _ = fs::remove_dir_all(non_cargo_root);
+    }
+
+    #[test]
+    fn initializes_build_test_availability_per_configured_kind() {
+        for (contents, build_available, test_available) in [
+            (
+                "[verify.build]\nprogram = \"configured-build\"\n",
+                true,
+                false,
+            ),
+            (
+                "[verify.test]\nprogram = \"configured-test\"\n",
+                false,
+                true,
+            ),
+            (
+                "[verify.build]\nprogram = \"configured-build\"\n\n[verify.test]\nprogram = \"configured-test\"\n",
+                true,
+                true,
+            ),
+        ] {
+            let root = temp_root();
+            fs::create_dir_all(root.join(".devscope")).unwrap();
+            fs::write(root.join(".devscope/config.toml"), contents).unwrap();
+            let config = load_project_config(&root).unwrap();
+            let mut app = App::new(ProjectSnapshot::unavailable());
+
+            initialize_build_test_availability(Some(&root), &config, &mut app);
+
+            assert_eq!(
+                matches!(
+                    app.build_test_state(BuildTestKind::Build),
+                    BuildTestState::NotRun
+                ),
+                build_available
+            );
+            assert_eq!(
+                matches!(
+                    app.build_test_state(BuildTestKind::Test),
+                    BuildTestState::NotRun
+                ),
+                test_available
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn configured_manual_start_uses_the_resolved_command_spec() {
+        let root = temp_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify.build]\nprogram = \"configured-build\"\nargs = [\"--focused\"]\n",
+        )
+        .unwrap();
+        let config = load_project_config(&root).unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime {
+            config,
+            ..Default::default()
+        };
+
+        assert!(start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Build,
+        ));
+        let BuildTestState::Running(run) = app.build_test_state(BuildTestKind::Build) else {
+            panic!("configured command should enter the running state");
+        };
+        assert_eq!(run.source_label(), "configured-build");
+        assert_eq!(run.command_label(), "configured-build --focused");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn configured_test_overrides_cargo_for_tui_manual_start() {
+        let root = temp_root();
+        fs::write(root.join("Cargo.toml"), "[package]\n").unwrap();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify.test]\nprogram = \"configured-test\"\nargs = [\"--override\"]\n",
+        )
+        .unwrap();
+        let config = load_project_config(&root).unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        initialize_build_test_availability(Some(&root), &config, &mut app);
+        let mut runtime = BuildTestRuntime {
+            config,
+            ..Default::default()
+        };
+
+        assert!(start_manual_build_test(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestKind::Test,
+        ));
+        let BuildTestState::Running(run) = app.build_test_state(BuildTestKind::Test) else {
+            panic!("configured command should override Cargo for Test");
+        };
+        assert_eq!(run.source_label(), "configured-test");
+        assert_eq!(run.command_label(), "configured-test --override");
+        assert_eq!(
+            app.build_test_state(BuildTestKind::Build),
+            &BuildTestState::NotRun
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_configured_executable_reaches_execution_error_with_resolved_labels() {
+        let root = temp_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify.test]\nprogram = \"definitely-not-installed-command\"\nargs = [\"--focused\"]\n",
+        )
+        .unwrap();
+        let config = load_project_config(&root).unwrap();
+        let spec = resolve_build_test_command(&root, &config, BuildTestKind::Test).unwrap();
+
+        let BuildTestExecutionCompletion::ExecutionError(error) = run_build_test(spec) else {
+            panic!("missing configured executable should be an execution error");
+        };
+        assert_eq!(error.kind(), BuildTestKind::Test);
+        assert_eq!(error.source_label(), "definitely-not-installed-command");
+        assert_eq!(
+            error.command_label(),
+            "definitely-not-installed-command --focused"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

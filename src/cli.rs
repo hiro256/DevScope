@@ -4,8 +4,9 @@ use std::{
 };
 
 use devscope::{
+    config::load_project_config,
     current_work::{CurrentWork, CurrentWorkItem},
-    progress::{ActivitySummary, is_cargo_project},
+    progress::{ActivitySummary, BuildTestKind, resolve_build_test_command},
     project::{
         ActivityState, PlanState, ProjectCollectionError, ProjectSnapshot, TaskState,
         collect_markdown_state,
@@ -279,12 +280,17 @@ fn format_activity(activity: &ActivitySummary) -> String {
     )
 }
 
-fn render_evidence(root: &Path) -> &'static str {
-    if is_cargo_project(root) {
-        "Evidence: Cargo Build/Test available; run state not exposed by CLI"
-    } else {
-        "Evidence: Cargo Build/Test unavailable"
+fn render_evidence(root: &Path) -> String {
+    let config = load_project_config(root).unwrap_or_default();
+    let build_available = resolve_build_test_command(root, &config, BuildTestKind::Build).is_some();
+    let test_available = resolve_build_test_command(root, &config, BuildTestKind::Test).is_some();
+    match (build_available, test_available) {
+        (true, true) => "Evidence: Build/Test available; run state not exposed by CLI",
+        (true, false) => "Evidence: Build available; Test unavailable",
+        (false, true) => "Evidence: Build unavailable; Test available",
+        (false, false) => "Evidence: Build/Test unavailable",
     }
+    .to_owned()
 }
 
 fn append_tasks<'a>(
@@ -528,9 +534,7 @@ mod tests {
         assert!(output.contains("Plan: 1/7"));
         assert!(output.contains("Tasks: 6 remaining"));
         assert!(output.contains("Activity: not a Git repository"));
-        assert!(
-            output.contains("Evidence: Cargo Build/Test available; run state not exposed by CLI")
-        );
+        assert!(output.contains("Evidence: Build/Test available; run state not exposed by CLI"));
         assert!(!output.contains(&project.path().display().to_string()));
         assert!(output.contains("docs"));
         assert!(output.contains(":1  Task 1"));
@@ -571,7 +575,27 @@ mod tests {
         assert!(unavailable.contains("Plan: unavailable"));
         assert!(unavailable.contains("Tasks: unavailable"));
         assert!(unavailable.contains("Activity: unavailable"));
-        assert!(unavailable.contains("Evidence: Cargo Build/Test unavailable"));
+        assert!(unavailable.contains("Evidence: Build/Test unavailable"));
+    }
+
+    #[test]
+    fn renders_configured_evidence_availability_per_kind() {
+        let project = TempProject::new();
+        fs::create_dir_all(project.path().join(".devscope")).unwrap();
+        fs::write(
+            project.path().join(".devscope/config.toml"),
+            "[verify.test]\nprogram = \"configured-test\"\n",
+        )
+        .unwrap();
+
+        let output = render_context(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+
+        assert!(output.contains("Evidence: Build unavailable; Test available"));
+        assert!(!output.contains("Cargo Build/Test"));
     }
 
     #[test]
