@@ -72,14 +72,28 @@ pub struct BuildTestFreshnessBaseline {
 impl BuildTestFreshnessBaseline {
     /// Captures the project state at the start of a Build/Test process.
     pub fn capture(root: &Path) -> Result<Self, BuildTestFreshnessError> {
+        Self::capture_with_exclusions(root, &[])
+    }
+
+    pub fn capture_with_exclusions(
+        root: &Path,
+        exclusions: &[PathBuf],
+    ) -> Result<Self, BuildTestFreshnessError> {
         Ok(Self {
-            entries: scan_build_test_inputs(root)?,
+            entries: scan_build_test_inputs(root, exclusions)?,
         })
     }
 
     /// Compares current inputs with the captured state without updating the baseline.
     pub fn fingerprint(root: &Path) -> Result<u64, BuildTestFreshnessError> {
-        let baseline = Self::capture(root)?;
+        Self::fingerprint_with_exclusions(root, &[])
+    }
+
+    pub fn fingerprint_with_exclusions(
+        root: &Path,
+        exclusions: &[PathBuf],
+    ) -> Result<u64, BuildTestFreshnessError> {
+        let baseline = Self::capture_with_exclusions(root, exclusions)?;
         Ok(baseline.fingerprint_value())
     }
 
@@ -90,7 +104,15 @@ impl BuildTestFreshnessBaseline {
     }
 
     pub fn check(&self, root: &Path) -> Result<BuildTestInputChange, BuildTestFreshnessError> {
-        let current = scan_build_test_inputs(root)?;
+        self.check_with_exclusions(root, &[])
+    }
+
+    pub fn check_with_exclusions(
+        &self,
+        root: &Path,
+        exclusions: &[PathBuf],
+    ) -> Result<BuildTestInputChange, BuildTestFreshnessError> {
+        let current = scan_build_test_inputs(root, exclusions)?;
         Ok(if self.entries == current {
             BuildTestInputChange::Unchanged
         } else {
@@ -131,9 +153,10 @@ pub fn evaluate_completed_build_test_freshness(
 
 fn scan_build_test_inputs(
     root: &Path,
+    exclusions: &[PathBuf],
 ) -> Result<Vec<BuildTestInputEntry>, BuildTestFreshnessError> {
     let mut entries = Vec::new();
-    scan_directory(root, root, &mut entries)?;
+    scan_directory(root, root, exclusions, &mut entries)?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
 }
@@ -141,6 +164,7 @@ fn scan_build_test_inputs(
 fn scan_directory(
     root: &Path,
     directory: &Path,
+    exclusions: &[PathBuf],
     entries: &mut Vec<BuildTestInputEntry>,
 ) -> Result<(), BuildTestFreshnessError> {
     let read_dir =
@@ -162,11 +186,11 @@ fn scan_directory(
             })?;
         let kind = entry_kind(&metadata);
 
-        if is_excluded(root, &path, kind) {
+        if is_excluded(root, &path, kind, exclusions) {
             continue;
         }
         if is_transparent_container(root, &path, kind) {
-            scan_directory(root, &path, entries)?;
+            scan_directory(root, &path, exclusions, entries)?;
             continue;
         }
 
@@ -177,7 +201,7 @@ fn scan_directory(
         let is_directory = input.kind == BuildTestInputEntryKind::Directory;
         entries.push(input);
         if is_directory {
-            scan_directory(root, &path, entries)?;
+            scan_directory(root, &path, exclusions, entries)?;
         }
     }
 
@@ -202,12 +226,21 @@ fn is_transparent_container(root: &Path, path: &Path, kind: BuildTestInputEntryK
             .strip_prefix(root)
             .is_ok_and(|relative| relative == Path::new(".devscope"))
 }
-fn is_excluded(root: &Path, path: &Path, kind: BuildTestInputEntryKind) -> bool {
+fn is_excluded(
+    root: &Path,
+    path: &Path,
+    kind: BuildTestInputEntryKind,
+    exclusions: &[PathBuf],
+) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };
 
-    name == ".git"
+    path.strip_prefix(root).is_ok_and(|relative| {
+        exclusions
+            .iter()
+            .any(|excluded| relative == excluded || relative.starts_with(excluded))
+    }) || name == ".git"
         || (name == "target" && kind == BuildTestInputEntryKind::Directory)
         || (kind == BuildTestInputEntryKind::Directory
             && path.strip_prefix(root).is_ok_and(|relative| {
@@ -513,6 +546,40 @@ mod tests {
             BuildTestInputChange::Changed
         );
     }
+    #[test]
+    fn configured_exclusions_ignore_a_directory_subtree_but_not_relevant_inputs() {
+        let project = TempProject::new();
+        project.write("src/lib.rs", "before");
+        project.write("generated/output.bin", "before");
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(&project.0, &exclusions).unwrap();
+        let initial_fingerprint =
+            BuildTestFreshnessBaseline::fingerprint_with_exclusions(&project.0, &exclusions)
+                .unwrap();
+
+        project.write("generated/nested/output.bin", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Unchanged
+        );
+        assert_eq!(
+            BuildTestFreshnessBaseline::fingerprint_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            initial_fingerprint
+        );
+
+        project.write("src/lib.rs", "after");
+        assert_eq!(
+            baseline
+                .check_with_exclusions(&project.0, &exclusions)
+                .unwrap(),
+            BuildTestInputChange::Changed
+        );
+    }
+
     #[test]
     fn ignores_git_metadata_changes() {
         let project = TempProject::new();

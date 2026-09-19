@@ -70,4 +70,4 @@
 
 - **Date:** 2026-09-19
 - **Decision:** Add per-kind project Config commands as program plus argument vector, with configured commands overriding the Cargo default and project-root working directory. Do not parse shell command strings.
-- **Reason:** This retains Cargo zero-config behavior while providing a small, tool-neutral process boundary. erify.exclude is parsed now but is not connected to freshness until a later slice.
+- **Reason:** This retains Cargo zero-config behavior while providing a small, tool-neutral process boundary. `verify.exclude` is parsed now but is not connected to freshness until a later slice.
