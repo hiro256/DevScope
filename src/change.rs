@@ -207,6 +207,9 @@ fn scan_directory(
         }
 
         let stamp = worktree_entry_stamp(&path)?;
+        if is_generated_worktree_directory(&stamp) {
+            continue;
+        }
         let is_directory = stamp.kind == WorktreeEntryKind::Directory;
         entries.push(stamp);
         if is_directory {
@@ -214,6 +217,11 @@ fn scan_directory(
         }
     }
     Ok(())
+}
+
+fn is_generated_worktree_directory(stamp: &WorktreeEntryStamp) -> bool {
+    stamp.kind == WorktreeEntryKind::Directory
+        && stamp.path.file_name().is_some_and(|name| name == "target")
 }
 
 fn worktree_entry_stamp(path: &Path) -> Result<WorktreeEntryStamp, GitWorktreeChangeError> {
@@ -819,6 +827,44 @@ mod tests {
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitWorktreeChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn worktree_ignores_generated_target_directory_changes() {
+        let project = TempProject::new();
+        project.write("a.txt", "a");
+        let mut detector = GitWorktreeChangeDetector::new(&project.0);
+
+        project.write("target/debug/output", "first");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+
+        project.write("target/debug/output", "second");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+
+        fs::remove_dir_all(project.0.join("target")).unwrap();
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn worktree_keeps_a_regular_file_named_target_relevant() {
+        let project = TempProject::new();
+        project.write("target", "before");
+        let mut detector = GitWorktreeChangeDetector::new(&project.0);
+
+        project.write("target", "after changed");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Changed
         );
     }
     fn git(root: &Path, args: &[&str]) {
