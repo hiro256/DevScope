@@ -15,6 +15,7 @@ pub struct ProjectConfig {
     plan: PlanConfig,
     artifact: ArtifactConfig,
     verify: VerifyConfig,
+    activity: ActivityConfig,
 }
 
 impl ProjectConfig {
@@ -28,6 +29,27 @@ impl ProjectConfig {
 
     pub fn verify(&self) -> &VerifyConfig {
         &self.verify
+    }
+
+    pub fn activity(&self) -> &ActivityConfig {
+        &self.activity
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActivityConfig {
+    excludes: Vec<PathBuf>,
+}
+
+impl ActivityConfig {
+    pub fn excludes(&self) -> &[PathBuf] {
+        &self.excludes
+    }
+
+    pub fn excludes_path(&self, candidate: &Path) -> bool {
+        self.excludes
+            .iter()
+            .any(|excluded| candidate == excluded || candidate.starts_with(excluded))
     }
 }
 
@@ -179,7 +201,7 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
     })?;
 
     for key in table.keys() {
-        if key != "plan" && key != "artifact" && key != "verify" {
+        if key != "plan" && key != "artifact" && key != "verify" && key != "activity" {
             return Err(unknown_key(path, key, "top level"));
         }
     }
@@ -242,10 +264,33 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
         }
     };
     let verify = parse_verify_config(path, table.get("verify"))?;
+    let activity = parse_activity_config(path, table.get("activity"))?;
     Ok(ProjectConfig {
         plan: PlanConfig { excludes },
         artifact,
         verify,
+        activity,
+    })
+}
+
+fn parse_activity_config(
+    path: &Path,
+    value: Option<&toml::Value>,
+) -> Result<ActivityConfig, ConfigError> {
+    let Some(value) = value else {
+        return Ok(ActivityConfig::default());
+    };
+    let table = value.as_table().ok_or_else(|| ConfigError::InvalidSchema {
+        path: path.to_path_buf(),
+        message: "`activity` must be a table".into(),
+    })?;
+    for key in table.keys() {
+        if key != "exclude" {
+            return Err(unknown_key(path, key, "[activity]"));
+        }
+    }
+    Ok(ActivityConfig {
+        excludes: parse_activity_excludes(path, table.get("exclude"))?,
     })
 }
 
@@ -353,6 +398,46 @@ fn parse_excludes(
         })
         .collect()
 }
+fn parse_activity_excludes(
+    path: &Path,
+    value: Option<&toml::Value>,
+) -> Result<Vec<PathBuf>, ConfigError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .ok_or_else(|| ConfigError::InvalidSchema {
+            path: path.to_path_buf(),
+            message: "`activity.exclude` must be an array of strings".to_owned(),
+        })?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| ConfigError::InvalidSchema {
+                    path: path.to_path_buf(),
+                    message: "`activity.exclude` must be an array of strings".to_owned(),
+                })
+                .and_then(|value| validate_activity_exclude_path(path, value))
+        })
+        .collect()
+}
+
+fn validate_activity_exclude_path(config_path: &Path, value: &str) -> Result<PathBuf, ConfigError> {
+    let normalized = value.replace('\\', "/");
+    let path = validate_exclude_path(config_path, "activity.exclude", &normalized)?;
+    if path == Path::new(".") {
+        return Err(ConfigError::InvalidPath {
+            path: config_path.to_path_buf(),
+            setting: "activity.exclude",
+            value: value.to_owned(),
+            reason: "path must not exclude the project root",
+        });
+    }
+    Ok(path)
+}
+
 fn unknown_key(path: &Path, key: &str, scope: &str) -> ConfigError {
     ConfigError::InvalidSchema {
         path: path.to_path_buf(),
@@ -438,6 +523,55 @@ mod tests {
             load_project_config(&project.0).unwrap(),
             ProjectConfig::default()
         );
+    }
+
+    #[test]
+    fn parses_activity_excludes_separately_from_verify_and_normalizes_windows_separators() {
+        let project = TempProject::new();
+        project.write_config(
+            "[verify]\nexclude = [\"verify-output\"]\n[activity]\nexclude = ['.devscope\\evidence', \"generated/cache/\"]\n",
+        );
+        let config = load_project_config(&project.0).unwrap();
+        assert_eq!(config.verify().excludes(), [PathBuf::from("verify-output")]);
+        assert_eq!(
+            config.activity().excludes(),
+            [
+                PathBuf::from(".devscope/evidence"),
+                PathBuf::from("generated/cache")
+            ]
+        );
+        assert!(
+            config
+                .activity()
+                .excludes_path(Path::new(".devscope/evidence/run/result.json"))
+        );
+        assert!(
+            !config
+                .activity()
+                .excludes_path(Path::new(".devscope/evidence-old/result.json"))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_activity_exclude_paths() {
+        let project = TempProject::new();
+        for value in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "C:\\temp",
+            "/tmp",
+            "generated/../src",
+            "generated/*",
+            "!generated",
+        ] {
+            project.write_config(&format!("[activity]\nexclude = [{value:?}]"));
+            assert!(matches!(
+                load_project_config(&project.0),
+                Err(ConfigError::InvalidPath { .. })
+            ));
+        }
     }
 
     #[test]

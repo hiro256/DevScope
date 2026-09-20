@@ -36,6 +36,13 @@ context
 Use `devscope task list` only to find Plan tasks not shown by `context`. Do not read the
 whole repository or create Current Work solely to satisfy this workflow.
 
+Before starting a multi-step implementation task, identify its parent Plan task. When it matches an
+existing Plan task, create a small Current Work checklist under that parent before changing code and
+set one item Active. When it has no suitable Plan parent, add or clarify the parent Plan task first
+only when the user has authorized Plan editing; otherwise ask before changing the Roadmap. Do not
+apply this to one-shot questions, reviews, trivial read-only checks, or small regressions whose scope
+does not warrant a Plan task.
+
 ## Current Work and Evidence
 
 - Plan is canonical intent; Current Work is temporary Recorded state. Completing Work

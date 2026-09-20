@@ -90,3 +90,8 @@
 
 - **Decision:** Record every worktree scan duration and capture root-level subtree counts and approximate durations only on the scan after an initial 200ms heuristic is exceeded.
 - **Reason:** This keeps the fast path small while providing bounded diagnostic context for a later exclusion workflow; the threshold is an internal heuristic, not a user policy or performance contract.
+
+## 2026-09-20 — Explicit Activity scan exclusions
+
+- **Decision:** Add `[activity].exclude` as literal project-relative policy for Git worktree scan suppression, separate from Git ignore and `[verify].exclude`. Rebuild the worker detector baseline whenever that setting changes.
+- **Reason:** A human or future AI can apply a reviewed exclusion without adding per-tick Git tracked-file checks. Rebuilding the baseline prevents exclusion-set changes from becoming false Git Activity refresh hints.

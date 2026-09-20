@@ -12,7 +12,8 @@ use devscope::{
     change::{
         ConfigChange, ConfigChangeDetector, CurrentWorkChange, CurrentWorkChangeDetector,
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
-        MarkdownChange, MarkdownChangeDetector, WorktreeScanDiagnostics, diagnose_worktree_scan,
+        MarkdownChange, MarkdownChangeDetector, WorktreeScanDiagnostics,
+        diagnose_worktree_scan_with_exclusions,
     },
     config::{ConfigError, ProjectConfig, load_project_config},
     current_work::load_current_work,
@@ -104,11 +105,17 @@ struct GitWorktreeWorker {
 }
 
 impl GitWorktreeWorker {
+    #[cfg(test)]
     fn new(root: PathBuf) -> Self {
+        Self::new_with_exclusions(root, Vec::new())
+    }
+
+    fn new_with_exclusions(root: PathBuf, excludes: Vec<PathBuf>) -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
         let (result_sender, result_receiver) = mpsc::channel();
         let join = thread::spawn(move || {
-            let mut detector = GitWorktreeChangeDetector::new(&root);
+            let mut detector =
+                GitWorktreeChangeDetector::new_with_exclusions(&root, excludes.clone());
             let mut diagnose_next = false;
             while let Ok(command) = command_receiver.recv() {
                 match command {
@@ -120,7 +127,7 @@ impl GitWorktreeWorker {
                             if diagnose_next && change.is_some() {
                                 let diagnostic_started = Instant::now();
                                 (
-                                    diagnose_worktree_scan(&root).ok(),
+                                    diagnose_worktree_scan_with_exclusions(&root, &excludes).ok(),
                                     Some(diagnostic_started.elapsed()),
                                 )
                             } else {
@@ -227,11 +234,16 @@ impl Drop for GitWorktreeWorker {
     }
 }
 
-fn new_git_worktree_worker(project_root: Option<&Path>, app: &App) -> Option<GitWorktreeWorker> {
+fn new_git_worktree_worker(
+    project_root: Option<&Path>,
+    app: &App,
+    config: &ProjectConfig,
+) -> Option<GitWorktreeWorker> {
     match (project_root, app.activity()) {
-        (Some(root), ActivityState::Available(_)) => {
-            Some(GitWorktreeWorker::new(root.to_path_buf()))
-        }
+        (Some(root), ActivityState::Available(_)) => Some(GitWorktreeWorker::new_with_exclusions(
+            root.to_path_buf(),
+            config.activity().excludes().to_vec(),
+        )),
         _ => None,
     }
 }
@@ -239,11 +251,17 @@ fn new_git_worktree_worker(project_root: Option<&Path>, app: &App) -> Option<Git
 fn reconcile_worktree_worker(
     project_root: Option<&Path>,
     app: &App,
+    config: &ProjectConfig,
     worker: &mut Option<GitWorktreeWorker>,
 ) {
     if matches!(app.activity(), ActivityState::Available(_)) {
         if worker.is_none() {
-            *worker = project_root.map(|root| GitWorktreeWorker::new(root.to_path_buf()));
+            *worker = project_root.map(|root| {
+                GitWorktreeWorker::new_with_exclusions(
+                    root.to_path_buf(),
+                    config.activity().excludes().to_vec(),
+                )
+            });
         }
     } else {
         *worker = None;
@@ -352,12 +370,29 @@ fn collect_change_requests(
     metadata_changes: &mut Option<GitMetadataChangeDetector>,
     config_changes: &mut Option<ConfigChangeDetector>,
     requests: &mut RefreshRequest,
-) {
+) -> bool {
     requests.markdown |= check_markdown_changes(project_root, markdown_changes);
-    requests.markdown |= check_config_changes(project_root, config_changes);
+    let config_changed = check_config_changes(project_root, config_changes);
+    requests.markdown |= config_changed;
     let worktree_changed = check_git_worktree_changes(project_root, worktree_changes);
     let metadata_changed = check_git_metadata_changes(project_root, metadata_changes);
     requests.git |= worktree_changed || metadata_changed;
+    config_changed
+}
+
+fn reload_activity_config(
+    root: &Path,
+    runtime: &mut BuildTestRuntime,
+    worker: &mut Option<GitWorktreeWorker>,
+) -> Result<bool, ConfigError> {
+    let config = load_project_config(root)?;
+    if runtime.config.activity().excludes() == config.activity().excludes() {
+        runtime.config = config;
+        return Ok(false);
+    }
+    runtime.config = config;
+    *worker = None;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -762,7 +797,7 @@ pub fn run(
     let mut needs_render = true;
     let mut scheduler = PollScheduler::new(session_start, PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
-    let mut worktree_worker = new_git_worktree_worker(project_root, app);
+    let mut worktree_worker = new_git_worktree_worker(project_root, app, config);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
@@ -810,13 +845,25 @@ pub fn run(
                             Ok(snapshot) => {
                                 app.apply_snapshot(snapshot);
                                 app.clear_refresh_error();
+                                if let Err(error) = reload_activity_config(
+                                    root,
+                                    &mut build_test_runtime,
+                                    &mut worktree_worker,
+                                ) {
+                                    app.set_refresh_error(error.to_string());
+                                }
                             }
                             Err(error) => app.set_refresh_error(error.to_string()),
                         }
                         if let Some(detector) = &mut markdown_changes {
                             detector.sync(root);
                         }
-                        reconcile_worktree_worker(project_root, app, &mut worktree_worker);
+                        reconcile_worktree_worker(
+                            project_root,
+                            app,
+                            &build_test_runtime.config,
+                            &mut worktree_worker,
+                        );
                         sync_git_worktree_worker(&mut worktree_worker);
                         if let Some(detector) = &mut metadata_changes {
                             detector.sync(root);
@@ -906,7 +953,7 @@ pub fn run(
         if scheduler.is_due(Instant::now()) {
             observe_active_build_test_inputs(project_root, &mut build_test_runtime);
             needs_render |= check_build_test_freshness(project_root, app, &build_test_runtime);
-            collect_change_requests(
+            let config_changed = collect_change_requests(
                 project_root,
                 &mut markdown_changes,
                 &mut None,
@@ -914,6 +961,13 @@ pub fn run(
                 &mut config_changes,
                 &mut requests,
             );
+            if config_changed
+                && let Some(root) = project_root
+                && let Err(error) =
+                    reload_activity_config(root, &mut build_test_runtime, &mut worktree_worker)
+            {
+                app.set_refresh_error(error.to_string());
+            }
             if worktree_worker
                 .as_mut()
                 .is_some_and(|worker| !worker.request_scan())
@@ -925,7 +979,12 @@ pub fn run(
             }
             if let Some(root) = project_root {
                 let outcome = apply_pending_refreshes(root, app, &mut None, &mut requests);
-                reconcile_worktree_worker(project_root, app, &mut worktree_worker);
+                reconcile_worktree_worker(
+                    project_root,
+                    app,
+                    &build_test_runtime.config,
+                    &mut worktree_worker,
+                );
                 let size = terminal.size()?;
                 let preview_active = changed_file_preview_active(size.width, size.height, app);
                 needs_render |=
@@ -1690,6 +1749,50 @@ mod tests {
         worker.last_duration = Some(result.duration);
         result.generation == worker.generation
             && matches!(result.change, Some(GitWorktreeChange::Changed))
+    }
+
+    #[test]
+    fn activity_config_reload_recreates_the_worker_without_a_false_change_baseline() {
+        let root = git_root();
+        fs::create_dir_all(root.join("generated")).unwrap();
+        fs::write(root.join("generated/output.txt"), "before").unwrap();
+        let mut runtime = BuildTestRuntime::default();
+        let mut worker = Some(GitWorktreeWorker::new(root.clone()));
+
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[activity]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        assert!(reload_activity_config(&root, &mut runtime, &mut worker).unwrap());
+        assert!(worker.is_none());
+        assert_eq!(
+            runtime.config.activity().excludes(),
+            [PathBuf::from("generated")]
+        );
+
+        let mut detector = GitWorktreeChangeDetector::new_with_exclusions(
+            &root,
+            runtime.config.activity().excludes().to_vec(),
+        );
+        assert_eq!(detector.check(&root).unwrap(), GitWorktreeChange::Unchanged);
+
+        fs::remove_file(root.join(".devscope/config.toml")).unwrap();
+        worker = Some(GitWorktreeWorker::new_with_exclusions(
+            root.clone(),
+            runtime.config.activity().excludes().to_vec(),
+        ));
+        assert!(reload_activity_config(&root, &mut runtime, &mut worker).unwrap());
+        assert!(worker.is_none());
+        assert!(runtime.config.activity().excludes().is_empty());
+
+        let mut detector = GitWorktreeChangeDetector::new_with_exclusions(
+            &root,
+            runtime.config.activity().excludes().to_vec(),
+        );
+        assert_eq!(detector.check(&root).unwrap(), GitWorktreeChange::Unchanged);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

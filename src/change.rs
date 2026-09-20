@@ -114,26 +114,32 @@ struct WorktreeEntryStamp {
 
 pub struct GitWorktreeChangeDetector {
     baseline: Option<Vec<WorktreeEntryStamp>>,
+    excludes: Vec<PathBuf>,
 }
 
 impl GitWorktreeChangeDetector {
     pub fn new(root: &Path) -> Self {
+        Self::new_with_exclusions(root, Vec::new())
+    }
+
+    pub fn new_with_exclusions(root: &Path, excludes: Vec<PathBuf>) -> Self {
         Self {
-            baseline: scan_worktree(root).ok(),
+            baseline: scan_worktree(root, &excludes).ok(),
+            excludes,
         }
     }
 
     pub fn check(&mut self, root: &Path) -> Result<GitWorktreeChange, GitWorktreeChangeError> {
         let Some(baseline) = &self.baseline else {
-            self.baseline = Some(scan_worktree(root)?);
+            self.baseline = Some(scan_worktree(root, &self.excludes)?);
             return Ok(GitWorktreeChange::Unchanged);
         };
 
-        if !known_entries_changed(baseline)? {
+        if !known_entries_changed(root, baseline, &self.excludes)? {
             return Ok(GitWorktreeChange::Unchanged);
         }
 
-        let current = scan_worktree(root)?;
+        let current = scan_worktree(root, &self.excludes)?;
         let changed = worktree_entries_differ(baseline, &current);
         self.baseline = Some(current);
         Ok(if changed {
@@ -144,15 +150,19 @@ impl GitWorktreeChangeDetector {
     }
 
     pub fn sync(&mut self, root: &Path) {
-        if let Ok(current) = scan_worktree(root) {
+        if let Ok(current) = scan_worktree(root, &self.excludes) {
             self.baseline = Some(current);
         }
     }
 }
 
-fn known_entries_changed(baseline: &[WorktreeEntryStamp]) -> Result<bool, GitWorktreeChangeError> {
+fn known_entries_changed(
+    root: &Path,
+    baseline: &[WorktreeEntryStamp],
+    excludes: &[PathBuf],
+) -> Result<bool, GitWorktreeChangeError> {
     for stamp in baseline {
-        match worktree_entry_stamp(&stamp.path) {
+        match worktree_entry_stamp(root, &stamp.path, excludes) {
             Ok(current) if current == *stamp => {}
             Ok(_) => return Ok(true),
             Err(GitWorktreeChangeError::Metadata { source, .. })
@@ -194,7 +204,14 @@ pub struct WorktreeScanDiagnostics {
 pub fn diagnose_worktree_scan(
     root: &Path,
 ) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
-    diagnose_worktree_children(root)
+    diagnose_worktree_scan_with_exclusions(root, &[])
+}
+
+pub fn diagnose_worktree_scan_with_exclusions(
+    root: &Path,
+    excludes: &[PathBuf],
+) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
+    diagnose_worktree_children(root, root, excludes)
 }
 
 /// Diagnoses exactly one root-level subtree without recursively exposing grandchildren.
@@ -202,28 +219,38 @@ pub fn diagnose_worktree_subtree(
     root: &Path,
     subtree: &Path,
 ) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
+    diagnose_worktree_subtree_with_exclusions(root, subtree, &[])
+}
+
+pub fn diagnose_worktree_subtree_with_exclusions(
+    root: &Path,
+    subtree: &Path,
+    excludes: &[PathBuf],
+) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
     let is_root_child = subtree
         .strip_prefix(root)
         .ok()
         .is_some_and(|relative| relative.components().count() == 1);
-    if !is_root_child {
+    if !is_root_child || is_activity_excluded(root, subtree, excludes) {
         return Err(GitWorktreeChangeError::InvalidDiagnosticSubtree {
             root: root.to_path_buf(),
             path: subtree.to_path_buf(),
         });
     }
-    let stamp = worktree_entry_stamp(subtree)?;
+    let stamp = worktree_entry_stamp(root, subtree, excludes)?;
     if stamp.kind != WorktreeEntryKind::Directory || is_generated_worktree_directory(&stamp) {
         return Err(GitWorktreeChangeError::InvalidDiagnosticSubtree {
             root: root.to_path_buf(),
             path: subtree.to_path_buf(),
         });
     }
-    diagnose_worktree_children(subtree)
+    diagnose_worktree_children(root, subtree, excludes)
 }
 
 fn diagnose_worktree_children(
+    project_root: &Path,
     root: &Path,
+    excludes: &[PathBuf],
 ) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
     let mut visited_entries = 1;
     let mut subtrees = Vec::new();
@@ -236,17 +263,19 @@ fn diagnose_worktree_children(
             source,
         })?;
         let path = entry.path();
-        if path.file_name().is_some_and(|name| name == ".git") {
+        if is_activity_excluded(project_root, &path, excludes)
+            || path.file_name().is_some_and(|name| name == ".git")
+        {
             continue;
         }
-        let stamp = worktree_entry_stamp(&path)?;
+        let stamp = worktree_entry_stamp(project_root, &path, excludes)?;
         if is_generated_worktree_directory(&stamp) {
             continue;
         }
         let started = std::time::Instant::now();
         let mut entries = vec![stamp.clone()];
         if stamp.kind == WorktreeEntryKind::Directory {
-            scan_directory(&path, &mut entries)?;
+            scan_directory(project_root, &path, &mut entries, excludes)?;
         }
         visited_entries += entries.len();
         subtrees.push(WorktreeSubtreeStat {
@@ -267,19 +296,24 @@ fn diagnose_worktree_children(
     })
 }
 
-fn scan_worktree(root: &Path) -> Result<Vec<WorktreeEntryStamp>, GitWorktreeChangeError> {
-    let root_stamp = worktree_entry_stamp(root)?;
+fn scan_worktree(
+    root: &Path,
+    excludes: &[PathBuf],
+) -> Result<Vec<WorktreeEntryStamp>, GitWorktreeChangeError> {
+    let root_stamp = worktree_entry_stamp(root, root, excludes)?;
     let mut entries = vec![root_stamp.clone()];
     if root_stamp.kind == WorktreeEntryKind::Directory {
-        scan_directory(root, &mut entries)?;
+        scan_directory(root, root, &mut entries, excludes)?;
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
 }
 
 fn scan_directory(
+    root: &Path,
     directory: &Path,
     entries: &mut Vec<WorktreeEntryStamp>,
+    excludes: &[PathBuf],
 ) -> Result<(), GitWorktreeChangeError> {
     let read_dir =
         fs::read_dir(directory).map_err(|source| GitWorktreeChangeError::ReadDirectory {
@@ -292,21 +326,31 @@ fn scan_directory(
             source,
         })?;
         let path = entry.path();
-        if path.file_name().is_some_and(|name| name == ".git") {
+        if is_activity_excluded(root, &path, excludes)
+            || path.file_name().is_some_and(|name| name == ".git")
+        {
             continue;
         }
 
-        let stamp = worktree_entry_stamp(&path)?;
+        let stamp = worktree_entry_stamp(root, &path, excludes)?;
         if is_generated_worktree_directory(&stamp) {
             continue;
         }
         let is_directory = stamp.kind == WorktreeEntryKind::Directory;
         entries.push(stamp);
         if is_directory {
-            scan_directory(&path, entries)?;
+            scan_directory(root, &path, entries, excludes)?;
         }
     }
     Ok(())
+}
+
+fn is_activity_excluded(root: &Path, path: &Path, excludes: &[PathBuf]) -> bool {
+    path.strip_prefix(root).ok().is_some_and(|candidate| {
+        excludes
+            .iter()
+            .any(|excluded| candidate == excluded || candidate.starts_with(excluded))
+    })
 }
 
 fn is_generated_worktree_directory(stamp: &WorktreeEntryStamp) -> bool {
@@ -314,7 +358,11 @@ fn is_generated_worktree_directory(stamp: &WorktreeEntryStamp) -> bool {
         && stamp.path.file_name().is_some_and(|name| name == "target")
 }
 
-fn worktree_entry_stamp(path: &Path) -> Result<WorktreeEntryStamp, GitWorktreeChangeError> {
+fn worktree_entry_stamp(
+    root: &Path,
+    path: &Path,
+    excludes: &[PathBuf],
+) -> Result<WorktreeEntryStamp, GitWorktreeChangeError> {
     let metadata =
         fs::symlink_metadata(path).map_err(|source| GitWorktreeChangeError::Metadata {
             path: path.to_path_buf(),
@@ -330,7 +378,7 @@ fn worktree_entry_stamp(path: &Path) -> Result<WorktreeEntryStamp, GitWorktreeCh
         WorktreeEntryKind::Other
     };
     let children = if kind == WorktreeEntryKind::Directory {
-        Some(directory_children(path)?)
+        Some(directory_children(root, path, excludes)?)
     } else {
         None
     };
@@ -343,22 +391,40 @@ fn worktree_entry_stamp(path: &Path) -> Result<WorktreeEntryStamp, GitWorktreeCh
     })
 }
 
-fn directory_children(directory: &Path) -> Result<Vec<OsString>, GitWorktreeChangeError> {
+fn directory_children(
+    root: &Path,
+    directory: &Path,
+    excludes: &[PathBuf],
+) -> Result<Vec<OsString>, GitWorktreeChangeError> {
     let mut children = fs::read_dir(directory)
         .map_err(|source| GitWorktreeChangeError::ReadDirectory {
             path: directory.to_path_buf(),
             source,
         })?
-        .map(|entry| {
-            entry.map_err(|source| GitWorktreeChangeError::ReadDirectory {
+        .filter_map(|entry| match entry {
+            Ok(entry)
+                if entry.file_name() == ".git"
+                    || is_activity_excluded(root, &entry.path(), excludes) =>
+            {
+                None
+            }
+            Ok(entry) => {
+                let path = entry.path();
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata)
+                        if metadata.is_dir()
+                            && path.file_name().is_some_and(|name| name == "target") =>
+                    {
+                        None
+                    }
+                    Ok(_) => Some(Ok(entry.file_name())),
+                    Err(source) => Some(Err(GitWorktreeChangeError::Metadata { path, source })),
+                }
+            }
+            Err(source) => Some(Err(GitWorktreeChangeError::ReadDirectory {
                 path: directory.to_path_buf(),
                 source,
-            })
-        })
-        .filter_map(|entry| match entry {
-            Ok(entry) if entry.file_name() == ".git" => None,
-            Ok(entry) => Some(Ok(entry.file_name())),
-            Err(error) => Some(Err(error)),
+            })),
         })
         .collect::<Result<Vec<_>, _>>()?;
     children.sort();
@@ -862,7 +928,7 @@ mod tests {
         let mut diagnostics = Vec::new();
         for _ in 0..5 {
             let started = std::time::Instant::now();
-            let _ = scan_worktree(&project.0).unwrap();
+            let _ = scan_worktree(&project.0, &[]).unwrap();
             baseline.push(started.elapsed());
             let started = std::time::Instant::now();
             let _ = diagnose_worktree_scan(&project.0).unwrap();
@@ -928,6 +994,85 @@ mod tests {
 
         assert!(matches!(
             diagnose_worktree_subtree(&project.0, &project.0.join(".devscope/evidence")),
+            Err(GitWorktreeChangeError::InvalidDiagnosticSubtree { .. })
+        ));
+    }
+
+    #[test]
+    fn worktree_exclusions_ignore_configured_paths_but_not_similar_or_neighboring_paths() {
+        let project = TempProject::new();
+        project.write("generated/output.txt", "before");
+        project.write("src/cache/value.txt", "before");
+        project.write("ignored.txt", "before");
+        project.write("generated-old/output.txt", "before");
+        project.write("src/keep.txt", "before");
+        let mut detector = GitWorktreeChangeDetector::new_with_exclusions(
+            &project.0,
+            vec![
+                PathBuf::from("generated"),
+                PathBuf::from("src/cache"),
+                PathBuf::from("ignored.txt"),
+            ],
+        );
+
+        project.write("generated/output.txt", "excluded");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+        project.write("src/cache/value.txt", "excluded");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+        project.write("ignored.txt", "excluded");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Unchanged
+        );
+
+        project.write("generated-old/output.txt", "relevant");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Changed
+        );
+        project.write("src/keep.txt", "relevant");
+        assert_eq!(
+            detector.check(&project.0).unwrap(),
+            GitWorktreeChange::Changed
+        );
+    }
+
+    #[test]
+    fn worktree_diagnostics_skip_explicitly_excluded_subtrees() {
+        let project = TempProject::new();
+        project.write(".devscope/evidence/latest.json", "evidence");
+        project.write(".devscope/history/events.jsonl", "history");
+        project.write("src/main.rs", "fn main() {}");
+
+        let diagnostics = diagnose_worktree_scan_with_exclusions(
+            &project.0,
+            &[PathBuf::from(".devscope/evidence")],
+        )
+        .unwrap();
+        let devscope = diagnostics
+            .subtrees
+            .iter()
+            .find(|stat| stat.path.ends_with(".devscope"))
+            .unwrap();
+        assert_eq!(devscope.visited_entries, 3);
+        assert!(
+            diagnostics
+                .subtrees
+                .iter()
+                .all(|stat| !stat.path.ends_with("evidence"))
+        );
+        assert!(matches!(
+            diagnose_worktree_subtree_with_exclusions(
+                &project.0,
+                &project.0.join(".devscope/evidence"),
+                &[PathBuf::from(".devscope/evidence")],
+            ),
             Err(GitWorktreeChangeError::InvalidDiagnosticSubtree { .. })
         ));
     }
