@@ -254,3 +254,7 @@ Progress history experiment.
 Future validation may explore a hash, content validation, expected shape, or a
 generated-by relation when a concrete workflow requires it. None is a current
 roadmap commitment.
+
+### Background worktree observation
+
+Potentially expensive Git worktree change detection runs in a dedicated background worker rather than the TUI input and render path. Its result remains only a hint to request Git Activity recollection; it is not Evidence or an authoritative filesystem state. Git metadata detection remains separate and local to the event loop.

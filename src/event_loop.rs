@@ -1,6 +1,8 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -69,6 +71,147 @@ impl RefreshRequest {
 
 fn next_deadline(now: Instant, interval: Duration) -> Instant {
     now.checked_add(interval).unwrap_or(now)
+}
+
+enum GitWorktreeWorkerCommand {
+    Scan { generation: u64 },
+    Sync,
+    Shutdown,
+}
+
+struct WorktreeScanResult {
+    generation: u64,
+    change: Option<GitWorktreeChange>,
+    duration: Duration,
+}
+
+struct GitWorktreeWorker {
+    commands: Sender<GitWorktreeWorkerCommand>,
+    results: Receiver<WorktreeScanResult>,
+    join: Option<JoinHandle<()>>,
+    scan_in_flight: bool,
+    generation: u64,
+    last_duration: Option<Duration>,
+}
+
+impl GitWorktreeWorker {
+    fn new(root: PathBuf) -> Self {
+        let (command_sender, command_receiver) = mpsc::channel();
+        let (result_sender, result_receiver) = mpsc::channel();
+        let join = thread::spawn(move || {
+            let mut detector = GitWorktreeChangeDetector::new(&root);
+            while let Ok(command) = command_receiver.recv() {
+                match command {
+                    GitWorktreeWorkerCommand::Scan { generation } => {
+                        let started = Instant::now();
+                        let change = detector.check(&root).ok();
+                        if result_sender
+                            .send(WorktreeScanResult {
+                                generation,
+                                change,
+                                duration: started.elapsed(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    GitWorktreeWorkerCommand::Sync => detector.sync(&root),
+                    GitWorktreeWorkerCommand::Shutdown => break,
+                }
+            }
+        });
+        Self {
+            commands: command_sender,
+            results: result_receiver,
+            join: Some(join),
+            scan_in_flight: false,
+            generation: 0,
+            last_duration: None,
+        }
+    }
+
+    fn request_scan(&mut self) {
+        if self.scan_in_flight {
+            return;
+        }
+        if self
+            .commands
+            .send(GitWorktreeWorkerCommand::Scan {
+                generation: self.generation,
+            })
+            .is_ok()
+        {
+            self.scan_in_flight = true;
+        }
+    }
+
+    fn sync(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        let _ = self.commands.send(GitWorktreeWorkerCommand::Sync);
+    }
+
+    fn try_recv_changed(&mut self) -> bool {
+        let mut changed = false;
+        loop {
+            match self.results.try_recv() {
+                Ok(result) => {
+                    self.scan_in_flight = false;
+                    self.last_duration = Some(result.duration);
+                    changed |= result.generation == self.generation
+                        && matches!(result.change, Some(GitWorktreeChange::Changed));
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return changed,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn last_duration(&self) -> Option<Duration> {
+        self.last_duration
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.commands.send(GitWorktreeWorkerCommand::Shutdown);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for GitWorktreeWorker {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn new_git_worktree_worker(project_root: Option<&Path>, app: &App) -> Option<GitWorktreeWorker> {
+    match (project_root, app.activity()) {
+        (Some(root), ActivityState::Available(_)) => {
+            Some(GitWorktreeWorker::new(root.to_path_buf()))
+        }
+        _ => None,
+    }
+}
+
+fn reconcile_worktree_worker(
+    project_root: Option<&Path>,
+    app: &App,
+    worker: &mut Option<GitWorktreeWorker>,
+) {
+    if matches!(app.activity(), ActivityState::Available(_)) {
+        if worker.is_none() {
+            *worker = project_root.map(|root| GitWorktreeWorker::new(root.to_path_buf()));
+        }
+    } else {
+        *worker = None;
+    }
+}
+
+fn sync_git_worktree_worker(worker: &mut Option<GitWorktreeWorker>) {
+    if let Some(worker) = worker {
+        worker.sync();
+    }
 }
 
 fn check_markdown_changes(
@@ -175,6 +318,7 @@ fn collect_change_requests(
     requests.git |= worktree_changed || metadata_changed;
 }
 
+#[cfg(test)]
 fn new_git_worktree_detector(
     project_root: Option<&Path>,
     app: &App,
@@ -195,20 +339,6 @@ fn reconcile_worktree_detector(
             *worktree_changes = Some(GitWorktreeChangeDetector::new(root));
         }
         (_, ActivityState::Available(_), true) => {}
-        _ => *worktree_changes = None,
-    }
-}
-
-fn sync_git_worktree_detector(
-    project_root: Option<&Path>,
-    app: &App,
-    worktree_changes: &mut Option<GitWorktreeChangeDetector>,
-) {
-    match (project_root, app.activity()) {
-        (Some(root), ActivityState::Available(_)) => match worktree_changes {
-            Some(detector) => detector.sync(root),
-            None => *worktree_changes = Some(GitWorktreeChangeDetector::new(root)),
-        },
         _ => *worktree_changes = None,
     }
 }
@@ -590,7 +720,7 @@ pub fn run(
     let mut needs_render = true;
     let mut scheduler = PollScheduler::new(session_start, PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
-    let mut worktree_changes = new_git_worktree_detector(project_root, app);
+    let mut worktree_worker = new_git_worktree_worker(project_root, app);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
@@ -644,7 +774,8 @@ pub fn run(
                         if let Some(detector) = &mut markdown_changes {
                             detector.sync(root);
                         }
-                        sync_git_worktree_detector(project_root, app, &mut worktree_changes);
+                        reconcile_worktree_worker(project_root, app, &mut worktree_worker);
+                        sync_git_worktree_worker(&mut worktree_worker);
                         if let Some(detector) = &mut metadata_changes {
                             detector.sync(root);
                         }
@@ -719,6 +850,10 @@ pub fn run(
             }
         }
 
+        if let Some(worker) = &mut worktree_worker {
+            requests.git |= worker.try_recv_changed();
+        }
+
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
 
         if scheduler.is_due(Instant::now()) {
@@ -727,17 +862,20 @@ pub fn run(
             collect_change_requests(
                 project_root,
                 &mut markdown_changes,
-                &mut worktree_changes,
+                &mut None,
                 &mut metadata_changes,
                 &mut config_changes,
                 &mut requests,
             );
+            if let Some(worker) = &mut worktree_worker {
+                worker.request_scan();
+            }
             if check_current_work_changes(project_root, &mut current_work_changes) {
                 needs_render |= refresh_current_work(project_root, app);
             }
             if let Some(root) = project_root {
-                let outcome =
-                    apply_pending_refreshes(root, app, &mut worktree_changes, &mut requests);
+                let outcome = apply_pending_refreshes(root, app, &mut None, &mut requests);
+                reconcile_worktree_worker(project_root, app, &mut worktree_worker);
                 let size = terminal.size()?;
                 let preview_active = changed_file_preview_active(size.width, size.height, app);
                 needs_render |=
@@ -1491,6 +1629,40 @@ mod tests {
         let start = Instant::now();
         let mut scheduler = PollScheduler::new(start, Duration::from_secs(1));
         assert!(!scheduler.is_due(start + Duration::from_millis(999)));
+    }
+
+    fn wait_for_worktree_result(worker: &mut GitWorktreeWorker) -> bool {
+        let result = worker
+            .results
+            .recv_timeout(Duration::from_secs(2))
+            .expect("worktree worker did not finish");
+        worker.scan_in_flight = false;
+        worker.last_duration = Some(result.duration);
+        result.generation == worker.generation
+            && matches!(result.change, Some(GitWorktreeChange::Changed))
+    }
+
+    #[test]
+    fn worktree_worker_keeps_detector_state_off_the_event_loop_and_syncs() {
+        let root = temp_root();
+        fs::write(root.join("tracked.txt"), "before").unwrap();
+        let mut worker = GitWorktreeWorker::new(root.clone());
+
+        worker.request_scan();
+        worker.request_scan();
+        assert!(!wait_for_worktree_result(&mut worker));
+        assert!(worker.last_duration().is_some());
+
+        fs::write(root.join("tracked.txt"), "after").unwrap();
+        worker.request_scan();
+        assert!(wait_for_worktree_result(&mut worker));
+
+        worker.sync();
+        worker.request_scan();
+        assert!(!wait_for_worktree_result(&mut worker));
+        worker.shutdown();
+        assert!(worker.join.is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

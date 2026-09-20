@@ -81,3 +81,8 @@
 
 - **Decision:** Treat Git worktree detection as a heuristic for Git Activity recollection, not as a generic filesystem watcher. Keep the temporary `target` safeguard, but make a future detector candidate set Git-aware through `git ls-files -c -o --exclude-standard -z` plus path metadata stamps. Retain Git metadata detection separately.
 - **Reason:** Git owns nested ignore, negation, repository-local, and global exclude semantics. A recursive scanner with directory-name exclusions is both incomplete and vulnerable to generated-output scale, while polling full Activity would duplicate more expensive Git collection work.
+
+## 2026-09-20 — Isolate Git worktree scanning from TUI responsiveness
+
+- **Decision:** Run `GitWorktreeChangeDetector` in one std-thread worker that owns its detector baseline, and communicate scan requests/results through bounded-by-state channels. Keep Git metadata detection and Activity collection outside that worker for now.
+- **Reason:** A recursive worktree scan can take hundreds of milliseconds or longer on generated-output-heavy projects. Isolating it preserves TUI input/render responsiveness without introducing a generic worker framework, runtime dependency, or a new observation authority.
