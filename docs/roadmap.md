@@ -117,7 +117,7 @@
 
 ### TUI refinement
 
-- [ ] Refine NOW presentation from explicit Current Work Active state
+- [x] Refine NOW presentation from explicit Current Work Active state
 - [ ] Refine Project Progress visual hierarchy and progress indicators
 - [ ] Refine Preview content and density across focused panels
 - [ ] Dogfood five-second project-state understanding
