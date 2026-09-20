@@ -571,6 +571,7 @@ mod tests {
     use std::{
         fs,
         sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
     };
 
     static ID: AtomicUsize = AtomicUsize::new(0);
@@ -867,6 +868,299 @@ mod tests {
             GitWorktreeChange::Changed
         );
     }
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CandidateStamp {
+        exists: bool,
+        len: Option<u64>,
+        modified: Option<SystemTime>,
+    }
+
+    #[derive(Debug)]
+    struct TrackedCandidateCache {
+        paths: Vec<PathBuf>,
+        stamps: Vec<CandidateStamp>,
+    }
+
+    impl TrackedCandidateCache {
+        fn new(root: &Path) -> Self {
+            let paths = tracked_candidate_paths(root);
+            let stamps = paths
+                .iter()
+                .map(|path| candidate_stamp(&root.join(path)))
+                .collect();
+            Self { paths, stamps }
+        }
+
+        fn refresh(&mut self, root: &Path) {
+            *self = Self::new(root);
+        }
+
+        fn changed(&self, root: &Path) -> bool {
+            self.paths
+                .iter()
+                .zip(&self.stamps)
+                .any(|(path, stamp)| candidate_stamp(&root.join(path)) != *stamp)
+        }
+    }
+
+    fn candidate_stamp(path: &Path) -> CandidateStamp {
+        match fs::metadata(path) {
+            Ok(metadata) => CandidateStamp {
+                exists: true,
+                len: Some(metadata.len()),
+                modified: metadata.modified().ok(),
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => CandidateStamp {
+                exists: false,
+                len: None,
+                modified: None,
+            },
+            Err(error) => panic!("candidate metadata failed for {}: {error}", path.display()),
+        }
+    }
+
+    fn git_candidate_output(root: &Path, args: &[&str]) -> Vec<u8> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("ls-files")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    }
+
+    fn parse_candidate_paths(output: &[u8]) -> Vec<PathBuf> {
+        output
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(std::str::from_utf8(path).unwrap()))
+            .collect()
+    }
+
+    fn git_candidate_paths(root: &Path, args: &[&str]) -> Vec<PathBuf> {
+        parse_candidate_paths(&git_candidate_output(root, args))
+    }
+
+    fn tracked_candidate_paths(root: &Path) -> Vec<PathBuf> {
+        git_candidate_paths(root, &["-c", "-z"])
+    }
+
+    fn untracked_candidate_paths(root: &Path) -> Vec<PathBuf> {
+        git_candidate_paths(root, &["-o", "--exclude-standard", "-z"])
+    }
+
+    #[test]
+    fn candidate_cache_detects_tracked_edits_and_deletions() {
+        let project = git_project();
+        let cache = TrackedCandidateCache::new(&project.0);
+        assert_eq!(cache.paths, vec![PathBuf::from("a.txt")]);
+        assert!(!cache.changed(&project.0));
+
+        project.write("a.txt", "a longer tracked edit");
+        assert!(cache.changed(&project.0));
+        fs::remove_file(project.0.join("a.txt")).unwrap();
+        assert!(cache.changed(&project.0));
+    }
+
+    #[test]
+    fn candidate_cache_refreshes_after_index_changes_and_keeps_tracked_ignored_paths() {
+        let project = git_project();
+        project.write(".gitignore", "target/\n");
+        git(&project.0, &["add", ".gitignore"]);
+        git(&project.0, &["commit", "-m", "ignore target"]);
+        project.write("target/tracked.txt", "tracked despite ignore");
+        git(&project.0, &["add", "-f", "target/tracked.txt"]);
+        let mut cache = TrackedCandidateCache::new(&project.0);
+        assert!(cache.paths.contains(&PathBuf::from("target/tracked.txt")));
+
+        let mut metadata = GitMetadataChangeDetector::new(&project.0);
+        git(&project.0, &["mv", "a.txt", "renamed.txt"]);
+        assert_eq!(
+            metadata.check(&project.0).unwrap(),
+            GitMetadataChange::Changed
+        );
+        cache.refresh(&project.0);
+        assert!(cache.paths.contains(&PathBuf::from("renamed.txt")));
+        assert!(!cache.paths.contains(&PathBuf::from("a.txt")));
+
+        git(&project.0, &["commit", "-m", "rename"]);
+        let index_before = metadata_stamp(&project.0.join(".git/index")).unwrap();
+        git(&project.0, &["rm", "renamed.txt"]);
+        assert_ne!(
+            metadata_stamp(&project.0.join(".git/index")).unwrap(),
+            index_before
+        );
+        cache.refresh(&project.0);
+        assert!(!cache.paths.contains(&PathBuf::from("renamed.txt")));
+    }
+
+    #[test]
+    fn candidate_cache_keeps_branch_switches_and_staged_adds_separate() {
+        let project = git_project();
+        git(&project.0, &["branch", "same-commit"]);
+        let mut metadata = GitMetadataChangeDetector::new(&project.0);
+        let before = tracked_candidate_paths(&project.0);
+        git(&project.0, &["switch", "same-commit"]);
+        assert_eq!(
+            metadata.check(&project.0).unwrap(),
+            GitMetadataChange::Changed
+        );
+        assert_eq!(tracked_candidate_paths(&project.0), before);
+
+        let index_before = metadata_stamp(&project.0.join(".git/index")).unwrap();
+        project.write("staged.txt", "staged");
+        git(&project.0, &["add", "staged.txt"]);
+        assert_ne!(
+            metadata_stamp(&project.0.join(".git/index")).unwrap(),
+            index_before
+        );
+        assert!(tracked_candidate_paths(&project.0).contains(&PathBuf::from("staged.txt")));
+    }
+
+    #[test]
+    fn candidate_cache_requires_untracked_discovery_for_new_paths_and_honors_ignores() {
+        let project = git_project();
+        project.write(".gitignore", "ignored/\n*.log\n!important.log\n");
+        project.write("subdir/.gitignore", "cache/\n");
+        git(&project.0, &["add", ".gitignore", "subdir/.gitignore"]);
+        git(&project.0, &["commit", "-m", "ignore fixture"]);
+        let cache = TrackedCandidateCache::new(&project.0);
+
+        project.write("new.txt", "root");
+        project.write("src/new.rs", "nested");
+        project.write("new-top-level/file.txt", "directory");
+        project.write("ignored/file.txt", "ignored");
+        project.write("subdir/cache/file.txt", "ignored nested");
+        project.write("ordinary.log", "ignored");
+        project.write("important.log", "not ignored");
+        let untracked = untracked_candidate_paths(&project.0);
+        for path in [
+            "new.txt",
+            "src/new.rs",
+            "new-top-level/file.txt",
+            "important.log",
+        ] {
+            assert!(untracked.contains(&PathBuf::from(path)), "{path}");
+        }
+        for path in ["ignored/file.txt", "subdir/cache/file.txt", "ordinary.log"] {
+            assert!(!untracked.contains(&PathBuf::from(path)), "{path}");
+        }
+        assert!(!cache.changed(&project.0));
+    }
+
+    #[test]
+    fn candidate_cache_keeps_tracked_devscope_work_and_config_visible() {
+        let project = git_project();
+        project.write(".gitignore", ".devscope/work/\n");
+        project.write(".devscope/work/current.md", "tracked work");
+        project.write(".devscope/config.toml", "[plan]\n");
+        git(
+            &project.0,
+            &[
+                "add",
+                ".gitignore",
+                "-f",
+                ".devscope/work/current.md",
+                ".devscope/config.toml",
+            ],
+        );
+        let tracked = tracked_candidate_paths(&project.0);
+        assert!(tracked.contains(&PathBuf::from(".devscope/work/current.md")));
+        assert!(tracked.contains(&PathBuf::from(".devscope/config.toml")));
+    }
+
+    #[test]
+    #[ignore = "manual Windows timing experiment"]
+    fn candidate_cache_timing_experiment() {
+        let project = git_project();
+        project.write(".gitignore", "ignored/\n");
+        for index in 0..5_000 {
+            project.write(&format!("tracked/{index}.txt"), "tracked");
+            project.write(&format!("ignored/{index}.txt"), "ignored");
+        }
+        git(&project.0, &["add", "."]);
+        git(&project.0, &["commit", "-m", "candidate timing fixture"]);
+        for index in 0..25 {
+            project.write(&format!("untracked/{index}.txt"), "untracked");
+        }
+
+        let cache = TrackedCandidateCache::new(&project.0);
+        let mut full_process = Vec::new();
+        let mut full_parse = Vec::new();
+        let mut full_metadata = Vec::new();
+        let mut full_total = Vec::new();
+        let mut cached_tracked_metadata = Vec::new();
+        let mut cached_untracked_process = Vec::new();
+        let mut cached_untracked_parse = Vec::new();
+        let mut cached_untracked_metadata = Vec::new();
+        let mut cached_total = Vec::new();
+        for _ in 0..5 {
+            let started = Instant::now();
+            let full_output =
+                git_candidate_output(&project.0, &["-c", "-o", "--exclude-standard", "-z"]);
+            full_process.push(started.elapsed());
+            let started = Instant::now();
+            let full = parse_candidate_paths(&full_output);
+            full_parse.push(started.elapsed());
+            let started = Instant::now();
+            let _stamps: Vec<_> = full
+                .iter()
+                .map(|path| candidate_stamp(&project.0.join(path)))
+                .collect();
+            full_metadata.push(started.elapsed());
+            full_total.push(
+                *full_process.last().unwrap()
+                    + *full_parse.last().unwrap()
+                    + *full_metadata.last().unwrap(),
+            );
+
+            let started = Instant::now();
+            let _tracked_changed = cache.changed(&project.0);
+            cached_tracked_metadata.push(started.elapsed());
+            let started = Instant::now();
+            let untracked_output =
+                git_candidate_output(&project.0, &["-o", "--exclude-standard", "-z"]);
+            cached_untracked_process.push(started.elapsed());
+            let started = Instant::now();
+            let untracked = parse_candidate_paths(&untracked_output);
+            cached_untracked_parse.push(started.elapsed());
+            let started = Instant::now();
+            let _stamps: Vec<_> = untracked
+                .iter()
+                .map(|path| candidate_stamp(&project.0.join(path)))
+                .collect();
+            cached_untracked_metadata.push(started.elapsed());
+            cached_total.push(
+                *cached_tracked_metadata.last().unwrap()
+                    + *cached_untracked_process.last().unwrap()
+                    + *cached_untracked_parse.last().unwrap()
+                    + *cached_untracked_metadata.last().unwrap(),
+            );
+        }
+        println!(
+            "candidate timing full: process={:?}; parse={:?}; metadata={:?}; total={:?}",
+            timing_summary(&mut full_process),
+            timing_summary(&mut full_parse),
+            timing_summary(&mut full_metadata),
+            timing_summary(&mut full_total),
+        );
+        println!(
+            "candidate timing cached: tracked metadata={:?}; untracked process={:?}; untracked parse={:?}; untracked metadata={:?}; total={:?}",
+            timing_summary(&mut cached_tracked_metadata),
+            timing_summary(&mut cached_untracked_process),
+            timing_summary(&mut cached_untracked_parse),
+            timing_summary(&mut cached_untracked_metadata),
+            timing_summary(&mut cached_total),
+        );
+    }
+
+    fn timing_summary(samples: &mut [Duration]) -> (Duration, Duration) {
+        samples.sort();
+        (samples[samples.len() / 2], samples[samples.len() - 1])
+    }
+
     fn git(root: &Path, args: &[&str]) {
         assert!(
             std::process::Command::new("git")
