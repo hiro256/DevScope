@@ -2339,6 +2339,56 @@ mod tests {
         );
     }
     #[test]
+    fn project_progress_keeps_overview_states_visible_across_layouts_and_preview() {
+        let mut app = App::new(ProjectSnapshot::new(
+            PlanState::Available(PlanSummary::new(2, 4)),
+            activity_with_files(vec![GitChangedFile {
+                path: "src/ui.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+            TaskState::Unavailable,
+        ));
+        app.apply_current_work(work_state("- [x] Done\n- [ ] Next\n"));
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Test,
+                "cargo",
+                "cargo test",
+            )),
+        );
+
+        for (width, height) in [(80, 30), (80, 25), (40, 18)] {
+            let output = draw(&app, width, height);
+            assert!(output.contains("Plan"));
+            assert!(output.contains("50% 2/4"));
+            assert!(output.contains("Work"));
+            assert!(output.contains("50% 1/2"));
+            assert!(output.contains("Activity   1 changed file"));
+            assert!(output.contains("Evidence"));
+            assert!(output.contains("Build ✓ Passed"));
+            if width >= 80 {
+                assert!(output.contains("Evidence   Build ✓ Passed | Test ▶ Running"));
+            }
+        }
+
+        app.toggle_preview();
+        let without_preview = draw(&app, 80, 30);
+        assert!(without_preview.contains("50% 2/4"));
+        assert!(without_preview.contains("50% 1/2"));
+        assert!(without_preview.contains("Evidence   Build ✓ Passed | Test ▶ Running"));
+    }
+
+    #[test]
     fn plan_progress_degrades_without_exceeding_the_available_line_width() {
         for width in [80, 32, 18] {
             let line = plan_line(PlanState::Available(PlanSummary::new(53, 59)), width);
