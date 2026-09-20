@@ -182,9 +182,7 @@ fn assess_activity_exclude_candidate(
     let contains_tracked_files = git_path
         .as_deref()
         .and_then(|path| git_path_contains_tracked_files(root, path));
-    let is_devscope_local_state = relative
-        .and_then(|path| path.components().next())
-        .is_some_and(|component| component.as_os_str() == ".devscope");
+    let is_devscope_local_state = relative.is_some_and(|path| path == Path::new(".devscope"));
     let has_generated_output_name_hint = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -530,7 +528,7 @@ fn command_error(output: &Output) -> GitActivityError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::change::WorktreeSubtreeStat;
+    use crate::change::{WorktreeSubtreeStat, diagnose_worktree_subtree};
     use std::{
         fs,
         sync::atomic::{AtomicUsize, Ordering},
@@ -874,6 +872,144 @@ mod tests {
                 .reasons
                 .contains(&ActivityExcludeCandidateReason::DevScopeLocalState)
         );
+    }
+
+    #[test]
+    fn drills_down_devscope_children_with_existing_git_assessment_semantics() {
+        let repo = Repo::new(true);
+        fs::write(
+            repo.0.join(".gitignore"),
+            ".devscope/evidence/\n.devscope/history/\n.devscope/forced/\n",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.0.join(".devscope/evidence")).unwrap();
+        fs::write(repo.0.join(".devscope/evidence/latest.json"), "evidence").unwrap();
+        fs::create_dir_all(repo.0.join(".devscope/history")).unwrap();
+        fs::write(repo.0.join(".devscope/history/events.jsonl"), "event").unwrap();
+        fs::create_dir_all(repo.0.join(".devscope/work")).unwrap();
+        fs::write(repo.0.join(".devscope/work/current.md"), "# Current Work\n").unwrap();
+        fs::write(repo.0.join(".devscope/config.toml"), "[devscope]\n").unwrap();
+        fs::create_dir_all(repo.0.join(".devscope/forced")).unwrap();
+        fs::write(repo.0.join(".devscope/forced/value.txt"), "tracked").unwrap();
+        fs::write(repo.0.join(".devscope/review.txt"), "review").unwrap();
+        fs::write(repo.0.join(".git/info/exclude"), ".devscope/info-cache/\n").unwrap();
+        fs::create_dir_all(repo.0.join(".devscope/info-cache")).unwrap();
+        fs::write(repo.0.join(".devscope/info-cache/cache.txt"), "cache").unwrap();
+        cmd(
+            &repo.0,
+            &[
+                "add",
+                ".gitignore",
+                ".devscope/work/current.md",
+                ".devscope/config.toml",
+            ],
+        );
+        cmd(&repo.0, &["add", "-f", ".devscope/forced/value.txt"]);
+        cmd(
+            &repo.0,
+            &["commit", "-m", "set up DevScope diagnostic fixture"],
+        );
+
+        let root_assessment = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(&repo.0, &[(".devscope", 20, 100)]),
+            3,
+        )
+        .remove(0);
+        assert_eq!(
+            root_assessment.status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert!(
+            root_assessment
+                .reasons
+                .contains(&ActivityExcludeCandidateReason::DevScopeLocalState)
+        );
+
+        let child_diagnostics =
+            diagnose_worktree_subtree(&repo.0, &repo.0.join(".devscope")).unwrap();
+        let assessments = assess_activity_exclude_candidates(&repo.0, &child_diagnostics, 10);
+        let by_name = |name| {
+            assessments
+                .iter()
+                .find(|assessment| {
+                    assessment
+                        .path
+                        .file_name()
+                        .is_some_and(|value| value == name)
+                })
+                .unwrap()
+        };
+
+        for name in ["evidence", "history", "info-cache"] {
+            let assessment = by_name(name);
+            assert_eq!(
+                assessment.status,
+                ActivityExcludeCandidateStatus::SafeCandidate
+            );
+            assert_eq!(assessment.git_ignored, Some(true));
+            assert_eq!(assessment.contains_tracked_files, Some(false));
+        }
+        for name in ["work", "config.toml"] {
+            let assessment = by_name(name);
+            assert_ne!(
+                assessment.status,
+                ActivityExcludeCandidateStatus::SafeCandidate
+            );
+            assert_eq!(assessment.contains_tracked_files, Some(true));
+        }
+        let forced = by_name("forced");
+        assert_eq!(
+            forced.status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert_eq!(forced.git_ignored, Some(true));
+        assert_eq!(forced.contains_tracked_files, Some(true));
+        assert_eq!(
+            by_name("review.txt").status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+    }
+
+    #[test]
+    fn respects_nested_gitignore_and_negation_when_assessing_drill_down_children() {
+        let repo = Repo::new(true);
+        fs::create_dir_all(repo.0.join(".devscope/probes/ignored")).unwrap();
+        fs::write(
+            repo.0.join(".devscope/probes/.gitignore"),
+            "ignored/\n*.tmp\n!keep.tmp\n",
+        )
+        .unwrap();
+        fs::write(repo.0.join(".devscope/probes/ignored/value.txt"), "ignored").unwrap();
+        fs::write(repo.0.join(".devscope/probes/drop.tmp"), "ignored").unwrap();
+        fs::write(repo.0.join(".devscope/probes/keep.tmp"), "keep").unwrap();
+
+        let assessments = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(
+                &repo.0,
+                &[
+                    (".devscope/probes/ignored", 4, 30),
+                    (".devscope/probes/drop.tmp", 1, 20),
+                    (".devscope/probes/keep.tmp", 1, 10),
+                ],
+            ),
+            3,
+        );
+
+        assert_eq!(
+            assessments[0].status,
+            ActivityExcludeCandidateStatus::SafeCandidate
+        );
+        assert_eq!(
+            assessments[1].status,
+            ActivityExcludeCandidateStatus::SafeCandidate
+        );
+        assert_eq!(
+            assessments[2].status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert_eq!(assessments[2].git_ignored, Some(false));
     }
 
     #[test]

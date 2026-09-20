@@ -92,6 +92,7 @@ pub enum GitWorktreeChange {
 pub enum GitWorktreeChangeError {
     ReadDirectory { path: PathBuf, source: io::Error },
     Metadata { path: PathBuf, source: io::Error },
+    InvalidDiagnosticSubtree { root: PathBuf, path: PathBuf },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +192,37 @@ pub struct WorktreeScanDiagnostics {
 }
 
 pub fn diagnose_worktree_scan(
+    root: &Path,
+) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
+    diagnose_worktree_children(root)
+}
+
+/// Diagnoses exactly one root-level subtree without recursively exposing grandchildren.
+pub fn diagnose_worktree_subtree(
+    root: &Path,
+    subtree: &Path,
+) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
+    let is_root_child = subtree
+        .strip_prefix(root)
+        .ok()
+        .is_some_and(|relative| relative.components().count() == 1);
+    if !is_root_child {
+        return Err(GitWorktreeChangeError::InvalidDiagnosticSubtree {
+            root: root.to_path_buf(),
+            path: subtree.to_path_buf(),
+        });
+    }
+    let stamp = worktree_entry_stamp(subtree)?;
+    if stamp.kind != WorktreeEntryKind::Directory || is_generated_worktree_directory(&stamp) {
+        return Err(GitWorktreeChangeError::InvalidDiagnosticSubtree {
+            root: root.to_path_buf(),
+            path: subtree.to_path_buf(),
+        });
+    }
+    diagnose_worktree_children(subtree)
+}
+
+fn diagnose_worktree_children(
     root: &Path,
 ) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
     let mut visited_entries = 1;
@@ -868,6 +900,36 @@ mod tests {
                 .iter()
                 .all(|stat| stat.path.file_name().is_none_or(|name| name != "target"))
         );
+    }
+
+    #[test]
+    fn worktree_subtree_diagnostics_report_only_direct_children() {
+        let project = TempProject::new();
+        project.write(".devscope/evidence/run/result.json", "result");
+        project.write(".devscope/history/events.jsonl", "event");
+        project.write(".devscope/work/current.md", "# Current Work");
+        project.write(".devscope/config.toml", "[devscope]");
+        project.write(".devscope/target/ignored.txt", "ignored");
+
+        let diagnostics =
+            diagnose_worktree_subtree(&project.0, &project.0.join(".devscope")).unwrap();
+        assert_eq!(diagnostics.visited_entries, 9);
+        assert_eq!(diagnostics.subtrees.len(), 4);
+        assert!(diagnostics.subtrees.iter().all(|stat| {
+            stat.path.parent() == Some(project.0.join(".devscope").as_path())
+                && stat.path.file_name().is_none_or(|name| name != "target")
+        }));
+        assert!(
+            diagnostics
+                .subtrees
+                .iter()
+                .all(|stat| !stat.path.ends_with("run") && !stat.path.ends_with("result.json"))
+        );
+
+        assert!(matches!(
+            diagnose_worktree_subtree(&project.0, &project.0.join(".devscope/evidence")),
+            Err(GitWorktreeChangeError::InvalidDiagnosticSubtree { .. })
+        ));
     }
 
     #[test]
