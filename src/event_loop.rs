@@ -74,6 +74,10 @@ fn next_deadline(now: Instant, interval: Duration) -> Instant {
     now.checked_add(interval).unwrap_or(now)
 }
 
+fn is_slow_worktree_scan(duration: Duration) -> bool {
+    duration >= SLOW_WORKTREE_SCAN
+}
+
 enum GitWorktreeWorkerCommand {
     Scan { generation: u64 },
     Sync,
@@ -85,6 +89,7 @@ struct WorktreeScanResult {
     change: Option<GitWorktreeChange>,
     duration: Duration,
     diagnostics: Option<WorktreeScanDiagnostics>,
+    diagnostic_duration: Option<Duration>,
 }
 
 struct GitWorktreeWorker {
@@ -95,6 +100,7 @@ struct GitWorktreeWorker {
     generation: u64,
     last_duration: Option<Duration>,
     last_diagnostics: Option<WorktreeScanDiagnostics>,
+    last_diagnostic_duration: Option<Duration>,
 }
 
 impl GitWorktreeWorker {
@@ -107,18 +113,27 @@ impl GitWorktreeWorker {
             while let Ok(command) = command_receiver.recv() {
                 match command {
                     GitWorktreeWorkerCommand::Scan { generation } => {
-                        let started = Instant::now();
+                        let scan_started = Instant::now();
                         let change = detector.check(&root).ok();
-                        let diagnostics = (diagnose_next && change.is_some())
-                            .then(|| diagnose_worktree_scan(&root).ok())
-                            .flatten();
-                        diagnose_next = started.elapsed() >= SLOW_WORKTREE_SCAN;
+                        let scan_duration = scan_started.elapsed();
+                        let (diagnostics, diagnostic_duration) =
+                            if diagnose_next && change.is_some() {
+                                let diagnostic_started = Instant::now();
+                                (
+                                    diagnose_worktree_scan(&root).ok(),
+                                    Some(diagnostic_started.elapsed()),
+                                )
+                            } else {
+                                (None, None)
+                            };
+                        diagnose_next = is_slow_worktree_scan(scan_duration);
                         if result_sender
                             .send(WorktreeScanResult {
                                 generation,
                                 change,
-                                duration: started.elapsed(),
+                                duration: scan_duration,
                                 diagnostics,
+                                diagnostic_duration,
                             })
                             .is_err()
                         {
@@ -138,6 +153,7 @@ impl GitWorktreeWorker {
             generation: 0,
             last_duration: None,
             last_diagnostics: None,
+            last_diagnostic_duration: None,
         }
     }
 
@@ -177,6 +193,7 @@ impl GitWorktreeWorker {
                     self.scan_in_flight = false;
                     self.last_duration = Some(result.duration);
                     self.last_diagnostics = result.diagnostics;
+                    self.last_diagnostic_duration = result.diagnostic_duration;
                     changed |= result.generation == self.generation
                         && matches!(result.change, Some(GitWorktreeChange::Changed));
                 }
@@ -1707,6 +1724,21 @@ mod tests {
         assert!(!worker.scan_in_flight);
         assert!(!worker.request_scan());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn slow_worktree_scan_classification_uses_scan_duration_only() {
+        assert!(!is_slow_worktree_scan(
+            SLOW_WORKTREE_SCAN - Duration::from_millis(1)
+        ));
+        assert!(is_slow_worktree_scan(SLOW_WORKTREE_SCAN));
+        let first = is_slow_worktree_scan(Duration::from_millis(250));
+        let second = is_slow_worktree_scan(Duration::from_millis(1));
+        let third = is_slow_worktree_scan(Duration::from_millis(1));
+        assert!(first);
+        assert!(!second);
+        assert!(!third);
+        assert!(is_slow_worktree_scan(Duration::from_millis(250)));
     }
 
     #[test]
