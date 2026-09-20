@@ -131,9 +131,9 @@ impl GitWorktreeWorker {
         }
     }
 
-    fn request_scan(&mut self) {
+    fn request_scan(&mut self) -> bool {
         if self.scan_in_flight {
-            return;
+            return true;
         }
         if self
             .commands
@@ -143,15 +143,23 @@ impl GitWorktreeWorker {
             .is_ok()
         {
             self.scan_in_flight = true;
+            true
+        } else {
+            false
         }
     }
 
-    fn sync(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        let _ = self.commands.send(GitWorktreeWorkerCommand::Sync);
+    fn sync(&mut self) -> bool {
+        let generation = self.generation.wrapping_add(1);
+        if self.commands.send(GitWorktreeWorkerCommand::Sync).is_ok() {
+            self.generation = generation;
+            true
+        } else {
+            false
+        }
     }
 
-    fn try_recv_changed(&mut self) -> bool {
+    fn try_recv_changed(&mut self) -> Result<bool, ()> {
         let mut changed = false;
         loop {
             match self.results.try_recv() {
@@ -161,7 +169,11 @@ impl GitWorktreeWorker {
                     changed |= result.generation == self.generation
                         && matches!(result.change, Some(GitWorktreeChange::Changed));
                 }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return changed,
+                Err(TryRecvError::Empty) => return Ok(changed),
+                Err(TryRecvError::Disconnected) => {
+                    self.scan_in_flight = false;
+                    return Err(());
+                }
             }
         }
     }
@@ -209,8 +221,8 @@ fn reconcile_worktree_worker(
 }
 
 fn sync_git_worktree_worker(worker: &mut Option<GitWorktreeWorker>) {
-    if let Some(worker) = worker {
-        worker.sync();
+    if worker.as_mut().is_some_and(|worker| !worker.sync()) {
+        *worker = None;
     }
 }
 
@@ -850,8 +862,13 @@ pub fn run(
             }
         }
 
-        if let Some(worker) = &mut worktree_worker {
-            requests.git |= worker.try_recv_changed();
+        match worktree_worker
+            .as_mut()
+            .map(GitWorktreeWorker::try_recv_changed)
+        {
+            Some(Ok(changed)) => requests.git |= changed,
+            Some(Err(())) => worktree_worker = None,
+            None => {}
         }
 
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
@@ -867,8 +884,11 @@ pub fn run(
                 &mut config_changes,
                 &mut requests,
             );
-            if let Some(worker) = &mut worktree_worker {
-                worker.request_scan();
+            if worktree_worker
+                .as_mut()
+                .is_some_and(|worker| !worker.request_scan())
+            {
+                worktree_worker = None;
             }
             if check_current_work_changes(project_root, &mut current_work_changes) {
                 needs_render |= refresh_current_work(project_root, app);
@@ -1662,6 +1682,19 @@ mod tests {
         assert!(!wait_for_worktree_result(&mut worker));
         worker.shutdown();
         assert!(worker.join.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn worktree_worker_disconnect_clears_in_flight_and_rejects_new_requests() {
+        let root = temp_root();
+        let mut worker = GitWorktreeWorker::new(root.clone());
+        worker.shutdown();
+        worker.scan_in_flight = true;
+
+        assert_eq!(worker.try_recv_changed(), Err(()));
+        assert!(!worker.scan_in_flight);
+        assert!(!worker.request_scan());
         let _ = fs::remove_dir_all(root);
     }
 

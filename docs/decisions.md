@@ -84,5 +84,5 @@
 
 ## 2026-09-20 — Isolate Git worktree scanning from TUI responsiveness
 
-- **Decision:** Run `GitWorktreeChangeDetector` in one std-thread worker that owns its detector baseline, and communicate scan requests/results through bounded-by-state channels. Keep Git metadata detection and Activity collection outside that worker for now.
+- **Decision:** Run `GitWorktreeChangeDetector` in one std-thread worker that owns its detector baseline, and communicate scan requests/results through std::sync::mpsc channels while coalescing requests so at most one scan is in flight from the TUI side. Keep Git metadata detection and Activity collection outside that worker for now.
 - **Reason:** A recursive worktree scan can take hundreds of milliseconds or longer on generated-output-heavy projects. Isolating it preserves TUI input/render responsiveness without introducing a generic worker framework, runtime dependency, or a new observation authority.
