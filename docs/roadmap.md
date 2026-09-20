@@ -115,6 +115,18 @@
 
 - [x] Validate Detail View drill-down for focused panels
 
+### TUI refinement
+
+- [ ] Refine NOW presentation from explicit Current Work Active state
+- [ ] Refine Project Progress visual hierarchy and progress indicators
+- [ ] Refine Preview content and density across focused panels
+- [ ] Dogfood five-second project-state understanding
+
+### AI workflow refinement
+
+- [ ] Define AI-maintained Config workflow
+- [ ] Dogfood Config maintenance through the DevScope Skill
+
 ### Core observation
 
 - [x] Configurable Build/Test command resolution and freshness exclusions
