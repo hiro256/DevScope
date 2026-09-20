@@ -76,3 +76,8 @@
 
 - **Decision:** Package the operational DevScope workflow at `.agents/skills/devscope`. Keep the Skill focused on DevScope operation, the Setup Guide on onboarding and configuration, and `AGENTS.md` on repository authority and quality rules.
 - **Reason:** A repo-local Skill travels with a project and is automatically discoverable by Codex. A user-level link or installation can support local experimentation without replacing the portable project source.
+
+## 2026-09-20 — Git-aware worktree detector boundary
+
+- **Decision:** Treat Git worktree detection as a heuristic for Git Activity recollection, not as a generic filesystem watcher. Keep the temporary `target` safeguard, but make a future detector candidate set Git-aware through `git ls-files -c -o --exclude-standard -z` plus path metadata stamps. Retain Git metadata detection separately.
+- **Reason:** Git owns nested ignore, negation, repository-local, and global exclude semantics. A recursive scanner with directory-name exclusions is both incomplete and vulnerable to generated-output scale, while polling full Activity would duplicate more expensive Git collection work.

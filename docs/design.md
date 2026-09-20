@@ -36,6 +36,8 @@ The TUI and Progress Core must remain separate. The core should own project anal
 and produce UI-independent data, allowing future consumers such as a TUI, VS Code
 extension, Web UI, or JSON/API to use the same progress model.
 
+Git worktree change detection is a heuristic for deciding whether Git Activity may need recollection, not a generic filesystem watcher. It remains separate from Markdown, Config, Current Work, Build/Test Freshness, Artifact, and Git metadata observation. Its future candidate set should use Git ignore semantics rather than language-specific output-directory names.
+
 Agent integrations are adapters. They may enrich the observed state, but must not
 become a dependency of the core model.
 ## TUI interaction model
