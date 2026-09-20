@@ -259,3 +259,4 @@ roadmap commitment.
 
 Potentially expensive Git worktree change detection runs in a dedicated background worker rather than the TUI input and render path. Its result remains only a hint to request Git Activity recollection; it is not Evidence or an authoritative filesystem state. Git metadata detection remains separate and local to the event loop.
 Slow Git worktree scans may capture non-persisted, coarse diagnostics for root-level subtrees. These record visited entries and approximate subtree time as performance hints only; they are not Evidence or a stable profiling contract.
+Last successful slow-scan diagnostics remain in memory for that worker session; fast scans and failed diagnostic attempts do not clear them. They remain non-persisted performance hints.

@@ -192,8 +192,10 @@ impl GitWorktreeWorker {
                 Ok(result) => {
                     self.scan_in_flight = false;
                     self.last_duration = Some(result.duration);
-                    self.last_diagnostics = result.diagnostics;
-                    self.last_diagnostic_duration = result.diagnostic_duration;
+                    if let Some(diagnostics) = result.diagnostics {
+                        self.last_diagnostics = Some(diagnostics);
+                        self.last_diagnostic_duration = result.diagnostic_duration;
+                    }
                     changed |= result.generation == self.generation
                         && matches!(result.change, Some(GitWorktreeChange::Changed));
                 }
@@ -1723,6 +1725,42 @@ mod tests {
         assert_eq!(worker.try_recv_changed(), Err(()));
         assert!(!worker.scan_in_flight);
         assert!(!worker.request_scan());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn worker_retains_last_successful_diagnostics_across_fast_scans_and_sync() {
+        let root = temp_root();
+        let mut worker = GitWorktreeWorker::new(root.clone());
+        let first = WorktreeScanDiagnostics {
+            visited_entries: 1,
+            subtrees: Vec::new(),
+        };
+        worker.last_diagnostics = Some(first.clone());
+        worker.last_diagnostic_duration = Some(Duration::from_millis(3));
+        worker.sync();
+        assert_eq!(worker.last_diagnostics, Some(first.clone()));
+        assert_eq!(
+            worker.last_diagnostic_duration,
+            Some(Duration::from_millis(3))
+        );
+
+        let replacement = WorktreeScanDiagnostics {
+            visited_entries: 2,
+            subtrees: Vec::new(),
+        };
+        worker.last_diagnostics = Some(replacement.clone());
+        worker.last_diagnostic_duration = Some(Duration::from_millis(4));
+        assert_eq!(worker.last_diagnostics, Some(replacement));
+        assert_eq!(
+            worker.last_diagnostic_duration,
+            Some(Duration::from_millis(4))
+        );
+        worker.shutdown();
+        let fresh = GitWorktreeWorker::new(root.clone());
+        assert!(fresh.last_diagnostics.is_none());
+        assert!(fresh.last_diagnostic_duration.is_none());
+        drop(fresh);
         let _ = fs::remove_dir_all(root);
     }
 
