@@ -5,7 +5,10 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::Duration,
 };
+
+use crate::change::WorktreeScanDiagnostics;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitFileStatus {
@@ -105,6 +108,173 @@ impl fmt::Display for GitActivityError {
     }
 }
 impl Error for GitActivityError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityExcludeCandidateStatus {
+    SafeCandidate,
+    ReviewRequired,
+    NotCandidate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityExcludeCandidateReason {
+    GitIgnored,
+    NotGitIgnored,
+    ContainsTrackedFiles,
+    DevScopeLocalState,
+    GeneratedOutputNameHint,
+    GitObservationUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityExcludeCandidateAssessment {
+    pub path: PathBuf,
+    pub visited_entries: usize,
+    pub duration: Duration,
+    pub git_ignored: Option<bool>,
+    pub contains_tracked_files: Option<bool>,
+    pub status: ActivityExcludeCandidateStatus,
+    pub reasons: Vec<ActivityExcludeCandidateReason>,
+}
+
+/// Assesses already-collected slow-scan subtrees for possible Activity exclusions.
+///
+/// This is a read-only, on-demand assessment. It does not modify configuration and is
+/// intentionally not part of the normal worktree scan path.
+pub fn assess_activity_exclude_candidates(
+    root: &Path,
+    diagnostics: &WorktreeScanDiagnostics,
+    limit: usize,
+) -> Vec<ActivityExcludeCandidateAssessment> {
+    let mut subtrees = diagnostics.subtrees.clone();
+    subtrees.sort_by(|left, right| {
+        right
+            .duration
+            .cmp(&left.duration)
+            .then_with(|| right.visited_entries.cmp(&left.visited_entries))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    subtrees
+        .into_iter()
+        .take(limit)
+        .map(|subtree| {
+            assess_activity_exclude_candidate(
+                root,
+                subtree.path,
+                subtree.visited_entries,
+                subtree.duration,
+            )
+        })
+        .collect()
+}
+
+fn assess_activity_exclude_candidate(
+    root: &Path,
+    path: PathBuf,
+    visited_entries: usize,
+    duration: Duration,
+) -> ActivityExcludeCandidateAssessment {
+    let relative = path.strip_prefix(root).ok();
+    let git_path = relative.and_then(|path| git_path_for_subtree(root, path));
+    let git_ignored = git_path
+        .as_deref()
+        .and_then(|path| git_path_is_ignored(root, path));
+    let contains_tracked_files = git_path
+        .as_deref()
+        .and_then(|path| git_path_contains_tracked_files(root, path));
+    let is_devscope_local_state = relative
+        .and_then(|path| path.components().next())
+        .is_some_and(|component| component.as_os_str() == ".devscope");
+    let has_generated_output_name_hint = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_generated_output_name_hint);
+
+    let mut reasons = Vec::new();
+    match git_ignored {
+        Some(true) => reasons.push(ActivityExcludeCandidateReason::GitIgnored),
+        Some(false) => reasons.push(ActivityExcludeCandidateReason::NotGitIgnored),
+        None => reasons.push(ActivityExcludeCandidateReason::GitObservationUnavailable),
+    }
+    match contains_tracked_files {
+        Some(true) => reasons.push(ActivityExcludeCandidateReason::ContainsTrackedFiles),
+        Some(false) => {}
+        None if !reasons.contains(&ActivityExcludeCandidateReason::GitObservationUnavailable) => {
+            reasons.push(ActivityExcludeCandidateReason::GitObservationUnavailable)
+        }
+        None => {}
+    }
+    if is_devscope_local_state {
+        reasons.push(ActivityExcludeCandidateReason::DevScopeLocalState);
+    }
+    if has_generated_output_name_hint {
+        reasons.push(ActivityExcludeCandidateReason::GeneratedOutputNameHint);
+    }
+
+    let status = if is_devscope_local_state
+        || git_ignored.is_none()
+        || contains_tracked_files.is_none()
+        || (git_ignored == Some(true) && contains_tracked_files == Some(true))
+    {
+        ActivityExcludeCandidateStatus::ReviewRequired
+    } else if contains_tracked_files == Some(true) {
+        ActivityExcludeCandidateStatus::NotCandidate
+    } else if git_ignored == Some(true) {
+        ActivityExcludeCandidateStatus::SafeCandidate
+    } else {
+        ActivityExcludeCandidateStatus::ReviewRequired
+    };
+
+    ActivityExcludeCandidateAssessment {
+        path,
+        visited_entries,
+        duration,
+        git_ignored,
+        contains_tracked_files,
+        status,
+        reasons,
+    }
+}
+
+fn git_path_for_subtree(root: &Path, relative: &Path) -> Option<String> {
+    let mut path = relative.to_str()?.replace('\\', "/");
+    if root.join(relative).is_dir() {
+        path.push('/');
+    }
+    Some(path)
+}
+
+fn git_path_is_ignored(root: &Path, path: &str) -> Option<bool> {
+    let output = run_git(root, ["check-ignore", "--no-index", "-q", "--", path]).ok()?;
+    if output.status.success() {
+        Some(true)
+    } else if output.status.code() == Some(1) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn git_path_contains_tracked_files(root: &Path, path: &str) -> Option<bool> {
+    let output = run_git(root, ["ls-files", "-c", "-z", "--", path]).ok()?;
+    output.status.success().then_some(!output.stdout.is_empty())
+}
+
+fn is_generated_output_name_hint(name: &str) -> bool {
+    [
+        "target",
+        "bin",
+        "obj",
+        "node_modules",
+        "dist",
+        "build",
+        ".generated",
+        ".venv",
+        "venv",
+    ]
+    .iter()
+    .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
 
 pub fn is_git_repository(root: &Path) -> Result<bool, GitActivityError> {
     let output = run_git(root, ["rev-parse", "--is-inside-work-tree"])?;
@@ -360,6 +530,7 @@ fn command_error(output: &Output) -> GitActivityError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::change::WorktreeSubtreeStat;
     use std::{
         fs,
         sync::atomic::{AtomicUsize, Ordering},
@@ -541,6 +712,194 @@ mod tests {
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].summary, "two");
         assert!(!c[0].id.is_empty());
+    }
+
+    fn diagnostics(root: &Path, entries: &[(&str, usize, u64)]) -> WorktreeScanDiagnostics {
+        WorktreeScanDiagnostics {
+            visited_entries: entries.iter().map(|(_, entries, _)| entries).sum(),
+            subtrees: entries
+                .iter()
+                .map(|(path, visited_entries, duration)| WorktreeSubtreeStat {
+                    path: root.join(path),
+                    visited_entries: *visited_entries,
+                    duration: std::time::Duration::from_millis(*duration),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn assesses_ignored_untracked_subtree_as_safe_candidate() {
+        let repo = Repo::new(true);
+        fs::write(repo.0.join(".gitignore"), "dist/\n").unwrap();
+        fs::create_dir_all(repo.0.join("dist")).unwrap();
+        fs::write(repo.0.join("dist/output.txt"), "generated").unwrap();
+
+        let assessment = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(&repo.0, &[("dist", 20, 10)]),
+            3,
+        )
+        .remove(0);
+
+        assert_eq!(
+            assessment.status,
+            ActivityExcludeCandidateStatus::SafeCandidate
+        );
+        assert_eq!(assessment.git_ignored, Some(true));
+        assert_eq!(assessment.contains_tracked_files, Some(false));
+        assert!(
+            assessment
+                .reasons
+                .contains(&ActivityExcludeCandidateReason::GitIgnored)
+        );
+        assert!(
+            assessment
+                .reasons
+                .contains(&ActivityExcludeCandidateReason::GeneratedOutputNameHint)
+        );
+    }
+
+    #[test]
+    fn assesses_force_added_ignored_subtree_as_review_required() {
+        let repo = Repo::new(true);
+        fs::write(repo.0.join(".gitignore"), "dist/\n").unwrap();
+        fs::create_dir_all(repo.0.join("dist")).unwrap();
+        fs::write(repo.0.join("dist/forced.txt"), "tracked").unwrap();
+        cmd(&repo.0, &["add", ".gitignore"]);
+        cmd(&repo.0, &["add", "-f", "dist/forced.txt"]);
+        cmd(&repo.0, &["commit", "-m", "force add generated output"]);
+
+        let assessment = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(&repo.0, &[("dist", 20, 10)]),
+            3,
+        )
+        .remove(0);
+
+        assert_eq!(
+            assessment.status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert_eq!(assessment.git_ignored, Some(true));
+        assert_eq!(assessment.contains_tracked_files, Some(true));
+        assert!(
+            assessment
+                .reasons
+                .contains(&ActivityExcludeCandidateReason::ContainsTrackedFiles)
+        );
+    }
+
+    #[test]
+    fn assesses_tracked_source_subtree_as_not_candidate() {
+        let repo = Repo::new(true);
+        fs::create_dir_all(repo.0.join("src")).unwrap();
+        fs::write(repo.0.join("src/lib.rs"), "pub fn example() {}\n").unwrap();
+        cmd(&repo.0, &["add", "src/lib.rs"]);
+        cmd(&repo.0, &["commit", "-m", "track source"]);
+
+        let assessment = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(&repo.0, &[("src", 8, 10)]),
+            3,
+        )
+        .remove(0);
+
+        assert_eq!(
+            assessment.status,
+            ActivityExcludeCandidateStatus::NotCandidate
+        );
+        assert_eq!(assessment.git_ignored, Some(false));
+        assert_eq!(assessment.contains_tracked_files, Some(true));
+    }
+
+    #[test]
+    fn respects_nested_ignore_negation_and_info_exclude_rules() {
+        let repo = Repo::new(true);
+        fs::write(
+            repo.0.join(".gitignore"),
+            "generated/*\n!generated/keep.txt\n",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.0.join("generated")).unwrap();
+        fs::write(repo.0.join("generated/keep.txt"), "keep").unwrap();
+        fs::write(repo.0.join(".git/info/exclude"), "private-output/\n").unwrap();
+        fs::create_dir_all(repo.0.join("private-output")).unwrap();
+        fs::write(repo.0.join("private-output/cache.txt"), "cache").unwrap();
+
+        let assessments = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(
+                &repo.0,
+                &[("generated/keep.txt", 1, 20), ("private-output", 5, 10)],
+            ),
+            3,
+        );
+
+        assert_eq!(assessments[0].git_ignored, Some(false));
+        assert_eq!(
+            assessments[0].status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert_eq!(assessments[1].git_ignored, Some(true));
+        assert_eq!(
+            assessments[1].status,
+            ActivityExcludeCandidateStatus::SafeCandidate
+        );
+    }
+
+    #[test]
+    fn keeps_devscope_local_state_out_of_safe_candidates() {
+        let repo = Repo::new(true);
+        fs::create_dir_all(repo.0.join(".devscope/work")).unwrap();
+        fs::write(repo.0.join(".devscope/work/current.md"), "# Current Work\n").unwrap();
+        fs::write(repo.0.join(".devscope/config.toml"), "[devscope]\n").unwrap();
+        cmd(&repo.0, &["add", ".devscope/config.toml"]);
+        cmd(&repo.0, &["commit", "-m", "track DevScope config"]);
+
+        let assessment = assess_activity_exclude_candidates(
+            &repo.0,
+            &diagnostics(&repo.0, &[(".devscope", 5, 10)]),
+            3,
+        )
+        .remove(0);
+
+        assert_eq!(
+            assessment.status,
+            ActivityExcludeCandidateStatus::ReviewRequired
+        );
+        assert_eq!(assessment.contains_tracked_files, Some(true));
+        assert!(
+            assessment
+                .reasons
+                .contains(&ActivityExcludeCandidateReason::DevScopeLocalState)
+        );
+    }
+
+    #[test]
+    fn keeps_git_observation_errors_reviewable_and_orders_candidates_stably() {
+        let not_a_repo = Repo::new(false);
+        let assessments = assess_activity_exclude_candidates(
+            &not_a_repo.0,
+            &diagnostics(&not_a_repo.0, &[("src", 2, 5), ("b", 1, 10), ("a", 2, 10)]),
+            3,
+        );
+
+        assert_eq!(
+            assessments
+                .iter()
+                .map(|assessment| assessment.path.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "src"]
+        );
+        assert!(assessments.iter().all(|assessment| {
+            assessment.status == ActivityExcludeCandidateStatus::ReviewRequired
+                && assessment.git_ignored.is_none()
+                && assessment.contains_tracked_files.is_none()
+                && assessment
+                    .reasons
+                    .contains(&ActivityExcludeCandidateReason::GitObservationUnavailable)
+        }));
     }
 }
 #[cfg(test)]
