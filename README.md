@@ -109,9 +109,10 @@ cargo build --release
 The initial read-only and Current Work CLI experiments completed successfully. The
 commands remain experimental while the later Skill and workflow work continues.
 
-For project onboarding, use the [Setup Guide](docs/guides/devscope-setup.md). After
-setup, use the [Skill prototype](docs/examples/devscope-skill.md) for daily
-AI/human workflow.
+For project onboarding, use the [Setup Guide](docs/guides/devscope-setup.md). The
+repo-local [DevScope Skill](.agents/skills/devscope/SKILL.md) supports the daily
+AI/human workflow; the [Skill prototype](docs/examples/devscope-skill.md) remains its
+design reference.
 For development checks, use Cargo:
 
 ```powershell

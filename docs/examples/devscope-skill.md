@@ -1,5 +1,7 @@
 # DevScope Skill Prototype
 
+This is the design reference for the repo-local [DevScope Skill](../../.agents/skills/devscope/SKILL.md). The package is the operational entrypoint; keep this document for the fuller workflow rationale.
+
 ## Purpose
 
 Use DevScope as the shared progress surface for humans and AI. This guidance is a

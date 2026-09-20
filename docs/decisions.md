@@ -71,3 +71,8 @@
 - **Date:** 2026-09-19
 - **Decision:** Add per-kind project Config commands as program plus argument vector, with configured commands overriding the Cargo default and project-root working directory. Do not parse shell command strings.
 - **Reason:** This retains Cargo zero-config behavior while providing a small, tool-neutral process boundary. `verify.exclude` affects only Build/Test Freshness observation, so project-specific generated outputs can be excluded without changing command execution or other sources.
+
+## 2026-09-19 - Repo-local DevScope Skill packaging
+
+- **Decision:** Package the operational DevScope workflow at `.agents/skills/devscope`. Keep the Skill focused on DevScope operation, the Setup Guide on onboarding and configuration, and `AGENTS.md` on repository authority and quality rules.
+- **Reason:** A repo-local Skill travels with a project and is automatically discoverable by Codex. A user-level link or installation can support local experimentation without replacing the portable project source.

@@ -28,6 +28,14 @@ target. It couples the tool used for observation to an in-progress build; rebuil
 change the executable and self-dogfooding can encounter Windows binary locks. Installer,
 package-manager, PATH-editing, and deployment support are outside DevScope today.
 
+### Optional Codex Skill
+
+This repository ships its DevScope workflow as a repo-local Skill at
+`.agents/skills/devscope`. Codex discovers repo-local Skills automatically; invoke it
+explicitly as `$devscope` when needed. If a newly added or changed Skill does not appear,
+restart Codex. For user-wide local experimentation, install or link the Skill under
+`$HOME/.agents/skills`; keep the repo-local copy as the portable project source.
+
 ## 2. Observe the project before configuring it
 
 Move to the target repository root and start with defaults:
@@ -41,7 +49,7 @@ Use the TUI when a broader human view helps. Check the available surfaces:
 
 - Plan and Git Activity;
 - Current Work, when the project uses it;
-- Cargo Build/Test availability; and
+- Build/Test availability; and
 - an Artifact target, only when one is configured.
 
 Missing Current Work, an empty history, or an unconfigured Artifact are normal unused

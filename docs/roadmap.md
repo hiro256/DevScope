@@ -107,6 +107,10 @@
 - [x] TUI panel focus experiment
 - [x] Current Work TUI experiment
 
+### Workflow packaging
+
+- [x] Package and dogfood DevScope as a Codex Skill
+
 ### TUI
 
 - [x] Validate Detail View drill-down for focused panels

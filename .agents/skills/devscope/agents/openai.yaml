@@ -1,0 +1,4 @@
+interface:
+  display_name: "DevScope"
+  short_description: "Project progress and verification workflow"
+  default_prompt: "Use $devscope to inspect the current project state and continue the appropriate work."
