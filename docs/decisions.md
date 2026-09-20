@@ -86,3 +86,7 @@
 
 - **Decision:** Run `GitWorktreeChangeDetector` in one std-thread worker that owns its detector baseline, and communicate scan requests/results through std::sync::mpsc channels while coalescing requests so at most one scan is in flight from the TUI side. Keep Git metadata detection and Activity collection outside that worker for now.
 - **Reason:** A recursive worktree scan can take hundreds of milliseconds or longer on generated-output-heavy projects. Isolating it preserves TUI input/render responsiveness without introducing a generic worker framework, runtime dependency, or a new observation authority.
+## 2026-09-20 — Coarse diagnostics only after a slow worktree scan
+
+- **Decision:** Record every worktree scan duration and capture root-level subtree counts and approximate durations only on the scan after an initial 200ms heuristic is exceeded.
+- **Reason:** This keeps the fast path small while providing bounded diagnostic context for a later exclusion workflow; the threshold is an internal heuristic, not a user policy or performance contract.

@@ -177,6 +177,64 @@ fn worktree_entries_differ(
                 || (left.kind != WorktreeEntryKind::Directory && left.modified != right.modified)
         })
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeSubtreeStat {
+    pub path: PathBuf,
+    pub visited_entries: usize,
+    pub duration: std::time::Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeScanDiagnostics {
+    pub visited_entries: usize,
+    pub subtrees: Vec<WorktreeSubtreeStat>,
+}
+
+pub fn diagnose_worktree_scan(
+    root: &Path,
+) -> Result<WorktreeScanDiagnostics, GitWorktreeChangeError> {
+    let mut visited_entries = 1;
+    let mut subtrees = Vec::new();
+    for entry in fs::read_dir(root).map_err(|source| GitWorktreeChangeError::ReadDirectory {
+        path: root.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| GitWorktreeChangeError::ReadDirectory {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|name| name == ".git") {
+            continue;
+        }
+        let stamp = worktree_entry_stamp(&path)?;
+        if is_generated_worktree_directory(&stamp) {
+            continue;
+        }
+        let started = std::time::Instant::now();
+        let mut entries = vec![stamp.clone()];
+        if stamp.kind == WorktreeEntryKind::Directory {
+            scan_directory(&path, &mut entries)?;
+        }
+        visited_entries += entries.len();
+        subtrees.push(WorktreeSubtreeStat {
+            path,
+            visited_entries: entries.len(),
+            duration: started.elapsed(),
+        });
+    }
+    subtrees.sort_by(|left, right| {
+        right
+            .duration
+            .cmp(&left.duration)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    Ok(WorktreeScanDiagnostics {
+        visited_entries,
+        subtrees,
+    })
+}
+
 fn scan_worktree(root: &Path) -> Result<Vec<WorktreeEntryStamp>, GitWorktreeChangeError> {
     let root_stamp = worktree_entry_stamp(root)?;
     let mut entries = vec![root_stamp.clone()];
@@ -758,6 +816,57 @@ mod tests {
         assert_eq!(
             detector.check(&project.0).unwrap(),
             GitWorktreeChange::Unchanged
+        );
+    }
+
+    #[test]
+    #[ignore = "manual Windows timing experiment"]
+    fn worktree_diagnostics_timing_experiment() {
+        let project = TempProject::new();
+        for index in 0..5_000 {
+            project.write(&format!("generated/{index}.txt"), "fixture");
+        }
+        let mut baseline = Vec::new();
+        let mut diagnostics = Vec::new();
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let _ = scan_worktree(&project.0).unwrap();
+            baseline.push(started.elapsed());
+            let started = std::time::Instant::now();
+            let _ = diagnose_worktree_scan(&project.0).unwrap();
+            diagnostics.push(started.elapsed());
+        }
+        baseline.sort();
+        diagnostics.sort();
+        println!(
+            "worktree diagnostic timing: baseline={:?}/{:?}; diagnostics={:?}/{:?}",
+            baseline[2], baseline[4], diagnostics[2], diagnostics[4]
+        );
+    }
+
+    #[test]
+    fn worktree_diagnostics_group_root_subtrees_and_skip_target() {
+        let project = TempProject::new();
+        project.write("src/main.rs", "fn main() {}");
+        project.write("src/lib.rs", "pub fn lib() {}");
+        project.write("docs/guide.md", "# Guide");
+        project.write("README.md", "# Root");
+        project.write("target/generated.txt", "ignored");
+
+        let diagnostics = diagnose_worktree_scan(&project.0).unwrap();
+        assert_eq!(diagnostics.visited_entries, 7);
+        assert_eq!(diagnostics.subtrees.len(), 3);
+        let src = diagnostics
+            .subtrees
+            .iter()
+            .find(|stat| stat.path.file_name().is_some_and(|name| name == "src"))
+            .unwrap();
+        assert_eq!(src.visited_entries, 3);
+        assert!(
+            diagnostics
+                .subtrees
+                .iter()
+                .all(|stat| stat.path.file_name().is_none_or(|name| name != "target"))
         );
     }
 

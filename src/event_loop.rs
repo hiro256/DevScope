@@ -12,7 +12,7 @@ use devscope::{
     change::{
         ConfigChange, ConfigChangeDetector, CurrentWorkChange, CurrentWorkChangeDetector,
         GitMetadataChange, GitMetadataChangeDetector, GitWorktreeChange, GitWorktreeChangeDetector,
-        MarkdownChange, MarkdownChangeDetector,
+        MarkdownChange, MarkdownChangeDetector, WorktreeScanDiagnostics, diagnose_worktree_scan,
     },
     config::{ConfigError, ProjectConfig, load_project_config},
     current_work::load_current_work,
@@ -33,6 +33,7 @@ use crate::{
 
 const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 const PROJECT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const SLOW_WORKTREE_SCAN: Duration = Duration::from_millis(200);
 
 struct PollScheduler {
     interval: Duration,
@@ -83,6 +84,7 @@ struct WorktreeScanResult {
     generation: u64,
     change: Option<GitWorktreeChange>,
     duration: Duration,
+    diagnostics: Option<WorktreeScanDiagnostics>,
 }
 
 struct GitWorktreeWorker {
@@ -92,6 +94,7 @@ struct GitWorktreeWorker {
     scan_in_flight: bool,
     generation: u64,
     last_duration: Option<Duration>,
+    last_diagnostics: Option<WorktreeScanDiagnostics>,
 }
 
 impl GitWorktreeWorker {
@@ -100,16 +103,22 @@ impl GitWorktreeWorker {
         let (result_sender, result_receiver) = mpsc::channel();
         let join = thread::spawn(move || {
             let mut detector = GitWorktreeChangeDetector::new(&root);
+            let mut diagnose_next = false;
             while let Ok(command) = command_receiver.recv() {
                 match command {
                     GitWorktreeWorkerCommand::Scan { generation } => {
                         let started = Instant::now();
                         let change = detector.check(&root).ok();
+                        let diagnostics = (diagnose_next && change.is_some())
+                            .then(|| diagnose_worktree_scan(&root).ok())
+                            .flatten();
+                        diagnose_next = started.elapsed() >= SLOW_WORKTREE_SCAN;
                         if result_sender
                             .send(WorktreeScanResult {
                                 generation,
                                 change,
                                 duration: started.elapsed(),
+                                diagnostics,
                             })
                             .is_err()
                         {
@@ -128,6 +137,7 @@ impl GitWorktreeWorker {
             scan_in_flight: false,
             generation: 0,
             last_duration: None,
+            last_diagnostics: None,
         }
     }
 
@@ -166,6 +176,7 @@ impl GitWorktreeWorker {
                 Ok(result) => {
                     self.scan_in_flight = false;
                     self.last_duration = Some(result.duration);
+                    self.last_diagnostics = result.diagnostics;
                     changed |= result.generation == self.generation
                         && matches!(result.change, Some(GitWorktreeChange::Changed));
                 }
