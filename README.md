@@ -144,7 +144,7 @@ are equivalent. `context`, `task list`, and experimental `work list` print compa
 TUI. The CLI reports Build/Test availability resolved from project Config or the Cargo
 fallback in `context`. `verify build` and `verify test` run the resolved command, then
 persist the observed current result locally for restoration in a later TUI session.
-Freshness compares relevant project inputs around the verification run. `activity suggest-excludes` runs an on-demand, read-only worktree diagnostic and reports up to three Git-safe Activity exclusion proposals; it never edits Config.
+Freshness compares relevant project inputs around the verification run. `activity suggest-excludes` runs an on-demand, read-only worktree diagnostic and reports up to three Git-safe Activity exclusion proposals; it never edits Config. The repo-local Skill permits a separate `[activity].exclude` edit only after explicit human approval of an exact reported path.
 
 ## Not yet implemented
 

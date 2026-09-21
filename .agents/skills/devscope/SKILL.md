@@ -55,11 +55,27 @@ does not warrant a Plan task.
 - Evidence is not Current Work. Git Activity and reported AI success do not prove
   completion; only DevScope-observed command results are Observed Evidence.
 
-## Activity exclusion proposals
+## Activity exclusion maintenance
 
 When worktree scan cost needs investigation, run `devscope activity suggest-excludes`. It reports
-on-demand, Git-safe candidates only. Inspect and describe each proposed path and reason, then get
-approval before making any separate Config edit; this command never edits Config automatically.
+on-demand, Git-safe candidates only; it never edits Config automatically.
+
+1. If it reports no proposals, make no Config change and report that no change is needed.
+2. For each candidate under consideration, describe its exact project-relative path, diagnostic
+   source, entries/duration hint, and Git safety reasons. A safe proposal is not permission to edit.
+3. Show the exact `[activity].exclude` change and obtain explicit user approval before editing.
+4. After approval, re-read `.devscope/config.toml`. If it is invalid, report the error and do not
+   repair it without a separate request. Add only the explicitly approved proposal path, using
+   forward slashes; never broaden it to an ancestor, glob, sibling, or another candidate.
+5. Preserve unrelated sections, comments, formatting, and existing excludes with a targeted edit.
+   If Config or `[activity]` is absent, add only the minimum approved `[activity].exclude` content.
+   Do not add a duplicate or a path already covered by an existing ancestor exclusion.
+6. Re-run `devscope activity suggest-excludes`, inspect `git diff -- .devscope/config.toml`, and
+   report remaining candidates without applying them automatically.
+
+Report the command outputs and Config diff as **Observed**, the approved exclusion as
+**Configured**, and any expected scan-cost effect as **Interpretation**. A disappeared proposal or
+changed duration is an approximate diagnostic hint, not a benchmark proof.
 
 ## Authority and stop
 
