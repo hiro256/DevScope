@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use crate::change::WorktreeScanDiagnostics;
+use crate::change::{WorktreeScanDiagnostics, diagnose_worktree_subtree_with_exclusions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitFileStatus {
@@ -137,6 +137,127 @@ pub struct ActivityExcludeCandidateAssessment {
     pub reasons: Vec<ActivityExcludeCandidateReason>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityExcludeProposalSource {
+    RootDiagnostic,
+    DrillDown { parent: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityExcludeProposal {
+    pub path: PathBuf,
+    pub source: ActivityExcludeProposalSource,
+    pub visited_entries: usize,
+    pub duration: Duration,
+    pub reasons: Vec<ActivityExcludeCandidateReason>,
+}
+
+/// Converts assessed, safe worktree subtrees into read-only Activity exclusion proposals.
+///
+/// This on-demand helper does not change Config or participate in polling. It can inspect one
+/// level below a reviewed root directory, while retaining Git assessment as the safety boundary.
+pub fn propose_activity_exclusions(
+    root: &Path,
+    diagnostics: &WorktreeScanDiagnostics,
+    current_excludes: &[PathBuf],
+    limit: usize,
+) -> Vec<ActivityExcludeProposal> {
+    let root_assessments = assess_activity_exclude_candidates(root, diagnostics, limit);
+    let mut proposals = BTreeMap::new();
+
+    for assessment in &root_assessments {
+        add_activity_exclude_proposal(
+            &mut proposals,
+            root,
+            assessment,
+            ActivityExcludeProposalSource::RootDiagnostic,
+            current_excludes,
+        );
+    }
+
+    for assessment in root_assessments.iter().filter(|assessment| {
+        assessment.status == ActivityExcludeCandidateStatus::ReviewRequired
+            && assessment.path.is_dir()
+    }) {
+        let Some(parent) = project_relative_activity_path(root, &assessment.path) else {
+            continue;
+        };
+        if activity_path_is_excluded(current_excludes, &parent) {
+            continue;
+        }
+        let Ok(children) =
+            diagnose_worktree_subtree_with_exclusions(root, &assessment.path, current_excludes)
+        else {
+            continue;
+        };
+        for child in assess_activity_exclude_candidates(root, &children, limit) {
+            add_activity_exclude_proposal(
+                &mut proposals,
+                root,
+                &child,
+                ActivityExcludeProposalSource::DrillDown {
+                    parent: parent.clone(),
+                },
+                current_excludes,
+            );
+        }
+    }
+
+    let mut proposals = proposals.into_values().collect::<Vec<_>>();
+    proposals.sort_by(|left, right| {
+        right
+            .duration
+            .cmp(&left.duration)
+            .then_with(|| right.visited_entries.cmp(&left.visited_entries))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    proposals
+}
+
+fn add_activity_exclude_proposal(
+    proposals: &mut BTreeMap<PathBuf, ActivityExcludeProposal>,
+    root: &Path,
+    assessment: &ActivityExcludeCandidateAssessment,
+    source: ActivityExcludeProposalSource,
+    current_excludes: &[PathBuf],
+) {
+    if assessment.status != ActivityExcludeCandidateStatus::SafeCandidate {
+        return;
+    }
+    let Some(path) = project_relative_activity_path(root, &assessment.path) else {
+        return;
+    };
+    if activity_path_is_excluded(current_excludes, &path) {
+        return;
+    }
+    proposals
+        .entry(path.clone())
+        .or_insert(ActivityExcludeProposal {
+            path,
+            source,
+            visited_entries: assessment.visited_entries,
+            duration: assessment.duration,
+            reasons: assessment.reasons.clone(),
+        });
+}
+
+fn project_relative_activity_path(root: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = path.strip_prefix(root).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(relative.to_path_buf())
+}
+
+fn activity_path_is_excluded(excludes: &[PathBuf], candidate: &Path) -> bool {
+    excludes
+        .iter()
+        .any(|excluded| candidate == excluded || candidate.starts_with(excluded))
+}
 /// Assesses already-collected slow-scan subtrees for possible Activity exclusions.
 ///
 /// This is a read-only, on-demand assessment. It does not modify configuration and is
@@ -1012,6 +1133,175 @@ mod tests {
         assert_eq!(assessments[2].git_ignored, Some(false));
     }
 
+    #[test]
+    fn proposes_safe_root_candidates_in_stable_order_without_duplicates_or_excluded_paths() {
+        let repo = Repo::new(true);
+        fs::write(repo.0.join(".gitignore"), "cache/\ndist/\n").unwrap();
+        for path in ["cache/value.txt", "dist/value.txt", "dist/cache/value.txt"] {
+            let path = repo.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "generated").unwrap();
+        }
+        let root_diagnostics = diagnostics(
+            &repo.0,
+            &[("dist", 10, 10), ("cache", 20, 20), ("dist", 10, 10)],
+        );
+
+        let proposals = propose_activity_exclusions(&repo.0, &root_diagnostics, &[], 3);
+        assert_eq!(
+            proposals
+                .iter()
+                .map(|proposal| proposal.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![Path::new("cache"), Path::new("dist")]
+        );
+        assert!(proposals.iter().all(|proposal| {
+            proposal.source == ActivityExcludeProposalSource::RootDiagnostic
+                && proposal
+                    .reasons
+                    .contains(&ActivityExcludeCandidateReason::GitIgnored)
+                && proposal
+                    .path
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+        }));
+
+        let already_excluded =
+            propose_activity_exclusions(&repo.0, &root_diagnostics, &[PathBuf::from("dist")], 3);
+        assert_eq!(already_excluded.len(), 1);
+        assert_eq!(already_excluded[0].path, Path::new("cache"));
+
+        let descendant = propose_activity_exclusions(
+            &repo.0,
+            &diagnostics(&repo.0, &[("dist/cache", 5, 5)]),
+            &[PathBuf::from("dist")],
+            3,
+        );
+        assert!(descendant.is_empty());
+    }
+
+    #[test]
+    fn drills_down_reviewed_devscope_once_and_proposes_only_safe_children() {
+        let repo = Repo::new(true);
+        fs::write(
+            repo.0.join(".gitignore"),
+            ".devscope/evidence/\n.devscope/history/\n.devscope/forced/\n",
+        )
+        .unwrap();
+        for directory in [
+            ".devscope/evidence",
+            ".devscope/history",
+            ".devscope/work",
+            ".devscope/forced",
+        ] {
+            fs::create_dir_all(repo.0.join(directory)).unwrap();
+        }
+        fs::write(repo.0.join(".devscope/evidence/latest.json"), "evidence").unwrap();
+        fs::write(repo.0.join(".devscope/history/events.jsonl"), "event").unwrap();
+        fs::write(repo.0.join(".devscope/work/current.md"), "# Current Work\n").unwrap();
+        fs::write(repo.0.join(".devscope/config.toml"), "[activity]\n").unwrap();
+        fs::write(repo.0.join(".devscope/forced/value.txt"), "tracked").unwrap();
+        cmd(
+            &repo.0,
+            &[
+                "add",
+                ".gitignore",
+                ".devscope/work/current.md",
+                ".devscope/config.toml",
+            ],
+        );
+        cmd(&repo.0, &["add", "-f", ".devscope/forced/value.txt"]);
+        cmd(&repo.0, &["commit", "-m", "set up proposal fixture"]);
+
+        let proposals = propose_activity_exclusions(
+            &repo.0,
+            &diagnostics(&repo.0, &[(".devscope", 20, 100)]),
+            &[],
+            10,
+        );
+        let paths = proposals
+            .iter()
+            .map(|proposal| proposal.path.as_path())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&Path::new(".devscope/evidence")));
+        assert!(paths.contains(&Path::new(".devscope/history")));
+        assert!(!paths.contains(&Path::new(".devscope/work")));
+        assert!(!paths.contains(&Path::new(".devscope/config.toml")));
+        assert!(!paths.contains(&Path::new(".devscope/forced")));
+        assert!(proposals.iter().all(|proposal| {
+            proposal.source
+                == ActivityExcludeProposalSource::DrillDown {
+                    parent: PathBuf::from(".devscope"),
+                }
+        }));
+    }
+
+    #[test]
+    fn refuses_force_added_generated_and_git_unknown_candidates() {
+        let force_added = Repo::new(true);
+        fs::write(force_added.0.join(".gitignore"), "dist/\n").unwrap();
+        fs::create_dir_all(force_added.0.join("dist")).unwrap();
+        fs::write(force_added.0.join("dist/forced.txt"), "tracked").unwrap();
+        cmd(&force_added.0, &["add", ".gitignore"]);
+        cmd(&force_added.0, &["add", "-f", "dist/forced.txt"]);
+        cmd(
+            &force_added.0,
+            &["commit", "-m", "force add generated output"],
+        );
+        assert!(
+            propose_activity_exclusions(
+                &force_added.0,
+                &diagnostics(&force_added.0, &[("dist", 20, 10)]),
+                &[],
+                3,
+            )
+            .is_empty()
+        );
+
+        let generated_name_only = Repo::new(true);
+        fs::create_dir_all(generated_name_only.0.join("dist")).unwrap();
+        fs::write(generated_name_only.0.join("dist/output.txt"), "generated").unwrap();
+        assert!(
+            propose_activity_exclusions(
+                &generated_name_only.0,
+                &diagnostics(&generated_name_only.0, &[("dist", 20, 10)]),
+                &[],
+                3,
+            )
+            .is_empty()
+        );
+
+        let not_a_repo = Repo::new(false);
+        assert!(
+            propose_activity_exclusions(
+                &not_a_repo.0,
+                &diagnostics(&not_a_repo.0, &[("dist", 20, 10)]),
+                &[],
+                3,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn does_not_recursively_drill_into_reviewed_children() {
+        let repo = Repo::new(true);
+        fs::create_dir_all(repo.0.join(".devscope/probes/ignored")).unwrap();
+        fs::write(repo.0.join(".devscope/probes/.gitignore"), "ignored/\n").unwrap();
+        fs::write(
+            repo.0.join(".devscope/probes/ignored/value.txt"),
+            "generated",
+        )
+        .unwrap();
+
+        let proposals = propose_activity_exclusions(
+            &repo.0,
+            &diagnostics(&repo.0, &[(".devscope", 20, 100)]),
+            &[],
+            10,
+        );
+        assert!(proposals.is_empty());
+    }
     #[test]
     fn keeps_git_observation_errors_reviewable_and_orders_candidates_stably() {
         let not_a_repo = Repo::new(false);
