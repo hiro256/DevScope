@@ -55,6 +55,12 @@ does not warrant a Plan task.
 - Evidence is not Current Work. Git Activity and reported AI success do not prove
   completion; only DevScope-observed command results are Observed Evidence.
 
+## Activity exclusion proposals
+
+When worktree scan cost needs investigation, run `devscope activity suggest-excludes`. It reports
+on-demand, Git-safe candidates only. Inspect and describe each proposed path and reason, then get
+approval before making any separate Config edit; this command never edits Config automatically.
+
 ## Authority and stop
 
 The skill grants no authority for Plan edits, commits, pushes, or Config changes. Follow

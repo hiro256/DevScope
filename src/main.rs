@@ -20,8 +20,9 @@ use devscope::{
     },
     progress::{
         ArtifactObservation, BuildTestExecutionCompletion, BuildTestKind, BuildTestState,
-        evaluate_completed_build_test_freshness_with_exclusions, load_build_test_states,
-        observe_artifact, resolve_build_test_command, run_build_test, save_build_test_state,
+        evaluate_completed_build_test_freshness_with_exclusions, is_git_repository,
+        load_build_test_states, observe_artifact, propose_activity_exclusions,
+        resolve_build_test_command, run_build_test, save_build_test_state,
     },
     project::{ProjectSnapshot, try_collect_project_snapshot},
 };
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
         Ok(EntryMode::WorkActive(number)) => run_work_active(number),
         Ok(EntryMode::WorkActiveClear) => run_work_active_clear(),
+        Ok(EntryMode::ActivitySuggestExcludes) => run_activity_suggest_excludes(),
         Ok(EntryMode::Verify(kind)) => run_verify(kind),
         Ok(EntryMode::ArtifactInspect(path)) => run_artifact_inspect(path),
         Ok(EntryMode::Help) => {
@@ -180,6 +182,44 @@ fn run_work_active_clear() -> ExitCode {
         Err(error) => report_runtime_error(error),
     }
 }
+fn run_activity_suggest_excludes() -> ExitCode {
+    const PROPOSAL_LIMIT: usize = 3;
+
+    let Ok(root) = env::current_dir() else {
+        return ExitCode::FAILURE;
+    };
+    let config = match load_project_config(&root) {
+        Ok(config) => config,
+        Err(error) => return report_runtime_error(error),
+    };
+    match is_git_repository(&root) {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!("error: Activity exclusion proposals unavailable: not a Git repository");
+            return ExitCode::FAILURE;
+        }
+        Err(error) => return report_runtime_error(error),
+    }
+    let diagnostics = match devscope::change::diagnose_worktree_scan_with_exclusions(
+        &root,
+        config.activity().excludes(),
+    ) {
+        Ok(diagnostics) => diagnostics,
+        Err(error) => return report_runtime_error(format!("{error:?}")),
+    };
+    let proposals = propose_activity_exclusions(
+        &root,
+        &diagnostics,
+        config.activity().excludes(),
+        PROPOSAL_LIMIT,
+    )
+    .into_iter()
+    .take(PROPOSAL_LIMIT)
+    .collect::<Vec<_>>();
+    print!("{}", cli::render_activity_exclusion_proposals(&proposals));
+    ExitCode::SUCCESS
+}
+
 fn run_artifact_inspect(path: Option<std::ffi::OsString>) -> ExitCode {
     let Ok(root) = env::current_dir() else {
         return ExitCode::FAILURE;

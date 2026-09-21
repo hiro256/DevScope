@@ -1,12 +1,16 @@
 use std::{
     ffi::{OsStr, OsString},
     path::Path,
+    time::Duration,
 };
 
 use devscope::{
     config::{ConfigError, load_project_config},
     current_work::{CurrentWork, CurrentWorkItem},
-    progress::{ActivitySummary, BuildTestKind, resolve_build_test_command},
+    progress::{
+        ActivityExcludeCandidateReason, ActivityExcludeProposal, ActivityExcludeProposalSource,
+        ActivitySummary, BuildTestKind, resolve_build_test_command,
+    },
     project::{
         ActivityState, PlanState, ProjectCollectionError, ProjectSnapshot, TaskState,
         collect_markdown_state,
@@ -30,6 +34,7 @@ pub enum EntryMode {
     WorkDone(usize),
     WorkActive(usize),
     WorkActiveClear,
+    ActivitySuggestExcludes,
     Verify(devscope::progress::BuildTestKind),
     ArtifactInspect(Option<OsString>),
     Help,
@@ -56,6 +61,11 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         }
         [first, second] if first == OsStr::new("task") && second == OsStr::new("list") => {
             Ok(EntryMode::TaskList)
+        }
+        [first, second]
+            if first == OsStr::new("activity") && second == OsStr::new("suggest-excludes") =>
+        {
+            Ok(EntryMode::ActivitySuggestExcludes)
         }
         [argument] if matches!(argument.as_os_str(), value if value == OsStr::new("-h") || value == OsStr::new("--help")) => {
             Ok(EntryMode::Help)
@@ -109,6 +119,9 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, ..] if first == OsStr::new("task") => Err(UsageError {
             message: "expected `devscope task list`",
         }),
+        [first, ..] if first == OsStr::new("activity") => Err(UsageError {
+            message: "expected `devscope activity suggest-excludes`",
+        }),
         [first, ..] if first == OsStr::new("work") => Err(UsageError {
             message: "expected `devscope work list`, `devscope work history`, `devscope work done <number>`, or `devscope work active <number>|clear`",
         }),
@@ -119,7 +132,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -389,6 +402,62 @@ pub fn render_artifact(observation: &devscope::progress::ArtifactObservation) ->
     output
 }
 
+pub fn render_activity_exclusion_proposals(proposals: &[ActivityExcludeProposal]) -> String {
+    if proposals.is_empty() {
+        return "No Activity exclusion proposals.\n".to_owned();
+    }
+
+    let mut output = "Activity exclusion proposals\n".to_owned();
+    for proposal in proposals {
+        output.push_str(&format!(
+            "\n{}\n  source: {}\n  entries: {}\n  duration: {}\n  reasons: {}\n",
+            display_activity_path(&proposal.path),
+            format_activity_exclusion_source(&proposal.source),
+            proposal.visited_entries,
+            format_activity_exclusion_duration(proposal.duration),
+            proposal
+                .reasons
+                .iter()
+                .map(activity_exclusion_reason_label)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
+    output
+}
+
+fn display_activity_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn format_activity_exclusion_source(source: &ActivityExcludeProposalSource) -> String {
+    match source {
+        ActivityExcludeProposalSource::RootDiagnostic => "root diagnostic".to_owned(),
+        ActivityExcludeProposalSource::DrillDown { parent } => {
+            format!("drill-down from {}", display_activity_path(parent))
+        }
+    }
+}
+
+fn format_activity_exclusion_duration(duration: Duration) -> String {
+    if duration.as_millis() == 0 {
+        "<1 ms".to_owned()
+    } else {
+        format!("{} ms", duration.as_millis())
+    }
+}
+
+fn activity_exclusion_reason_label(reason: &ActivityExcludeCandidateReason) -> &'static str {
+    match reason {
+        ActivityExcludeCandidateReason::GitIgnored => "git ignored",
+        ActivityExcludeCandidateReason::NotGitIgnored => "not git ignored",
+        ActivityExcludeCandidateReason::ContainsTrackedFiles => "contains tracked files",
+        ActivityExcludeCandidateReason::DevScopeLocalState => "DevScope local state",
+        ActivityExcludeCandidateReason::GeneratedOutputNameHint => "generated output name hint",
+        ActivityExcludeCandidateReason::GitObservationUnavailable => "Git observation unavailable",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +484,71 @@ mod tests {
     };
 
     static ID: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn parses_activity_suggest_excludes_and_rejects_other_activity_commands() {
+        assert_eq!(
+            parse_args([
+                OsString::from("activity"),
+                OsString::from("suggest-excludes"),
+            ]),
+            Ok(EntryMode::ActivitySuggestExcludes)
+        );
+        assert!(parse_args([OsString::from("activity")]).is_err());
+        assert!(parse_args([OsString::from("activity"), OsString::from("other")]).is_err());
+        assert!(usage().contains("devscope activity suggest-excludes"));
+    }
+
+    #[test]
+    fn renders_activity_exclusion_proposals_with_stable_meanings() {
+        let proposals = vec![
+            ActivityExcludeProposal {
+                path: PathBuf::from("cache").join("nested"),
+                source: ActivityExcludeProposalSource::RootDiagnostic,
+                visited_entries: 12,
+                duration: Duration::from_millis(125),
+                reasons: vec![
+                    ActivityExcludeCandidateReason::GitIgnored,
+                    ActivityExcludeCandidateReason::GeneratedOutputNameHint,
+                ],
+            },
+            ActivityExcludeProposal {
+                path: PathBuf::from("build").join("output"),
+                source: ActivityExcludeProposalSource::DrillDown {
+                    parent: PathBuf::from("build"),
+                },
+                visited_entries: 3,
+                duration: Duration::from_micros(500),
+                reasons: vec![
+                    ActivityExcludeCandidateReason::NotGitIgnored,
+                    ActivityExcludeCandidateReason::ContainsTrackedFiles,
+                    ActivityExcludeCandidateReason::DevScopeLocalState,
+                    ActivityExcludeCandidateReason::GitObservationUnavailable,
+                ],
+            },
+        ];
+
+        let output = render_activity_exclusion_proposals(&proposals);
+        assert!(output.starts_with("Activity exclusion proposals\n"));
+        assert!(output.contains(
+            "cache/nested\n  source: root diagnostic\n  entries: 12\n  duration: 125 ms\n"
+        ));
+        assert!(output.contains(
+            "build/output\n  source: drill-down from build\n  entries: 3\n  duration: <1 ms\n"
+        ));
+        assert!(output.contains("git ignored, generated output name hint"));
+        assert!(output.contains(
+            "not git ignored, contains tracked files, DevScope local state, Git observation unavailable"
+        ));
+    }
+
+    #[test]
+    fn renders_no_activity_exclusion_proposals() {
+        assert_eq!(
+            render_activity_exclusion_proposals(&[]),
+            "No Activity exclusion proposals.\n"
+        );
+    }
 
     #[test]
     fn parses_verify_build_test_and_rejects_other_targets() {

@@ -121,6 +121,7 @@ cargo run -- context
 cargo run -- task list
 cargo run -- work list
 cargo run -- work done 3
+cargo run -- activity suggest-excludes
 cargo run -- --help
 ```
 
@@ -132,6 +133,7 @@ output is not mixed with compact CLI output:
 .\target\debug\devscope.exe task list
 .\target\debug\devscope.exe work list
 .\target\debug\devscope.exe work done 3
+.\target\debug\devscope.exe activity suggest-excludes
 .\target\debug\devscope.exe verify build
 .\target\debug\devscope.exe verify test
 .\target\debug\devscope.exe artifact inspect target\debug\devscope.exe
@@ -142,7 +144,7 @@ are equivalent. `context`, `task list`, and experimental `work list` print compa
 TUI. The CLI reports Build/Test availability resolved from project Config or the Cargo
 fallback in `context`. `verify build` and `verify test` run the resolved command, then
 persist the observed current result locally for restoration in a later TUI session.
-Freshness compares relevant project inputs around the verification run.
+Freshness compares relevant project inputs around the verification run. `activity suggest-excludes` runs an on-demand, read-only worktree diagnostic and reports up to three Git-safe Activity exclusion proposals; it never edits Config.
 
 ## Not yet implemented
 
