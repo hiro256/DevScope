@@ -11,8 +11,17 @@ Build/Test = Evidence
 Agent      = Current activity
 ```
 
-The latest release is v0.3.0, **Build/Test Evidence**. It extends v0.2.0 Live
-Observation with DevScope-observed Cargo verification execution and outcome.
+The latest release is v0.4.0, **Workflow and Observation Refinement**. It builds on v0.3.0
+Build/Test Evidence with Current Work, configurable verification, and refined Git worktree
+observation.
+
+## v0.4.0 features
+
+- Current Work with explicit Active state, NOW presentation, and compact history
+- Focused-panel Preview and Task Detail support for source-grounded context
+- Configurable Build/Test commands and project-specific freshness exclusions
+- Artifact Evidence alongside Build/Test Evidence
+- Background Git worktree observation with safe Activity exclusion proposals and an approval-gated workflow
 
 ## v0.3.0 features
 
@@ -86,7 +95,7 @@ q / Esc     Quit
 - Git must be available on `PATH` for Git Activity collection.
 - A Rust toolchain is required to build from source.
 - Build/Test Evidence needs either project-configured executable commands or, for a Cargo root, Cargo on `PATH`.
-- Windows is the primary verified platform for v0.3.0.
+- Windows is the primary verified platform for v0.4.0.
 
 ## Build and run
 
@@ -103,6 +112,14 @@ To build an optimized binary:
 cargo build --release
 .\target\release\devscope.exe
 ```
+
+## Windows x64 binary
+
+When published, the prebuilt Windows x64 binary is available from GitHub Releases. Download the
+`devscope-v0.4.0-windows-x64.zip` archive, extract it to a directory of your choice, then run
+`devscope.exe` from a project root. Add that directory to `PATH` for commands such as `devscope
+context`, or invoke the executable by its absolute path. Run `devscope` with no arguments to start
+the TUI.
 
 ## Experimental CLI (main)
 
@@ -153,7 +170,7 @@ Freshness compares relevant project inputs around the verification run. `activit
 - Task editing and Git write operations
 - Task weighting, progress history, and IDE or Web/API frontends
 
-DevScope v0.3.0 is a source-only release; binary packaging is not provided.
+DevScope v0.3.0 was a source-only release. The v0.4.0 prebuilt package target is Windows x64.
 
 See [docs/roadmap.md](docs/roadmap.md) for the planned work.
 
