@@ -125,7 +125,7 @@
 ### AI workflow refinement
 
 - [x] Define AI-maintained Config workflow
-- [ ] Dogfood Config maintenance through the DevScope Skill
+- [x] Dogfood Config maintenance through the DevScope Skill
 
 ### Core observation
 
@@ -134,7 +134,7 @@
 - [x] Explore verification integration for Build/Test Evidence
 - [x] Explore Artifact Evidence as a second Evidence source
 - [x] Progress history experiment
-- [ ] Refine Git worktree change detection boundary
+- [x] Refine Git worktree change detection boundary
 
 ### External surfaces
 
