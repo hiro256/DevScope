@@ -237,12 +237,12 @@ impl Drop for GitWorktreeWorker {
 fn new_git_worktree_worker(
     project_root: Option<&Path>,
     app: &App,
-    config: &ProjectConfig,
+    activity_excludes: &[PathBuf],
 ) -> Option<GitWorktreeWorker> {
     match (project_root, app.activity()) {
         (Some(root), ActivityState::Available(_)) => Some(GitWorktreeWorker::new_with_exclusions(
             root.to_path_buf(),
-            config.activity().excludes().to_vec(),
+            activity_excludes.to_vec(),
         )),
         _ => None,
     }
@@ -251,7 +251,7 @@ fn new_git_worktree_worker(
 fn reconcile_worktree_worker(
     project_root: Option<&Path>,
     app: &App,
-    config: &ProjectConfig,
+    activity_excludes: &[PathBuf],
     worker: &mut Option<GitWorktreeWorker>,
 ) {
     if matches!(app.activity(), ActivityState::Available(_)) {
@@ -259,7 +259,7 @@ fn reconcile_worktree_worker(
             *worker = project_root.map(|root| {
                 GitWorktreeWorker::new_with_exclusions(
                     root.to_path_buf(),
-                    config.activity().excludes().to_vec(),
+                    activity_excludes.to_vec(),
                 )
             });
         }
@@ -380,17 +380,16 @@ fn collect_change_requests(
     config_changed
 }
 
-fn reload_activity_config(
+fn reload_activity_excludes(
     root: &Path,
-    runtime: &mut BuildTestRuntime,
+    activity_excludes: &mut Vec<PathBuf>,
     worker: &mut Option<GitWorktreeWorker>,
 ) -> Result<bool, ConfigError> {
-    let config = load_project_config(root)?;
-    if runtime.config.activity().excludes() == config.activity().excludes() {
-        runtime.config = config;
+    let new_excludes = load_project_config(root)?.activity().excludes().to_vec();
+    if *activity_excludes == new_excludes {
         return Ok(false);
     }
-    runtime.config = config;
+    *activity_excludes = new_excludes;
     *worker = None;
     Ok(true)
 }
@@ -797,7 +796,8 @@ pub fn run(
     let mut needs_render = true;
     let mut scheduler = PollScheduler::new(session_start, PROJECT_POLL_INTERVAL);
     let mut markdown_changes = project_root.map(MarkdownChangeDetector::new);
-    let mut worktree_worker = new_git_worktree_worker(project_root, app, config);
+    let mut activity_excludes = config.activity().excludes().to_vec();
+    let mut worktree_worker = new_git_worktree_worker(project_root, app, &activity_excludes);
     let mut metadata_changes = project_root.map(GitMetadataChangeDetector::new);
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
@@ -845,9 +845,9 @@ pub fn run(
                             Ok(snapshot) => {
                                 app.apply_snapshot(snapshot);
                                 app.clear_refresh_error();
-                                if let Err(error) = reload_activity_config(
+                                if let Err(error) = reload_activity_excludes(
                                     root,
-                                    &mut build_test_runtime,
+                                    &mut activity_excludes,
                                     &mut worktree_worker,
                                 ) {
                                     app.set_refresh_error(error.to_string());
@@ -861,7 +861,7 @@ pub fn run(
                         reconcile_worktree_worker(
                             project_root,
                             app,
-                            &build_test_runtime.config,
+                            &activity_excludes,
                             &mut worktree_worker,
                         );
                         sync_git_worktree_worker(&mut worktree_worker);
@@ -964,7 +964,7 @@ pub fn run(
             if config_changed
                 && let Some(root) = project_root
                 && let Err(error) =
-                    reload_activity_config(root, &mut build_test_runtime, &mut worktree_worker)
+                    reload_activity_excludes(root, &mut activity_excludes, &mut worktree_worker)
             {
                 app.set_refresh_error(error.to_string());
             }
@@ -982,7 +982,7 @@ pub fn run(
                 reconcile_worktree_worker(
                     project_root,
                     app,
-                    &build_test_runtime.config,
+                    &activity_excludes,
                     &mut worktree_worker,
                 );
                 let size = terminal.size()?;
@@ -1752,46 +1752,130 @@ mod tests {
     }
 
     #[test]
-    fn activity_config_reload_recreates_the_worker_without_a_false_change_baseline() {
+    fn activity_exclude_reload_rebuilds_the_worker_without_changing_build_test_snapshot() {
         let root = git_root();
         fs::create_dir_all(root.join("generated")).unwrap();
         fs::write(root.join("generated/output.txt"), "before").unwrap();
-        let mut runtime = BuildTestRuntime::default();
-        let mut worker = Some(GitWorktreeWorker::new(root.clone()));
-
         fs::create_dir_all(root.join(".devscope")).unwrap();
         fs::write(
             root.join(".devscope/config.toml"),
-            "[activity]\nexclude = [\"generated\"]\n",
+            "[verify]\nexclude = [\"old-output\"]\n[verify.build]\nprogram = \"old-build\"\n[activity]\nexclude = []\n",
         )
         .unwrap();
-        assert!(reload_activity_config(&root, &mut runtime, &mut worker).unwrap());
+        let startup_config = load_project_config(&root).unwrap();
+        let runtime = BuildTestRuntime {
+            config: startup_config.clone(),
+            ..Default::default()
+        };
+        let mut activity_excludes = startup_config.activity().excludes().to_vec();
+        let mut worker = Some(GitWorktreeWorker::new_with_exclusions(
+            root.clone(),
+            activity_excludes.clone(),
+        ));
+
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify]\nexclude = [\"new-output\"]\n[verify.build]\nprogram = \"new-build\"\n[activity]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        assert!(reload_activity_excludes(&root, &mut activity_excludes, &mut worker).unwrap());
         assert!(worker.is_none());
+        assert_eq!(activity_excludes, [PathBuf::from("generated")]);
+        assert_eq!(runtime.config, startup_config);
         assert_eq!(
-            runtime.config.activity().excludes(),
-            [PathBuf::from("generated")]
+            runtime.config.verify().build().unwrap().program(),
+            "old-build"
         );
 
-        let mut detector = GitWorktreeChangeDetector::new_with_exclusions(
-            &root,
-            runtime.config.activity().excludes().to_vec(),
-        );
+        let mut detector =
+            GitWorktreeChangeDetector::new_with_exclusions(&root, activity_excludes.clone());
         assert_eq!(detector.check(&root).unwrap(), GitWorktreeChange::Unchanged);
 
-        fs::remove_file(root.join(".devscope/config.toml")).unwrap();
         worker = Some(GitWorktreeWorker::new_with_exclusions(
             root.clone(),
-            runtime.config.activity().excludes().to_vec(),
+            activity_excludes.clone(),
         ));
-        assert!(reload_activity_config(&root, &mut runtime, &mut worker).unwrap());
+        fs::remove_file(root.join(".devscope/config.toml")).unwrap();
+        assert!(reload_activity_excludes(&root, &mut activity_excludes, &mut worker).unwrap());
         assert!(worker.is_none());
-        assert!(runtime.config.activity().excludes().is_empty());
+        assert!(activity_excludes.is_empty());
+        assert_eq!(runtime.config, startup_config);
 
-        let mut detector = GitWorktreeChangeDetector::new_with_exclusions(
-            &root,
-            runtime.config.activity().excludes().to_vec(),
-        );
+        let mut detector =
+            GitWorktreeChangeDetector::new_with_exclusions(&root, activity_excludes.clone());
         assert_eq!(detector.check(&root).unwrap(), GitWorktreeChange::Unchanged);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn verify_only_reload_keeps_activity_worker_and_build_test_snapshot() {
+        let root = git_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify]\nexclude = [\"old-output\"]\n[verify.build]\nprogram = \"old-build\"\n[activity]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        let startup_config = load_project_config(&root).unwrap();
+        let runtime = BuildTestRuntime {
+            config: startup_config.clone(),
+            ..Default::default()
+        };
+        let mut activity_excludes = startup_config.activity().excludes().to_vec();
+        let mut worker = Some(GitWorktreeWorker::new_with_exclusions(
+            root.clone(),
+            activity_excludes.clone(),
+        ));
+
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify]\nexclude = [\"new-output\"]\n[verify.build]\nprogram = \"new-build\"\n[activity]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        assert!(!reload_activity_excludes(&root, &mut activity_excludes, &mut worker).unwrap());
+        assert!(worker.is_some());
+        assert_eq!(activity_excludes, [PathBuf::from("generated")]);
+        assert_eq!(runtime.config, startup_config);
+        assert_eq!(
+            runtime.config.verify().excludes(),
+            [PathBuf::from("old-output")]
+        );
+        assert_eq!(
+            runtime.config.verify().build().unwrap().program(),
+            "old-build"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_config_keeps_activity_excludes_worker_and_build_test_snapshot() {
+        let root = git_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[verify]\nexclude = [\"old-output\"]\n[activity]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        let startup_config = load_project_config(&root).unwrap();
+        let runtime = BuildTestRuntime {
+            config: startup_config.clone(),
+            ..Default::default()
+        };
+        let mut activity_excludes = startup_config.activity().excludes().to_vec();
+        let mut worker = Some(GitWorktreeWorker::new_with_exclusions(
+            root.clone(),
+            activity_excludes.clone(),
+        ));
+
+        fs::write(
+            root.join(".devscope/config.toml"),
+            "[activity]\nexclude = [\"../outside\"]\n",
+        )
+        .unwrap();
+        assert!(reload_activity_excludes(&root, &mut activity_excludes, &mut worker).is_err());
+        assert!(worker.is_some());
+        assert_eq!(activity_excludes, [PathBuf::from("generated")]);
+        assert_eq!(runtime.config, startup_config);
         let _ = fs::remove_dir_all(root);
     }
 

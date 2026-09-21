@@ -93,5 +93,5 @@
 
 ## 2026-09-20 — Explicit Activity scan exclusions
 
-- **Decision:** Add `[activity].exclude` as literal project-relative policy for Git worktree scan suppression, separate from Git ignore and `[verify].exclude`. Rebuild the worker detector baseline whenever that setting changes.
-- **Reason:** A human or future AI can apply a reviewed exclusion without adding per-tick Git tracked-file checks. Rebuilding the baseline prevents exclusion-set changes from becoming false Git Activity refresh hints.
+- **Decision:** Add `[activity].exclude` as literal project-relative policy for Git worktree scan suppression, separate from Git ignore and `[verify].exclude`. Rebuild the worker detector baseline whenever that setting changes, without changing the TUI's startup Build/Test Config snapshot.
+- **Reason:** A human or future AI can apply a reviewed exclusion without adding per-tick Git tracked-file checks. Rebuilding the baseline prevents exclusion-set changes from becoming false Git Activity refresh hints while preserving existing Build/Test command and freshness-baseline semantics for the session.
