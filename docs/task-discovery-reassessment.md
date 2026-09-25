@@ -56,20 +56,74 @@ item is already in scope; do not cosmetically rewrite unrelated historical tasks
 - Roadmap-first ranking while retaining other accepted sources.
 - Checklist classification that keeps document-local verification out of Plan totals.
 
-These are alternatives to evaluate against concrete project examples. A roadmap-only
+These were alternatives pending concrete project examples. A roadmap-only
 mode is not adopted: projects can have accepted plans outside `docs/roadmap.md`, and
 the initial Config work intentionally deferred `plan.include`.
 
-## Current recommendation
+## Concrete dogfood finding
 
-Keep broad Markdown checkbox discovery in the short term. Improve new task wording
-through the provider-neutral Skill guidance, and do not hide ambiguous historical
-checklists merely to make the TUI look cleaner. Treat this dogfood finding as evidence
-for a future Plan-source semantics experiment, not justification for immediate
-filtering or a final source-classification design.
+The earlier recommendation was to retain broad discovery until a concrete workflow
+failure justified changing it. That failure is now observable: `devscope context`
+counts the historical checklist item at `docs/current-work-proposal.md:248`
+(`Dogfood Current Work CLI storage and recovery workflow`) as a remaining Plan task.
+The accepted project work is in `docs/roadmap.md`; this proposal-local example is
+not an accepted Plan task. The misleading total affects both short CLI orientation
+and the TUI's Plan/Tasks view, rather than merely the appearance of Task Preview.
+The proposal document and its checkbox should remain intact.
 
-Config exclusions remain for sources that should genuinely be outside the project's
-observation policy, not for cosmetic Preview cleanup.
+## Options and recommendation
+
+| Option | Compatibility | User effort / Config fit | Ambiguity / omission risk | Complexity / portability | JSON/API fit |
+| --- | --- | --- | --- | --- | --- |
+| A. Required explicit include paths | Changes unset projects | Every project must configure sources; explicit but high effort | Clear selected files, but missing entries can hide work | Moderate; literal paths are portable | Clear source policy |
+| B. Document marker/front matter | Unmarked plans need migration | Edit every accepted document; weak fit for central AI-maintained Config | Clear per-document intent, but easy to forget a marker | New parsing convention; portable with files | Clear source role if standardized |
+| C. Name/path convention | Changes projects using other names | Low setup, but relocation follows convention | Names do not prove acceptance; high false omission risk | Simple but repo conventions vary | Implicit policy is hard to explain |
+| D. Source classification | Needs migration or an ambiguous default | More labels to maintain | Explicit roles but more chances to mislabel or omit | Larger model/API change; portable if specified | Rich but premature contract |
+| E. Broad default, optional explicit sources | Preserves unset projects | One Config policy only where needed; fits AI-maintained review | Opt-in source set is clear; misconfigured paths need errors | Moderate filtering; literal paths are portable | One stable selected-source rule |
+
+Recommend **E as the first implementation experiment**, using A-style literal
+`[plan].include` list of project-relative Markdown files and/or directory subtrees.
+For example:
+
+```toml
+[plan]
+include = ["docs/roadmap.md", "docs/plans"]
+exclude = ["docs/plans/archive"]
+```
+
+Omission keeps today's broad discovery (including existing mandatory exclusions),
+so old Config files and projects do not silently change. When present, only sources
+under the listed paths are candidates; existing `[plan].exclude` and mandatory
+exclusions still win. `include = []` explicitly selects no Plan sources, producing
+an empty Plan rather than falling back to broad discovery. This distinction must be
+tested and explained clearly so an empty policy is not mistaken for success.
+
+Paths should be literal and project-relative, using `/` in Config on Windows too:
+no absolute paths, parent traversal, glob syntax, or negation. A file path selects
+that Markdown file; a directory path selects Markdown files beneath it. Reject
+nonexistent entries and non-Markdown file entries with a clear Config error rather
+than quietly hiding accepted work. Do not add a default `roadmap.md` assumption.
+The implementation should resolve paths within the project root and preserve the
+existing handling of excluded directories and symlinks. A deliberate root entry
+(`.`) may explicitly retain broad source selection; it is not an implicit default.
+
+This is **source selection**, not automatic classification of every checkbox in a
+selected document. A mixed accepted Plan file may still need a later, separately
+justified document-level convention. Preserve task text, completed state, source
+path, line, heading, context, and source order for selected tasks. Apply the same
+selection to Plan totals, task lists, CLI context, and TUI; Current Work remains
+separate and cannot become Plan through an include path. Neither source selection
+nor Current Work implies priority, task completion, or Evidence.
+
+The first implementation slice should add parsing/validation and source filtering,
+then test omitted vs empty include, file and subtree selection, multiple files,
+exclude precedence, invalid paths, the proposal-checklist regression, and consistent
+CLI/TUI counts. DevScope could then opt into its accepted roadmap explicitly, but
+that Config edit is a separate, reviewed step. A future JSON/API surface should
+report the same selected-source Plan semantics rather than invent a second policy.
+
+Config exclusions remain useful for sources genuinely outside observation policy;
+they are not a cosmetic Preview-cleanup mechanism.
 
 ## Dogfood examples
 
@@ -84,4 +138,4 @@ observation policy, not for cosmetic Preview cleanup.
 - Changing discovery, include/exclude rules, Config, ranking, or filtering.
 - Changing Task Preview rendering or adding generated summaries.
 - Rewriting historical checklists.
-- Promoting a discovery experiment to the roadmap before concrete examples justify it.
+- Implementing the proposed source policy in this documentation-only reassessment.

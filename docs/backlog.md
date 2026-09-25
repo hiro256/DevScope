@@ -27,10 +27,6 @@ are not committed roadmap work. An item must be promoted to
   panels, a theme system, or decorative dashboard widgets.
 - **Current Work dedicated panel.** Reconsider only when overview-only Work progress
   is insufficient for a concrete drill-down need.
-- **Plan source / task discovery experiment.** Revisit how DevScope distinguishes
-  accepted Plan work from document-local checklists when broad checkbox discovery
-  creates concrete workflow ambiguity. See
-  [task-discovery-reassessment.md](task-discovery-reassessment.md).
 
 ## Promotion flow
 
