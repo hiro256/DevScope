@@ -6,7 +6,7 @@ use crate::{
     config::{ConfigError, load_project_config},
     progress::{
         ActivitySummary, GitActivityError, MarkdownProgressError, PlanSummary, TaskSummary,
-        analyze_markdown_progress_with_exclusions, collect_git_activity,
+        analyze_markdown_progress_with_policy, collect_git_activity,
     },
 };
 
@@ -114,7 +114,11 @@ pub fn collect_markdown_state(
     root: &Path,
 ) -> Result<(PlanState, TaskState), ProjectCollectionError> {
     let config = load_project_config(root)?;
-    let progress = analyze_markdown_progress_with_exclusions(root, config.plan().excludes())?;
+    let progress = analyze_markdown_progress_with_policy(
+        root,
+        config.plan().includes(),
+        config.plan().excludes(),
+    )?;
     Ok((
         PlanState::Available(PlanSummary::from(&progress)),
         TaskState::Available(TaskSummary::from(&progress)),
@@ -273,6 +277,64 @@ mod tests {
         };
         assert_eq!(tasks.items()[0].text(), "root");
     }
+
+    #[test]
+    fn explicit_plan_source_excludes_proposal_checklist_from_snapshot() {
+        let project = TempProject::new();
+        project.write("docs/roadmap.md", "# Plan\n- [ ] Accepted task");
+        project.write(
+            "docs/current-work-proposal.md",
+            "# Proposal\n- [ ] Historical proposal task",
+        );
+        project.write(
+            ".devscope/config.toml",
+            "[plan]\ninclude = [\"docs/roadmap.md\"]\n",
+        );
+
+        let snapshot = try_collect_project_snapshot(project.path()).unwrap();
+        assert_eq!(
+            snapshot.plan(),
+            PlanState::Available(PlanSummary::new(0, 1))
+        );
+        let TaskState::Available(tasks) = snapshot.tasks() else {
+            panic!("tasks should be available");
+        };
+        assert_eq!(tasks.total(), 1);
+        assert_eq!(tasks.items()[0].text(), "Accepted task");
+        assert_eq!(tasks.items()[0].source_path(), Path::new("docs/roadmap.md"));
+    }
+
+    #[test]
+    fn explicit_empty_plan_sources_remain_available_with_zero_tasks() {
+        let project = TempProject::new();
+        project.write("docs/roadmap.md", "- [ ] would be excluded");
+        project.write(".devscope/config.toml", "[plan]\ninclude = []\n");
+
+        let (plan, tasks) = collect_markdown_state(project.path()).unwrap();
+        assert_eq!(plan, PlanState::Available(PlanSummary::new(0, 0)));
+        let TaskState::Available(tasks) = tasks else {
+            panic!("tasks should be available");
+        };
+        assert_eq!(tasks.total(), 0);
+        assert_eq!(tasks.remaining(), 0);
+    }
+
+    #[test]
+    fn invalid_explicit_plan_source_is_config_error_not_broad_fallback() {
+        let project = TempProject::new();
+        project.write("docs/roadmap.md", "- [ ] would be included by fallback");
+        project.write(
+            ".devscope/config.toml",
+            "[plan]\ninclude = [\"missing.md\"]\n",
+        );
+        assert!(matches!(
+            collect_markdown_state(project.path()),
+            Err(ProjectCollectionError::Config(
+                ConfigError::InvalidPath { .. }
+            ))
+        ));
+    }
+
     #[test]
     fn reports_config_errors_explicitly() {
         let project = TempProject::new();

@@ -65,10 +65,15 @@ impl ArtifactConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanConfig {
+    includes: Option<Vec<PathBuf>>,
     excludes: Vec<PathBuf>,
 }
 
 impl PlanConfig {
+    pub fn includes(&self) -> Option<&[PathBuf]> {
+        self.includes.as_deref()
+    }
+
     pub fn excludes(&self) -> &[PathBuf] {
         &self.excludes
     }
@@ -187,7 +192,9 @@ pub fn load_project_config(root: &Path) -> Result<ProjectConfig, ConfigError> {
         }
         Err(source) => return Err(ConfigError::Read { path, source }),
     };
-    parse_project_config(&path, &contents)
+    let config = parse_project_config(&path, &contents)?;
+    validate_plan_includes(root, &path, config.plan())?;
+    Ok(config)
 }
 
 fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, ConfigError> {
@@ -214,10 +221,15 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
         None => None,
     };
     for key in plan_table.into_iter().flat_map(|table| table.keys()) {
-        if key != "exclude" {
+        if key != "include" && key != "exclude" {
             return Err(unknown_key(path, key, "[plan]"));
         }
     }
+
+    let includes = plan_table
+        .and_then(|table| table.get("include"))
+        .map(|value| parse_excludes(path, Some(value), "plan.include"))
+        .transpose()?;
 
     let excludes = match plan_table.and_then(|table| table.get("exclude")) {
         None => Vec::new(),
@@ -266,11 +278,57 @@ fn parse_project_config(path: &Path, contents: &str) -> Result<ProjectConfig, Co
     let verify = parse_verify_config(path, table.get("verify"))?;
     let activity = parse_activity_config(path, table.get("activity"))?;
     Ok(ProjectConfig {
-        plan: PlanConfig { excludes },
+        plan: PlanConfig { includes, excludes },
         artifact,
         verify,
         activity,
     })
+}
+
+fn validate_plan_includes(
+    root: &Path,
+    config_path: &Path,
+    plan: &PlanConfig,
+) -> Result<(), ConfigError> {
+    let Some(includes) = plan.includes() else {
+        return Ok(());
+    };
+    for include in includes {
+        let target = root.join(include);
+        let metadata = match fs::symlink_metadata(&target) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                return Err(ConfigError::InvalidPath {
+                    path: config_path.to_path_buf(),
+                    setting: "plan.include",
+                    value: include.display().to_string(),
+                    reason: "path does not exist",
+                });
+            }
+            Err(source) => {
+                return Err(ConfigError::Read {
+                    path: target,
+                    source,
+                });
+            }
+        };
+        if metadata.is_dir() {
+            continue;
+        }
+        if !metadata.is_file()
+            || !target
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        {
+            return Err(ConfigError::InvalidPath {
+                path: config_path.to_path_buf(),
+                setting: "plan.include",
+                value: include.display().to_string(),
+                reason: "path must be a Markdown file or directory",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn parse_activity_config(
@@ -508,6 +566,12 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, contents).unwrap();
         }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.0.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
     }
 
     impl Drop for TempProject {
@@ -575,6 +639,89 @@ mod tests {
     }
 
     #[test]
+    fn plan_include_distinguishes_omitted_empty_and_explicit_paths() {
+        let project = TempProject::new();
+        assert_eq!(
+            load_project_config(&project.0).unwrap().plan().includes(),
+            None
+        );
+
+        project.write_config("[plan]\ninclude = []");
+        assert_eq!(
+            load_project_config(&project.0).unwrap().plan().includes(),
+            Some([].as_slice())
+        );
+
+        project.write("docs/roadmap.md", "- [ ] accepted");
+        project.write("docs/plans/next.md", "- [ ] next");
+        project.write_config("[plan]\ninclude = [\"docs/roadmap.md\", \"docs/plans\", \".\"]");
+        assert_eq!(
+            load_project_config(&project.0).unwrap().plan().includes(),
+            Some(
+                [
+                    PathBuf::from("docs/roadmap.md"),
+                    PathBuf::from("docs/plans"),
+                    PathBuf::from("."),
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_plan_include_syntax_and_schema() {
+        let project = TempProject::new();
+        for value in [
+            "",
+            "../outside",
+            "/absolute",
+            "C:/absolute",
+            "notes\\todo.md",
+            "docs/*",
+            "!docs",
+        ] {
+            project.write_config(&format!("[plan]\ninclude = [{value:?}]"));
+            assert!(matches!(
+                load_project_config(&project.0),
+                Err(ConfigError::InvalidPath {
+                    setting: "plan.include",
+                    ..
+                })
+            ));
+        }
+        for value in ["true", "[1]", "\"docs\""] {
+            project.write_config(&format!("[plan]\ninclude = {value}"));
+            assert!(matches!(
+                load_project_config(&project.0),
+                Err(ConfigError::InvalidSchema { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_missing_or_non_markdown_plan_include() {
+        let project = TempProject::new();
+        project.write_config("[plan]\ninclude = [\"missing.md\"]");
+        assert!(matches!(
+            load_project_config(&project.0),
+            Err(ConfigError::InvalidPath {
+                reason: "path does not exist",
+                ..
+            })
+        ));
+
+        project.write("notes.txt", "text");
+        project.write_config("[plan]\ninclude = [\"notes.txt\"]");
+        assert!(matches!(
+            load_project_config(&project.0),
+            Err(ConfigError::InvalidPath {
+                reason: "path must be a Markdown file or directory",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn accepts_empty_and_duplicate_excludes() {
         let project = TempProject::new();
         project.write_config("[plan]\nexclude = [\"generated\", \"generated\"]\n");
@@ -598,7 +745,7 @@ mod tests {
             Err(ConfigError::InvalidSchema { .. })
         ));
 
-        project.write_config("[plan]\ninclude = [\"docs\"]");
+        project.write_config("[plan]\nunexpected = true");
         assert!(matches!(
             load_project_config(&project.0),
             Err(ConfigError::InvalidSchema { .. })

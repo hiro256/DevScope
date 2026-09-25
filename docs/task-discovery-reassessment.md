@@ -13,9 +13,10 @@ together under the current broad checkbox discovery.
 
 ## Current semantics
 
-DevScope currently discovers Markdown checkboxes broadly, subject to its existing
-mandatory and configured exclusions. This is intentionally simple and useful, but
-checkbox syntax is an observation format, not proof that an item is accepted Plan
+Without `[plan].include`, DevScope discovers Markdown checkboxes broadly, subject
+to mandatory and configured exclusions. An explicit include selects only the named
+Markdown file(s) or directory subtrees; an empty include selects no Plan sources.
+Checkbox syntax is an observation format, not proof that an item is accepted Plan
 work.
 
 The following concepts should remain distinct:
@@ -115,12 +116,13 @@ selection to Plan totals, task lists, CLI context, and TUI; Current Work remains
 separate and cannot become Plan through an include path. Neither source selection
 nor Current Work implies priority, task completion, or Evidence.
 
-The first implementation slice should add parsing/validation and source filtering,
-then test omitted vs empty include, file and subtree selection, multiple files,
-exclude precedence, invalid paths, the proposal-checklist regression, and consistent
-CLI/TUI counts. DevScope could then opt into its accepted roadmap explicitly, but
-that Config edit is a separate, reviewed step. A future JSON/API surface should
-report the same selected-source Plan semantics rather than invent a second policy.
+The first implementation slice adds parsing/validation and source filtering, with
+regression tests for omitted vs empty include, file and subtree selection, overlap,
+exclude precedence, invalid paths, and proposal-checklist exclusion. Plan totals
+and Tasks share filtered MarkdownProgress through collect_markdown_state; CLI and TUI
+do not apply separate filters. DevScope has not opted into its accepted roadmap
+through local Config yet: that dogfood edit is a separate, reviewed step. A future
+JSON/API surface should report the same selected-source Plan semantics.
 
 Config exclusions remain useful for sources genuinely outside observation policy;
 they are not a cosmetic Preview-cleanup mechanism.
@@ -135,7 +137,7 @@ they are not a cosmetic Preview-cleanup mechanism.
 
 ## Non-goals
 
-- Changing discovery, include/exclude rules, Config, ranking, or filtering.
+- Classifying selected checkboxes as Plan, Checklist, or Historical.
 - Changing Task Preview rendering or adding generated summaries.
-- Rewriting historical checklists.
-- Implementing the proposed source policy in this documentation-only reassessment.
+- Rewriting historical checklists or automatically editing Plan.
+- Applying a DevScope-local include policy before separate dogfood review.

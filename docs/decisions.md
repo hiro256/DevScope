@@ -95,3 +95,13 @@
 
 - **Decision:** Add `[activity].exclude` as literal project-relative policy for Git worktree scan suppression, separate from Git ignore and `[verify].exclude`. Rebuild the worker detector baseline whenever that setting changes, without changing the TUI's startup Build/Test Config snapshot.
 - **Reason:** A human or future AI can apply a reviewed exclusion without adding per-tick Git tracked-file checks. Rebuilding the baseline prevents exclusion-set changes from becoming false Git Activity refresh hints while preserving existing Build/Test command and freshness-baseline semantics for the session.
+
+## 2026-09-25 — Optional explicit Plan sources
+
+- **Date:** 2026-09-25
+- **Decision:** Keep broad Markdown discovery when `[plan].include` is omitted, but
+  let projects select literal file or subtree sources explicitly. An empty list
+  selects none; mandatory exclusions and `[plan].exclude` still win.
+- **Reason:** Proposal-local checklists were observed in Plan totals. Opt-in source
+  selection corrects that ambiguity without changing existing projects or adding
+  per-task classification.

@@ -45,6 +45,22 @@ observation.
 - Refresh status and session-relative last-refresh timestamp
 - Responsive terminal layout
 
+## Plan sources
+
+By default, Plan and Tasks discover checkboxes across project Markdown files.
+Projects that need a precise set of accepted Plan sources can opt in with literal,
+project-relative paths in `.devscope/config.toml`:
+
+```toml
+[plan]
+include = ["docs/roadmap.md", "docs/plans"]
+```
+
+A file selects that Markdown file; a directory selects its subtree. Existing
+`[plan].exclude` and built-in exclusions still apply. Omitting `include` keeps
+broad discovery; `include = []` explicitly selects no Plan sources. Invalid or
+missing include paths are Config errors, not a fallback to broad discovery.
+
 ## Live observation
 
 DevScope polls project state approximately once per second. Markdown changes update

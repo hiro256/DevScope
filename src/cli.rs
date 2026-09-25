@@ -1012,6 +1012,37 @@ mod tests {
         assert!(unavailable.contains("Current Work: unavailable\n"));
         assert!(unavailable.contains("Plan: unavailable"));
     }
+    #[test]
+    fn context_and_task_list_use_the_same_explicit_plan_sources() {
+        let project = TempProject::new();
+        let docs = project.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(docs.join("roadmap.md"), "- [ ] Accepted task").unwrap();
+        fs::write(
+            docs.join("current-work-proposal.md"),
+            "- [ ] Historical proposal task",
+        )
+        .unwrap();
+        let config = project.path().join(".devscope");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(
+            config.join("config.toml"),
+            "[plan]\ninclude = [\"docs/roadmap.md\"]\n",
+        )
+        .unwrap();
+
+        let snapshot = devscope::project::try_collect_project_snapshot(project.path()).unwrap();
+        let context = render_context_ok(project.path(), &snapshot, CurrentWorkContext::NotSet);
+        assert!(context.contains("Plan: 0/1"));
+        assert!(context.contains("Accepted task"));
+        assert!(!context.contains("Historical proposal task"));
+
+        let tasks = collect_task_list_state(project.path()).unwrap();
+        let list = render_task_list(project.path(), &tasks);
+        assert!(list.contains("Tasks: 1 remaining / 1 total"));
+        assert!(list.contains("Accepted task"));
+        assert!(!list.contains("Historical proposal task"));
+    }
     struct TempProject {
         path: PathBuf,
     }

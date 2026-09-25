@@ -88,8 +88,19 @@ pub fn discover_markdown_files_with_exclusions(
     root: &Path,
     excludes: &[PathBuf],
 ) -> Result<Vec<PathBuf>, MarkdownProgressError> {
+    discover_markdown_files_with_policy(root, None, excludes)
+}
+
+pub fn discover_markdown_files_with_policy(
+    root: &Path,
+    includes: Option<&[PathBuf]>,
+    excludes: &[PathBuf],
+) -> Result<Vec<PathBuf>, MarkdownProgressError> {
+    if includes.is_some_and(<[PathBuf]>::is_empty) {
+        return Ok(Vec::new());
+    }
     let mut files = Vec::new();
-    discover(root, root, excludes, &mut files)?;
+    discover(root, root, includes, excludes, &mut files)?;
     files.sort();
     Ok(files)
 }
@@ -102,8 +113,16 @@ pub fn analyze_markdown_progress_with_exclusions(
     root: &Path,
     excludes: &[PathBuf],
 ) -> Result<MarkdownProgress, MarkdownProgressError> {
+    analyze_markdown_progress_with_policy(root, None, excludes)
+}
+
+pub fn analyze_markdown_progress_with_policy(
+    root: &Path,
+    includes: Option<&[PathBuf]>,
+    excludes: &[PathBuf],
+) -> Result<MarkdownProgress, MarkdownProgressError> {
     let mut tasks = Vec::new();
-    for path in discover_markdown_files_with_exclusions(root, excludes)? {
+    for path in discover_markdown_files_with_policy(root, includes, excludes)? {
         let content = fs::read_to_string(&path).map_err(|source| MarkdownProgressError {
             path: path.clone(),
             source,
@@ -119,6 +138,7 @@ pub fn analyze_markdown_progress_with_exclusions(
 fn discover(
     root: &Path,
     directory: &Path,
+    includes: Option<&[PathBuf]>,
     excludes: &[PathBuf],
     files: &mut Vec<PathBuf>,
 ) -> Result<(), MarkdownProgressError> {
@@ -137,11 +157,14 @@ fn discover(
             source,
         })?;
         if kind.is_dir() {
-            if !is_excluded_path(root, &path, excludes) {
-                discover(root, &path, excludes, files)?;
+            if !is_excluded_path(root, &path, excludes)
+                && can_contain_included_path(root, &path, includes)
+            {
+                discover(root, &path, includes, excludes, files)?;
             }
         } else if kind.is_file()
             && !is_excluded_path(root, &path, excludes)
+            && is_included_path(root, &path, includes)
             && path
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
@@ -152,6 +175,29 @@ fn discover(
     Ok(())
 }
 
+fn is_included_path(root: &Path, path: &Path, includes: Option<&[PathBuf]>) -> bool {
+    let Some(includes) = includes else {
+        return true;
+    };
+    path.strip_prefix(root).is_ok_and(|relative| {
+        includes.iter().any(|include| {
+            include == Path::new(".") || relative == include || relative.starts_with(include)
+        })
+    })
+}
+
+fn can_contain_included_path(root: &Path, path: &Path, includes: Option<&[PathBuf]>) -> bool {
+    let Some(includes) = includes else {
+        return true;
+    };
+    path.strip_prefix(root).is_ok_and(|relative| {
+        includes.iter().any(|include| {
+            include == Path::new(".")
+                || relative.starts_with(include)
+                || include.starts_with(relative)
+        })
+    })
+}
 fn is_excluded_path(root: &Path, path: &Path, configured: &[PathBuf]) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
@@ -224,7 +270,7 @@ fn parse_task_line(line: &str) -> Option<(bool, String)> {
 mod tests {
     use super::{
         analyze_markdown_progress, discover_markdown_files,
-        discover_markdown_files_with_exclusions, parse_tasks,
+        discover_markdown_files_with_exclusions, discover_markdown_files_with_policy, parse_tasks,
     };
     use std::{
         fs,
@@ -375,6 +421,76 @@ mod tests {
             vec![project.path().join("root.md")]
         );
     }
+
+    #[test]
+    fn explicit_file_and_directory_sources_are_sorted_and_deduplicated() {
+        let project = TempProject::new();
+        project.write("docs/roadmap.md", "- [ ] roadmap");
+        project.write("docs/plans/a.md", "- [ ] plan");
+        project.write("docs/proposals/example.md", "- [ ] proposal");
+        project.write("other.md", "- [ ] other");
+
+        let includes = [
+            PathBuf::from("docs/roadmap.md"),
+            PathBuf::from("docs/plans"),
+            PathBuf::from("docs"),
+            PathBuf::from("docs/plans"),
+        ];
+        assert_eq!(
+            discover_markdown_files_with_policy(
+                project.path(),
+                Some(&includes),
+                &[PathBuf::from("docs/proposals")],
+            )
+            .unwrap(),
+            vec![
+                project.path().join("docs/plans/a.md"),
+                project.path().join("docs/roadmap.md"),
+            ]
+        );
+        assert_eq!(
+            discover_markdown_files_with_policy(
+                project.path(),
+                Some(&[PathBuf::from("docs/roadmap.md")]),
+                &[],
+            )
+            .unwrap(),
+            vec![project.path().join("docs/roadmap.md")],
+        );
+        assert_eq!(
+            discover_markdown_files_with_policy(
+                project.path(),
+                Some(&[PathBuf::from("docs/plans")]),
+                &[],
+            )
+            .unwrap(),
+            vec![project.path().join("docs/plans/a.md")],
+        );
+    }
+
+    #[test]
+    fn empty_include_is_empty_but_root_include_keeps_broad_mandatory_exclusions() {
+        let project = TempProject::new();
+        project.write("root.md", "- [ ] root");
+        project.write(".git/ignored.md", "- [ ] git");
+        project.write("target/ignored.md", "- [ ] target");
+        project.write(".devscope/work/current.md", "- [ ] work");
+        assert!(
+            discover_markdown_files_with_policy(project.path(), Some(&[]), &[])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            discover_markdown_files_with_policy(project.path(), Some(&[PathBuf::from(".")]), &[],)
+                .unwrap(),
+            vec![project.path().join("root.md")],
+        );
+        assert_eq!(
+            discover_markdown_files_with_policy(project.path(), None, &[]).unwrap(),
+            vec![project.path().join("root.md")],
+        );
+    }
+
     struct TempProject {
         path: PathBuf,
     }

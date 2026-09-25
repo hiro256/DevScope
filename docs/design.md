@@ -92,8 +92,11 @@ single wide-screen cutoff.
 Task Detail surfaces source-grounded task context rather than generated interpretation. It may show
 the selected task text, source path, section, and nearby Markdown context. It intentionally exposes
 source quality rather than generating interpretation; improve ambiguous task text at the source or
-workflow level when appropriate. Markdown checkbox syntax is broader than accepted Plan semantics,
-and source classification remains an open design question.
+workflow level when appropriate. Markdown checkbox syntax is broader than accepted Plan semantics.
+Optional `[plan].include` selects literal project-relative Markdown files or directory subtrees;
+when omitted, broad discovery remains the default, while an explicit empty list selects none.
+Existing `[plan].exclude` and mandatory exclusions always win. This source policy is shared by
+Plan totals and Tasks through shared Markdown collection; it does not classify individual checkboxes.
 Evidence Detail Pane surfaces the selected observed Build/Test state and its available execution
 details. Freshness is shown separately from the underlying outcome.
 
