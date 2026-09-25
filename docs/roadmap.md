@@ -129,7 +129,7 @@
 
 ### Core observation
 
-- [ ] Refine Plan source / task discovery semantics
+- [x] Refine Plan source / task discovery semantics
 - [x] Configurable Build/Test command resolution and freshness exclusions
 
 - [x] Explore verification integration for Build/Test Evidence

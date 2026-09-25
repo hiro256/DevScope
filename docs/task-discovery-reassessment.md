@@ -120,12 +120,20 @@ The first implementation slice adds parsing/validation and source filtering, wit
 regression tests for omitted vs empty include, file and subtree selection, overlap,
 exclude precedence, invalid paths, and proposal-checklist exclusion. Plan totals
 and Tasks share filtered MarkdownProgress through collect_markdown_state; CLI and TUI
-do not apply separate filters. DevScope has not opted into its accepted roadmap
-through local Config yet: that dogfood edit is a separate, reviewed step. A future
-JSON/API surface should report the same selected-source Plan semantics.
+do not apply separate filters. DevScope's local opt-in was verified in a separate
+dogfood step. A future JSON/API surface should report the same selected-source
+Plan semantics.
 
 Config exclusions remain useful for sources genuinely outside observation policy;
 they are not a cosmetic Preview-cleanup mechanism.
+
+## DevScope dogfood closure
+
+DevScope's local Config now explicitly includes only `docs/roadmap.md`. The
+proposal-local checklist disappeared from Plan and Tasks: context changed from
+66/72 with six remaining to 65/70 with five remaining, and context, task list,
+and TUI showed the same roadmap-only sources. After closing the roadmap item,
+context showed 66/70 with four remaining.
 
 ## Dogfood examples
 
@@ -140,4 +148,4 @@ they are not a cosmetic Preview-cleanup mechanism.
 - Classifying selected checkboxes as Plan, Checklist, or Historical.
 - Changing Task Preview rendering or adding generated summaries.
 - Rewriting historical checklists or automatically editing Plan.
-- Applying a DevScope-local include policy before separate dogfood review.
+- Automatically applying a Plan source policy to other projects.
