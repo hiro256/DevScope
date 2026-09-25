@@ -5,11 +5,12 @@ use std::{
 };
 
 use devscope::{
-    config::{ConfigError, load_project_config},
+    config::{ConfigError, ProjectConfig, load_project_config},
     current_work::{CurrentWork, CurrentWorkItem},
     progress::{
         ActivityExcludeCandidateReason, ActivityExcludeProposal, ActivityExcludeProposalSource,
-        ActivitySummary, BuildTestKind, resolve_build_test_command,
+        ActivitySummary, BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState,
+        PersistedBuildTestState, load_build_test_states, resolve_build_test_command,
     },
     project::{
         ActivityState, PlanState, ProjectCollectionError, ProjectSnapshot, TaskState,
@@ -295,15 +296,43 @@ fn format_activity(activity: &ActivitySummary) -> String {
 
 fn render_evidence(root: &Path) -> Result<String, ConfigError> {
     let config = load_project_config(root)?;
-    let build_available = resolve_build_test_command(root, &config, BuildTestKind::Build).is_some();
-    let test_available = resolve_build_test_command(root, &config, BuildTestKind::Test).is_some();
-    Ok(match (build_available, test_available) {
-        (true, true) => "Evidence: Build/Test available; run state not exposed by CLI",
-        (true, false) => "Evidence: Build available; Test unavailable",
-        (false, true) => "Evidence: Build unavailable; Test available",
-        (false, false) => "Evidence: Build/Test unavailable",
+    let mut stored = load_build_test_states(root);
+    for entry in &mut stored {
+        entry.restore_freshness_with_exclusions(root, config.verify().excludes());
     }
-    .to_owned())
+    let build = evidence_kind_summary(root, &config, &stored, BuildTestKind::Build);
+    let test = evidence_kind_summary(root, &config, &stored, BuildTestKind::Test);
+    Ok(format!("Evidence: Build {build} | Test {test}"))
+}
+
+fn evidence_kind_summary(
+    root: &Path,
+    config: &ProjectConfig,
+    stored: &[PersistedBuildTestState],
+    kind: BuildTestKind,
+) -> &'static str {
+    if resolve_build_test_command(root, config, kind).is_none() {
+        return "Unavailable";
+    }
+    let Some(state) = stored
+        .iter()
+        .find(|entry| entry.kind == kind)
+        .map(|entry| &entry.state)
+    else {
+        return "Not run";
+    };
+    match state {
+        BuildTestState::Unavailable => "Unavailable",
+        BuildTestState::NotRun => "Not run",
+        BuildTestState::Running(_) => "Running",
+        BuildTestState::ExecutionError(_) => "Execution error",
+        BuildTestState::Completed(result) => match (result.outcome(), result.freshness()) {
+            (BuildTestOutcome::Passed, BuildTestFreshness::Fresh) => "Passed (Fresh)",
+            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "Passed (Stale)",
+            (BuildTestOutcome::Failed, BuildTestFreshness::Fresh) => "Failed (Fresh)",
+            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "Failed (Stale)",
+        },
+    }
 }
 
 fn append_tasks<'a>(
@@ -462,6 +491,121 @@ fn activity_exclusion_reason_label(reason: &ActivityExcludeCandidateReason) -> &
 mod tests {
     use super::*;
 
+    fn persisted_result(kind: BuildTestKind, outcome: BuildTestOutcome) -> BuildTestState {
+        BuildTestState::Completed(BuildTestResult::new(
+            kind,
+            outcome,
+            BuildTestFreshness::Fresh,
+            "Cargo",
+            "cargo check",
+            Some(0),
+            Duration::from_millis(1),
+            "done",
+            None,
+        ))
+    }
+
+    #[test]
+    fn context_restores_persisted_outcomes_and_freshness() {
+        let project = TempProject::new();
+        fs::write(
+            project.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(project.path().join("input.rs"), "before").unwrap();
+        let baseline = BuildTestFreshnessBaseline::capture(project.path()).unwrap();
+        save_build_test_state(
+            project.path(),
+            BuildTestKind::Build,
+            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            Some(&baseline),
+        )
+        .unwrap();
+        save_build_test_state(
+            project.path(),
+            BuildTestKind::Test,
+            &persisted_result(BuildTestKind::Test, BuildTestOutcome::Failed),
+            Some(&baseline),
+        )
+        .unwrap();
+        let fresh = render_context_ok(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+        assert!(fresh.contains("Evidence: Build Passed (Fresh) | Test Failed (Fresh)"));
+        fs::write(project.path().join("input.rs"), "after and longer").unwrap();
+        let stale = render_context_ok(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+        assert!(stale.contains("Evidence: Build Passed (Stale) | Test Failed (Stale)"));
+    }
+
+    #[test]
+    fn context_respects_verify_exclusion_when_restoring_freshness() {
+        let project = TempProject::new();
+        fs::write(
+            project.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(project.path().join(".devscope")).unwrap();
+        fs::write(
+            project.path().join(".devscope/config.toml"),
+            "[verify]\nexclude = [\"generated\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(project.path().join("generated")).unwrap();
+        fs::write(project.path().join("generated/output.txt"), "before").unwrap();
+        let exclusions = [PathBuf::from("generated")];
+        let baseline =
+            BuildTestFreshnessBaseline::capture_with_exclusions(project.path(), &exclusions)
+                .unwrap();
+        save_build_test_state(
+            project.path(),
+            BuildTestKind::Build,
+            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            Some(&baseline),
+        )
+        .unwrap();
+        fs::write(
+            project.path().join("generated/output.txt"),
+            "after and longer",
+        )
+        .unwrap();
+        let output = render_context_ok(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+        assert!(output.contains("Evidence: Build Passed (Fresh) | Test Not run"));
+    }
+
+    #[test]
+    fn context_shows_execution_error_without_hiding_other_kind() {
+        let project = TempProject::new();
+        fs::write(
+            project.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let error = BuildTestState::ExecutionError(BuildTestExecutionError::new(
+            BuildTestKind::Build,
+            "Cargo",
+            "cargo check",
+            "failed to start",
+        ));
+        save_build_test_state(project.path(), BuildTestKind::Build, &error, None).unwrap();
+        let output = render_context_ok(
+            project.path(),
+            &ProjectSnapshot::unavailable(),
+            CurrentWorkContext::NotSet,
+        );
+        assert!(output.contains("Evidence: Build Execution error | Test Not run"));
+    }
     fn render_context_ok(
         root: &Path,
         snapshot: &ProjectSnapshot,
@@ -472,8 +616,9 @@ mod tests {
     use devscope::{
         current_work::load_current_work,
         progress::{
-            GitActivity, GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary,
-            TaskSummaryItem,
+            BuildTestExecutionError, BuildTestFreshnessBaseline, BuildTestResult, GitActivity,
+            GitChangedFile, GitCommit, GitFileStatus, PlanSummary, TaskSummary, TaskSummaryItem,
+            save_build_test_state,
         },
         project::{ActivityState, PlanState, TaskState},
     };
@@ -676,7 +821,7 @@ mod tests {
         assert!(output.contains("Plan: 1/7"));
         assert!(output.contains("Tasks: 6 remaining"));
         assert!(output.contains("Activity: not a Git repository"));
-        assert!(output.contains("Evidence: Build/Test available; run state not exposed by CLI"));
+        assert!(output.contains("Evidence: Build Not run | Test Not run"));
         assert!(!output.contains(&project.path().display().to_string()));
         assert!(output.contains("docs"));
         assert!(output.contains(":1  Task 1"));
@@ -717,7 +862,7 @@ mod tests {
         assert!(unavailable.contains("Plan: unavailable"));
         assert!(unavailable.contains("Tasks: unavailable"));
         assert!(unavailable.contains("Activity: unavailable"));
-        assert!(unavailable.contains("Evidence: Build/Test unavailable"));
+        assert!(unavailable.contains("Evidence: Build Unavailable | Test Unavailable"));
     }
 
     #[test]
@@ -730,13 +875,21 @@ mod tests {
         )
         .unwrap();
 
+        save_build_test_state(
+            project.path(),
+            BuildTestKind::Build,
+            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            None,
+        )
+        .unwrap();
+
         let output = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
         );
 
-        assert!(output.contains("Evidence: Build unavailable; Test available"));
+        assert!(output.contains("Evidence: Build Unavailable | Test Not run"));
         assert!(!output.contains("Cargo Build/Test"));
     }
 

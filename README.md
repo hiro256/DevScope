@@ -174,8 +174,8 @@ output is not mixed with compact CLI output:
 
 If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
 are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
-TUI. The CLI reports Build/Test availability resolved from project Config or the Cargo
-fallback in `context`. `verify build` and `verify test` run the resolved command, then
+TUI. In `context`, the CLI reports Build/Test availability and the latest saved
+outcome with current Fresh/Stale status (or Not run). `verify build` and `verify test` run the resolved command, then
 persist the observed current result locally for restoration in a later TUI session.
 Freshness compares relevant project inputs around the verification run. `activity suggest-excludes` runs an on-demand, read-only worktree diagnostic and reports up to three Git-safe Activity exclusion proposals; it never edits Config. The repo-local Skill permits a separate `[activity].exclude` edit only after explicit human approval of an exact reported path.
 
