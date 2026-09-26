@@ -76,12 +76,12 @@ fn layout_variant(width: u16, height: u16) -> Option<LayoutVariant> {
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    if app.is_file_browser_open() {
-        render_file_browser(frame, area, app);
-        return;
-    }
     if app.detail_target().is_some() {
         render_detail(frame, area, app);
+        return;
+    }
+    if app.is_file_browser_open() {
+        render_file_browser(frame, area, app);
         return;
     }
     let Some(layout) = layout_variant(area.width, area.height) else {
@@ -192,18 +192,30 @@ fn browser_preview_lines(app: &App) -> Vec<Line<'static>> {
     if entry.kind == BrowserEntryKind::File {
         match &browser.preview {
             Some(Ok((text, truncated))) => {
-                lines.extend(
-                    safe_display_text(text)
-                        .lines()
-                        .map(|line| Line::from(line.to_owned())),
-                );
-                if *truncated {
-                    lines.push(Line::from("... file content truncated ..."));
-                }
+                return browser_file_content_lines(&entry.path, text, *truncated);
             }
             Some(Err(error)) => lines.extend(preview_field("Error", file_error_text(*error))),
             None => lines.push(Line::from("Unavailable")),
         }
+    }
+    lines
+}
+
+fn browser_file_content_lines(
+    path: &std::path::Path,
+    text: &str,
+    truncated: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = preview_field("File", &browser_path(path));
+    lines.extend(preview_field("Mode", "File content"));
+    lines.push(Line::from(""));
+    lines.extend(
+        safe_display_text(text)
+            .lines()
+            .map(|line| Line::from(line.to_owned())),
+    );
+    if truncated {
+        lines.push(Line::from("... file content truncated ..."));
     }
     lines
 }
@@ -222,9 +234,23 @@ pub fn browser_preview_scroll_limit(app: &App, area: Rect) -> usize {
     if !preview_layout_available(area.width, area.height) {
         return 0;
     }
-    browser_preview_lines(app)
+    let mut pane = browser_areas(area)[1];
+    pane.width = preview_pane_widths(area.width).1;
+    let viewport = preview_inner_areas(pane)[0];
+    wrap_preview_lines(browser_preview_lines(app), viewport.width)
         .len()
-        .saturating_sub(preview_inner_areas(browser_areas(area)[1])[0].height as usize)
+        .saturating_sub(viewport.height as usize)
+}
+
+fn browser_preview_action_text(app: &App, limit: usize, width: u16) -> String {
+    let full = app.can_open_browser_file_detail();
+    let text = match (full, limit > 0) {
+        (true, true) => "Ctrl+Enter Full View   Ctrl+↑/↓ Scroll",
+        (true, false) => "Ctrl+Enter Full View",
+        (false, true) => "Ctrl+↑/↓ Scroll",
+        (false, false) => "",
+    };
+    truncate_text(text, usize::from(width))
 }
 
 fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
@@ -322,26 +348,34 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(panel_block("Preview", false), panes[1]);
         let inner = preview_inner_areas(panes[1]);
         frame.render_widget(
-            Paragraph::new(browser_preview_lines(app)).scroll((scroll, 0)),
+            Paragraph::new(wrap_preview_lines(
+                browser_preview_lines(app),
+                inner[0].width,
+            ))
+            .scroll((scroll, 0)),
             inner[0],
         );
-        let hint = if browser_preview_scroll_limit(app, area) > 0 {
-            "Ctrl+↑/↓ Scroll"
-        } else {
-            ""
-        };
+        let hint = browser_preview_action_text(
+            app,
+            browser_preview_scroll_limit(app, area),
+            inner[1].width,
+        );
         frame.render_widget(Paragraph::new(hint), inner[1]);
     }
-    let footer = if area.width >= 110 {
-        "↑/↓ Select  ←/→ Navigate  Enter Open  r Reload  Esc Back  q Quit"
-    } else if split {
-        "↑/↓ Select ←/→ Dir Enter Open r Reload Esc Back q Quit"
-    } else if area.width >= 45 {
-        "↑/↓ Select ←/→ Dir Enter Open r Reload Esc Back q"
-    } else {
-        "←/→ Dir r Reload Esc Back q"
-    };
-    frame.render_widget(Paragraph::new(footer), outer[2]);
+    frame.render_widget(Paragraph::new(browser_footer_text(area.width)), outer[2]);
+}
+
+fn browser_footer_text(width: u16) -> &'static str {
+    [
+        "↑/↓:Select  ←/→:Dir  Enter:Open  r:Reload  Esc:Back  q:Quit",
+        "↑/↓:Select ←/→:Dir Enter:Open r:Reload Esc:Back q:Quit",
+        "←/→:Dir Enter:Open r:Reload Esc:Back q:Quit",
+        "←/→:Dir r:Reload Esc:Back q:Quit",
+        "Esc:Back q:Quit",
+    ]
+    .into_iter()
+    .find(|text| Line::from(*text).width() <= usize::from(width))
+    .unwrap_or("")
 }
 
 fn header_title(app: &App, width: usize) -> String {
@@ -840,56 +874,86 @@ fn selected_changed_file_path(app: &App) -> Option<String> {
         .get(selected)
         .map(|file| file.path.display().to_string())
 }
-fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
-    let header_height = 10;
+fn detail_areas(app: &App, area: Rect) -> [Rect; 3] {
+    let header_height = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
+        0
+    } else {
+        10
+    };
     let areas = Layout::vertical([
         Constraint::Length(header_height),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
-    let Some(DetailTarget::ChangedFile {
+    [areas[0], areas[1], areas[2]]
+}
+
+fn full_view_lines(app: &App) -> Vec<Line<'static>> {
+    match app.detail_target() {
+        Some(DetailTarget::BrowserFile {
+            path,
+            text,
+            truncated,
+        }) => browser_file_content_lines(path, text, *truncated),
+        _ => detail_inspection_lines(app.detail_inspection()),
+    }
+}
+
+fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
+    let areas = detail_areas(app, area);
+    if let Some(DetailTarget::ChangedFile {
         path,
         status,
         changes,
     }) = app.detail_target()
-    else {
-        return;
-    };
-    frame.render_widget(
-        Paragraph::new(format!(
-            "File\n  {}\n\nStatus\n  {}\n\nChanges\n  {}",
-            path.display(),
-            git_file_status_name(status),
-            change_summary(*changes),
-        ))
-        .block(panel_block("Changed File Detail", false)),
-        areas[0],
-    );
-    frame.render_widget(
-        Paragraph::new(detail_inspection_lines(app.detail_inspection()))
-            .block(panel_block(
-                match app.detail_inspection() {
-                    Some(GitFileInspection::Diff { .. }) => "Diff",
-                    Some(GitFileInspection::FileContent { .. }) => "File content",
-                    _ => "Inspection",
-                },
-                false,
+    {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "File\n  {}\n\nStatus\n  {}\n\nChanges\n  {}",
+                path.display(),
+                git_file_status_name(status),
+                change_summary(*changes),
             ))
-            .scroll((app.detail_scroll().min(u16::MAX as usize) as u16, 0)),
+            .block(panel_block("Changed File Detail", false)),
+            areas[0],
+        );
+    }
+    let title = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
+        "File Detail"
+    } else {
+        match app.detail_inspection() {
+            Some(GitFileInspection::Diff { .. }) => "Diff",
+            Some(GitFileInspection::FileContent { .. }) => "File content",
+            _ => "Inspection",
+        }
+    };
+    let block = panel_block(title, false);
+    let viewport = block.inner(areas[1]);
+    let lines = wrap_preview_lines(full_view_lines(app), viewport.width);
+    let limit = lines.len().saturating_sub(usize::from(viewport.height));
+    frame.render_widget(
+        Paragraph::new(lines).block(block).scroll((
+            app.detail_scroll().min(limit).min(u16::MAX as usize) as u16,
+            0,
+        )),
         areas[1],
     );
     frame.render_widget(
-        Paragraph::new("j/k: Scroll  Enter/Esc: Back  q: Quit"),
+        Paragraph::new(if app.is_file_browser_open() {
+            "↑/↓:Scroll Enter/Esc:Back q:Quit"
+        } else {
+            "j/k: Scroll  Enter/Esc: Back  q: Quit"
+        }),
         areas[2],
     );
 }
 
 pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
-    let body_height = usize::from(area.height.saturating_sub(11).saturating_sub(2));
-    detail_inspection_lines(app.detail_inspection())
+    let viewport = panel_block("", false).inner(detail_areas(app, area)[1]);
+    wrap_preview_lines(full_view_lines(app), viewport.width)
         .len()
-        .saturating_sub(body_height)
+        .saturating_sub(usize::from(viewport.height))
 }
 
 fn detail_inspection_lines(diff: Option<&GitFileInspection>) -> Vec<Line<'static>> {
@@ -940,7 +1004,11 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         lines.push(Line::from(""));
     }
     lines.push(Line::from(title.to_owned()));
-    lines.extend(diff.text.lines().map(|line| Line::from(line.to_owned())));
+    lines.extend(
+        safe_display_text(&diff.text)
+            .lines()
+            .map(|line| Line::from(line.to_owned())),
+    );
     if diff.truncated {
         lines.push(Line::from("... diff truncated ..."));
     }
@@ -1468,6 +1536,213 @@ mod tests {
         (0..count)
             .map(|index| TaskSummaryItem::new("a.md".into(), index + 1, format!("Task {index}")))
             .collect()
+    }
+
+    #[test]
+    fn browser_footer_and_full_view_hints_match_context() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind, SafeTextError};
+        for width in 20..=160 {
+            let footer = browser_footer_text(width);
+            assert!(Line::from(footer).width() <= usize::from(width));
+            assert!(footer.split_whitespace().all(|hint| hint.contains(':')));
+            assert!(footer.contains("Esc:Back"));
+            assert!(footer.contains("q:Quit"));
+            assert!(!footer.contains("Ctrl+Enter"));
+        }
+        assert!(browser_footer_text(120).contains("Enter:Open"));
+        assert!(browser_footer_text(80).contains("↑/↓:Select"));
+        assert!(browser_footer_text(40).contains("r:Reload"));
+
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.file_browser.entries = vec![BrowserEntry {
+            path: "file.txt".into(),
+            name: "file.txt".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        app.file_browser.preview = Some(Ok(("text".into(), false)));
+        assert_eq!(
+            browser_preview_action_text(&app, 0, 60),
+            "Ctrl+Enter Full View"
+        );
+        assert_eq!(
+            browser_preview_action_text(&app, 1, 60),
+            "Ctrl+Enter Full View   Ctrl+↑/↓ Scroll"
+        );
+        assert!(draw(&app, 80, 30).contains("Ctrl+Enter Full View"));
+        assert!(!draw(&app, 40, 20).contains("Ctrl+Enter Full View"));
+        for kind in [
+            BrowserEntryKind::Directory,
+            BrowserEntryKind::Parent,
+            BrowserEntryKind::UnsupportedLink,
+            BrowserEntryKind::Unsupported,
+            BrowserEntryKind::Error,
+        ] {
+            app.file_browser.entries[0].kind = kind;
+            assert_eq!(browser_preview_action_text(&app, 0, 60), "");
+            assert_eq!(browser_preview_action_text(&app, 1, 60), "Ctrl+↑/↓ Scroll");
+        }
+        app.file_browser.entries[0].kind = BrowserEntryKind::File;
+        for preview in [None, Some(Err(SafeTextError::ReadError))] {
+            app.file_browser.preview = preview;
+            assert_eq!(browser_preview_action_text(&app, 0, 60), "");
+        }
+    }
+
+    #[test]
+    fn browser_preview_and_full_view_wrap_paths_content_and_reach_last_row() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        let path = format!("docs/{}-PATH-END.md", "long-name-".repeat(30));
+        let content = format!(
+            "{}\n{}TAIL",
+            "日本語e\u{301}👩‍💻".repeat(180),
+            "x".repeat(300)
+        );
+        app.file_browser.entries = vec![BrowserEntry {
+            path: path.into(),
+            name: "long-name.md".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        app.file_browser.preview = Some(Ok((content.clone(), false)));
+        for width in [80, 96, 120] {
+            let area = Rect::new(0, 0, width, 25);
+            let mut pane = browser_areas(area)[1];
+            pane.width = preview_pane_widths(width).1;
+            let viewport = preview_inner_areas(pane)[0];
+            let logical = browser_preview_lines(&app);
+            let wrapped = wrap_preview_lines(logical.clone(), viewport.width);
+            assert!(wrapped.len() > logical.len());
+            assert!(
+                wrapped
+                    .iter()
+                    .all(|row| row.width() <= usize::from(viewport.width))
+            );
+            let path_rows = wrap_preview_lines(vec![logical[0].clone()], viewport.width);
+            assert_eq!(
+                path_rows
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<String>(),
+                logical[0].to_string()
+            );
+            app.file_browser.preview_scroll = path_rows.len().saturating_sub(1);
+            assert!(draw(&app, width, 25).contains(&path_rows.last().unwrap().to_string()));
+            let limit = browser_preview_scroll_limit(&app, area);
+            assert_eq!(limit, wrapped.len() - usize::from(viewport.height));
+            app.file_browser.preview_scroll = limit;
+            let output = draw(&app, width, 25);
+            assert!(output.contains("TAIL"));
+            assert!(output.contains("Ctrl+Enter Full View"));
+            assert!(output.contains("Ctrl+↑/↓ Scroll"));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        assert!(app.has_detail_view());
+        assert!(app.detail_inspection().is_none());
+        for (width, height) in [(20, 18), (40, 20), (80, 25), (120, 35)] {
+            let area = Rect::new(0, 0, width, height);
+            let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+            let rows = wrap_preview_lines(full_view_lines(&app), viewport.width);
+            let limit = detail_scroll_limit(&app, area);
+            assert_eq!(
+                limit,
+                rows.len().saturating_sub(usize::from(viewport.height))
+            );
+            app.scroll_detail(limit as isize, limit);
+            let output = draw(&app, width, height);
+            assert!(output.contains("File Detail"));
+            assert!(
+                output.contains("TAIL"),
+                "width={width}, height={height}, viewport={viewport:?}, rows={}, limit={limit}\n{output}",
+                rows.len()
+            );
+            assert!(!output.contains("▌ Files"));
+        }
+        for size in 1..18 {
+            draw(&app, size, size);
+        }
+        assert_eq!(app.file_browser.preview, Some(Ok((content, false))));
+    }
+
+    #[test]
+    fn changed_full_view_wraps_diff_and_current_content_with_matching_limits() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "long.txt".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        let token = "日本語e\u{301}👩‍💻".repeat(100);
+        let long = format!("{token}\n\x1b[31m{}TAIL", "x".repeat(300));
+        for inspection in [
+            GitFileInspection::Diff {
+                unstaged: Some(GitDiffText {
+                    text: "unstaged section".into(),
+                    truncated: false,
+                }),
+                staged: Some(GitDiffText {
+                    text: long.clone(),
+                    truncated: false,
+                }),
+            },
+            GitFileInspection::FileContent {
+                text: long.clone(),
+                truncated: false,
+            },
+        ] {
+            app.apply_detail_inspection(inspection);
+            for width in [30, 80, 120] {
+                let area = Rect::new(0, 0, width, 25);
+                let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+                let logical = full_view_lines(&app);
+                assert!(logical.iter().all(|row| !row.to_string().contains('\x1b')));
+                let rows = wrap_preview_lines(logical.clone(), viewport.width);
+                assert!(rows.len() > logical.len());
+                assert!(
+                    rows.iter()
+                        .all(|row| row.width() <= usize::from(viewport.width))
+                );
+                let limit = detail_scroll_limit(&app, area);
+                assert_eq!(limit, rows.len() - usize::from(viewport.height));
+                app.scroll_detail(limit as isize, limit);
+                let mut terminal = Terminal::new(TestBackend::new(width, 25)).unwrap();
+                terminal.draw(|frame| render(frame, &app)).unwrap();
+                let last_row = (viewport.x..viewport.right())
+                    .map(|x| terminal.backend().buffer()[(x, viewport.bottom() - 1)].symbol())
+                    .collect::<String>();
+                assert_eq!(
+                    last_row.trim_end(),
+                    rows.last().unwrap().to_string().trim_end()
+                );
+                assert!(
+                    rows.iter()
+                        .map(ToString::to_string)
+                        .collect::<String>()
+                        .ends_with("TAIL")
+                );
+            }
+        }
+        for width in [18, 41, 78, 118] {
+            let wrapped = wrap_preview_lines(vec![Line::from(token.clone())], width);
+            assert_eq!(
+                wrapped.iter().map(ToString::to_string).collect::<String>(),
+                token
+            );
+            assert!(wrapped.iter().all(|row| {
+                let text = row.to_string();
+                !text.starts_with('\u{301}')
+                    && !text.starts_with('\u{200d}')
+                    && !text.ends_with('\u{200d}')
+                    && !text.ends_with('e')
+            }));
+        }
     }
 
     #[test]

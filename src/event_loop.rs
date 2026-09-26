@@ -990,6 +990,21 @@ fn handle_navigation_key(
     if key.kind != KeyEventKind::Press {
         return;
     }
+    // Full View consumes the event before either navigation view can handle it.
+    if app.has_detail_view() {
+        app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
+        if app.has_detail_view() && key.modifiers == KeyModifiers::NONE {
+            let delta = match key.code {
+                KeyCode::Down | KeyCode::Char('j') => Some(1),
+                KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                app.scroll_detail(delta, ui::detail_scroll_limit(app, area));
+            }
+        }
+        return;
+    }
     let was_browser = app.is_file_browser_open();
     if was_browser
         || (!app.has_detail_view()
@@ -997,6 +1012,9 @@ fn handle_navigation_key(
             && key.modifiers == KeyModifiers::CONTROL)
     {
         app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
+        if app.has_detail_view() {
+            return;
+        }
         if !app.is_file_browser_open() {
             if changed_file_preview_active(area.width, area.height, app) {
                 refresh_changed_file_preview(project_root, app);
@@ -1035,25 +1053,12 @@ fn handle_navigation_key(
         }
         return;
     }
-    let was_detail = app.has_detail_view();
     let selected_before = app.selected_changed_file();
     let preview_was_active = changed_file_preview_active(area.width, area.height, app);
     let focused_before = app.focused_panel();
     app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
     if app.has_detail_view() {
-        if key.modifiers == KeyModifiers::NONE {
-            let delta = match key.code {
-                KeyCode::Down | KeyCode::Char('j') => Some(1),
-                KeyCode::Up | KeyCode::Char('k') => Some(-1),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                app.scroll_detail(delta, ui::detail_scroll_limit(app, area));
-            }
-        }
-        if !was_detail {
-            refresh_open_detail(project_root, app);
-        }
+        refresh_open_detail(project_root, app);
     } else {
         if key.modifiers == KeyModifiers::CONTROL
             && ui::has_global_preview(area.width, area.height, app.preview_visible())
@@ -3161,7 +3166,6 @@ mod tests {
             key(KeyCode::Char('p')),
             key(KeyCode::Tab),
             key(KeyCode::Enter),
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             open,
         ] {
             handle_navigation_key(Some(&root), &mut app, k, area);
@@ -3171,6 +3175,48 @@ mod tests {
                 app.file_browser.preview,
                 Some(Ok((original.clone(), false)))
             );
+        }
+        let browser_before = format!("{:?}", app.file_browser);
+        for close in [KeyCode::Enter, KeyCode::Esc] {
+            handle_navigation_key(
+                Some(&root),
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                area,
+            );
+            assert!(
+                matches!(app.detail_target(), Some(crate::app::DetailTarget::BrowserFile { text, .. }) if text == &original)
+            );
+            // Git/background refresh must not replace cached Browser content.
+            app.apply_snapshot(collect_project_snapshot(&root));
+            assert!(!refresh_open_detail(Some(&root), &mut app));
+            for code in [
+                KeyCode::Left,
+                KeyCode::Right,
+                KeyCode::Char('r'),
+                KeyCode::Tab,
+                KeyCode::Char('p'),
+            ] {
+                handle_navigation_key(Some(&root), &mut app, key(code), area);
+            }
+            for code in [KeyCode::Down, KeyCode::Char('j')] {
+                handle_navigation_key(Some(&root), &mut app, key(code), area);
+            }
+            assert_eq!(app.detail_scroll(), 2);
+            for code in [KeyCode::Up, KeyCode::Char('k')] {
+                handle_navigation_key(Some(&root), &mut app, key(code), area);
+            }
+            assert_eq!(app.detail_scroll(), 0);
+            handle_navigation_key(Some(&root), &mut app, down, area);
+            assert_eq!(app.detail_scroll(), 0);
+            assert_eq!(format!("{:?}", app.file_browser), browser_before);
+            assert!(
+                matches!(app.detail_target(), Some(crate::app::DetailTarget::BrowserFile { text, .. }) if text == &original)
+            );
+            handle_navigation_key(Some(&root), &mut app, key(close), area);
+            assert!(!app.has_detail_view());
+            assert!(app.is_file_browser_open());
+            assert_eq!(format!("{:?}", app.file_browser), browser_before);
         }
         handle_navigation_key(
             Some(&root),

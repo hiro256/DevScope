@@ -71,6 +71,11 @@ pub enum FocusedPanel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DetailTarget {
+    BrowserFile {
+        path: PathBuf,
+        text: String,
+        truncated: bool,
+    },
     ChangedFile {
         path: PathBuf,
         status: GitFileStatus,
@@ -379,7 +384,7 @@ impl App {
     }
 
     pub fn apply_detail_inspection(&mut self, inspection: GitFileInspection) {
-        if self.detail_target.is_some() {
+        if matches!(self.detail_target, Some(DetailTarget::ChangedFile { .. })) {
             self.detail_inspection = Some(inspection);
             self.detail_scroll = 0;
         }
@@ -393,6 +398,7 @@ impl App {
     pub fn detail_request(&self) -> Option<(PathBuf, GitFileStatus)> {
         match self.detail_target.as_ref()? {
             DetailTarget::ChangedFile { path, status, .. } => Some((path.clone(), status.clone())),
+            DetailTarget::BrowserFile { .. } => None,
         }
     }
 
@@ -418,6 +424,35 @@ impl App {
         matches!(self.view, AppView::FileBrowser)
     }
 
+    pub fn can_open_browser_file_detail(&self) -> bool {
+        self.is_file_browser_open()
+            && !self.has_detail_view()
+            && self
+                .file_browser
+                .selected_entry()
+                .is_some_and(|entry| entry.kind == devscope::progress::BrowserEntryKind::File)
+            && matches!(self.file_browser.preview, Some(Ok(_)))
+    }
+
+    fn open_browser_file_detail(&mut self) {
+        if !self.can_open_browser_file_detail() {
+            return;
+        }
+        if let (Some(entry), Some(Ok((text, truncated)))) = (
+            self.file_browser.selected_entry(),
+            &self.file_browser.preview,
+        ) {
+            // Snapshot the already observed safe content; the Browser stays underneath.
+            self.detail_target = Some(DetailTarget::BrowserFile {
+                path: entry.path.clone(),
+                text: text.clone(),
+                truncated: *truncated,
+            });
+            self.detail_inspection = None;
+            self.detail_scroll = 0;
+        }
+    }
+
     pub const fn refresh_status(&self) -> RefreshStatus {
         self.refresh_status
     }
@@ -435,19 +470,6 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
-        if self.is_file_browser_open() {
-            if key.modifiers == KeyModifiers::NONE {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.view = AppView::Overview;
-                        self.reconcile_focus(focusable_panels);
-                    }
-                    KeyCode::Char('q') => self.running = false,
-                    _ => {}
-                }
-            }
-            return;
-        }
         if self.detail_target.is_some() {
             if key.modifiers != KeyModifiers::NONE {
                 return;
@@ -460,6 +482,21 @@ impl App {
                     self.detail_scroll = 0;
                 }
                 _ => {}
+            }
+            return;
+        }
+        if self.is_file_browser_open() {
+            if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Enter {
+                self.open_browser_file_detail();
+            } else if key.modifiers == KeyModifiers::NONE {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.view = AppView::Overview;
+                        self.reconcile_focus(focusable_panels);
+                    }
+                    KeyCode::Char('q') => self.running = false,
+                    _ => {}
+                }
             }
             return;
         }
@@ -631,6 +668,93 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn browser_full_view_requires_readable_file_and_returns_to_browser() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind, SafeTextError};
+        let mut app = app(3);
+        let open = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
+        assert!(!app.can_open_browser_file_detail());
+        app.file_browser.current_dir = "docs".into();
+        app.file_browser.entries = vec![BrowserEntry {
+            path: "docs/sample.txt".into(),
+            name: "sample.txt".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        for preview in [
+            None,
+            Some(Err(SafeTextError::Binary)),
+            Some(Err(SafeTextError::ReadError)),
+        ] {
+            app.file_browser.preview = preview;
+            app.handle_key_with_focusable_panels(open, ALL_PANELS);
+            assert!(!app.has_detail_view());
+        }
+        app.file_browser.preview = Some(Ok(("safe cached text".into(), true)));
+        for kind in [
+            BrowserEntryKind::Directory,
+            BrowserEntryKind::Parent,
+            BrowserEntryKind::UnsupportedLink,
+            BrowserEntryKind::Unsupported,
+            BrowserEntryKind::Error,
+        ] {
+            app.file_browser.entries[0].kind = kind;
+            assert!(!app.can_open_browser_file_detail());
+            app.handle_key_with_focusable_panels(open, ALL_PANELS);
+            assert!(!app.has_detail_view());
+        }
+        app.file_browser.entries[0].kind = BrowserEntryKind::File;
+        for event in [
+            key(KeyCode::Enter),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            KeyEvent {
+                kind: KeyEventKind::Release,
+                ..open
+            },
+            KeyEvent {
+                kind: KeyEventKind::Repeat,
+                ..open
+            },
+        ] {
+            app.handle_key_with_focusable_panels(event, ALL_PANELS);
+            assert!(!app.has_detail_view());
+        }
+        app.file_browser.preview_scroll = 8;
+        let browser_before = format!("{:?}", app.file_browser);
+        for close in [KeyCode::Enter, KeyCode::Esc] {
+            assert!(app.can_open_browser_file_detail());
+            app.handle_key_with_focusable_panels(open, ALL_PANELS);
+            assert_eq!(
+                app.detail_target(),
+                Some(&DetailTarget::BrowserFile {
+                    path: "docs/sample.txt".into(),
+                    text: "safe cached text".into(),
+                    truncated: true,
+                })
+            );
+            assert!(app.detail_request().is_none());
+            assert!(!app.can_open_browser_file_detail());
+            app.scroll_detail(3, 10);
+            app.handle_key_with_focusable_panels(open, ALL_PANELS);
+            assert!(app.has_detail_view());
+            assert_eq!(app.detail_scroll(), 3);
+            app.handle_key_with_focusable_panels(key(close), ALL_PANELS);
+            assert!(!app.has_detail_view());
+            assert!(app.is_file_browser_open());
+            assert!(app.is_running());
+            assert_eq!(app.detail_scroll(), 0);
+            assert_eq!(format!("{:?}", app.file_browser), browser_before);
+        }
+        app.handle_key_with_focusable_panels(open, ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('q')), ALL_PANELS);
+        assert!(!app.is_running());
     }
 
     #[test]

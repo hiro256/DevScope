@@ -152,7 +152,7 @@ toggle the same visibility preference; responsive layouts may still hide Preview
 Ctrl+Up/Down scroll visible Preview one line without moving focus or selection. The scroll
 offset resets when its focused panel or selected target changes; hiding and showing the same
 target preserves it, and rendering clamps it to the current content and viewport.
-Ctrl+Enter opens Full Detail from Overview only for a selected Changed File. Full Detail
+Ctrl+Enter opens Full Detail from Overview only for a selected Changed File. Changed File Full Detail
 keeps Up/Down and j/k scrolling; plain Enter or Esc returns to Overview without changing
 focus, selection, or Preview visibility/scroll. Ctrl/Shift/Alt+Enter is a no-op within
 Full Detail. Enter on Overview remains the Preview toggle; Esc on Overview retains quit
@@ -195,9 +195,17 @@ unsupported content and truncation. Large/Medium use the existing usable-width s
 narrow/Small layouts show only the list. Ctrl+Up/Down scroll visible Preview independently
 of Overview, resetting on target changes and retaining/clamping for the same target.
 Rendering and scrolling do not read files; background project polling does not refresh
-Browser content. No file operations, recursive preload, watcher, or Full File Detail are added.
+Browser content. No file operations, recursive preload, or watcher are added.
 Windows Terminal dogfood confirmed navigation, Preview scrolling, local reload, Overview
 restoration, remembered directory, and narrow-to-wide resizing.
+
+Ctrl+Enter opens Browser Full View only for a selected regular file with readable cached
+text; its Preview advertises Full View under the same condition. Opening copies the safe
+text observation without rereading the file or collecting Git diff. Up/Down and j/k scroll;
+plain Enter or Esc returns to Browser with directory, selection, listing, and Preview scroll
+preserved, while q quits. Modified Enter is a no-op within Full View. This is current-file
+inspection, not Git diff or Evidence. Browser footer hints use `Key:Action` consistently
+across responsive variants, without changing the existing navigation controls.
 
 File Browser follows Overview's visual rule: borderless `▌ Files` with a bold focus title,
 `>` for selection, and a framed passive Preview. The list uses its actual inner area through
@@ -228,8 +236,11 @@ keeping outcome and freshness separate. Matching Current Work and source Context
 source-grounded sections. Changed Files identifies its selected path in the Preview title,
 without a duplicate body field, and reuses the existing diff/current-content inspection. Long lines wrap at the actual
 Preview width, preferring word boundaries and preserving graphemes in long tokens; scroll
-limits use these same rendered rows and exclude the fixed action row. File Browser and
-Full Detail retain their separate presentation. Half-screen Windows Terminal dogfood
+limits use these same rendered rows and exclude the fixed action row. Browser Preview,
+Browser Full View, and Changed File Full Detail use the same width-aware wrapping for
+inspection content, with scroll limits derived from their actual content viewport.
+Windows Terminal dogfood accepted the wrapped inspection and Browser return behavior.
+Half-screen Windows Terminal dogfood
 accepted the denser layout without changing the interaction model.
 
 Future Detail Pane work, if justified, may examine a Recent Commits detail,
