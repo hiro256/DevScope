@@ -1,5 +1,16 @@
 # Decision Log
 
+## 2026-09-26 — File Browser as on-demand project inspection
+
+- **Decision:** Implement File Browser as a separate, read-only project inspection view
+  with filesystem-based current-directory listing and passive bounded text Preview.
+  Confine traversal to the project root, never follow symlink/reparse points, and keep
+  browser visibility separate from Plan, Activity, and Verify exclusions.
+- **Reason:** Optional surrounding-file inspection should not turn Overview into a file
+  manager, depend on Git membership, or become a new Plan/Activity/Evidence authority.
+  The [initial contract](file-browser-proposal.md) closes exploration only; implementation
+  and Windows dogfood remain pending, and entry-key details are not fixed by this decision.
+
 ## 2026-08-23 — Project-centric architecture
 
 - **Date:** 2026-08-23

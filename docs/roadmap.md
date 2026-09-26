@@ -121,7 +121,8 @@
 - [x] Refine Project Progress visual hierarchy and progress indicators
 - [ ] Refine keyboard navigation and Preview controls
 - [x] Show file content when Changed File diff is unavailable
-- [ ] Explore read-only project File Browser with Preview
+- [x] Explore read-only project File Browser with Preview
+- [ ] Implement minimal read-only project File Browser
 - [ ] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
 - [ ] Refine Preview content and density across focused panels
@@ -141,15 +142,16 @@ plus one detection byte. Truncation and unsupported/read-error reasons are expli
 Windows Terminal dogfood confirmed content labeling, Preview scrolling, and Full Detail
 navigation with an untracked UTF-8 text file.
 
-The File Browser is an experiment in a separate read-only inspection view, not a
-permanent Overview panel or a general file manager. Start at the project root and
-evaluate directory/parent navigation, file selection, text Preview and scrolling,
-responsive layout, and root confinement. Editing, file operations, staging, search,
-syntax highlighting, image or archive Preview are outside the initial scope. Compare
-filesystem-wide, Git-centric, and filesystem browsing with built-in safety exclusions;
-the last is the initial candidate. Do not reuse plan, activity, or verify exclusions as
-File Browser visibility policy. Added-file inspection may inform later safe text-file
-observation reuse, without defining a shared API now.
+File Browser exploration is complete; implementation remains separate and follows the
+[minimal contract](file-browser-proposal.md). Build a separate read-only view starting
+at project root, with session-local last directory, bounded on-demand filesystem listing,
+directory-first ordering, checked parent navigation, and no symlink/reparse traversal.
+Use Left/Right plus Enter for directory navigation, Esc Back, passive bounded text Preview,
+and Ctrl+Up/Down scroll; Large/Medium split and Small list-only preserve root confinement
+without file operations. Ctrl+F is the entry candidate for Windows implementation dogfood.
+Browser visibility has its own built-in exclusions, not Plan/Activity/Verify policies.
+Added-file inspection may inform minimal internal safe-text reuse at implementation time;
+no shared public API is defined now.
 
 After the inspection surfaces, plan contextual actions: the global footer owns navigation
 and application-wide controls, while passive Detail / Preview shows only actions available
