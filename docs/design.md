@@ -199,6 +199,13 @@ Browser content. No file operations, recursive preload, watcher, or Full File De
 Windows Terminal dogfood confirmed navigation, Preview scrolling, local reload, Overview
 restoration, remembered directory, and narrow-to-wide resizing.
 
+File Browser follows Overview's visual rule: borderless `▌ Files` with a bold focus title,
+`>` for selection, and a framed passive Preview. The list uses its actual inner area through
+the last row, without a bottom separator. Preview metadata uses compact `Label: value`
+fields, retaining `File: <path>` because its title is only `Preview`; existing safe text and
+fixed scroll hints are preserved. Windows Terminal dogfood accepted this alignment without
+changing the 45/55 split, responsive behavior, footer, or controls.
+
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
 NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`
 neutral state, and `?` unavailable. They retain source-specific semantics: Stale keeps its Build/Test

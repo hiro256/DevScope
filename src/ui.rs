@@ -168,24 +168,26 @@ fn browser_preview_lines(app: &App) -> Vec<Line<'static>> {
     };
     let path = browser_path(&entry.path);
     let mut lines = match entry.kind {
-        BrowserEntryKind::Directory => vec![Line::from("Directory"), Line::from(path)],
-        BrowserEntryKind::Parent => vec![Line::from("Parent"), Line::from(path)],
-        BrowserEntryKind::UnsupportedLink => vec![
-            Line::from(path),
-            Line::from("Unsupported link / reparse point"),
-        ],
-        BrowserEntryKind::Unsupported => {
-            vec![Line::from(path), Line::from("Unsupported file type")]
+        BrowserEntryKind::Directory => preview_field("Directory", &path),
+        BrowserEntryKind::Parent => preview_field("Parent", &path),
+        BrowserEntryKind::UnsupportedLink
+        | BrowserEntryKind::Unsupported
+        | BrowserEntryKind::Error => {
+            let mut lines = preview_field("Path", &path);
+            let (label, reason) = match entry.kind {
+                BrowserEntryKind::UnsupportedLink => ("Status", "Unsupported link / reparse point"),
+                BrowserEntryKind::Unsupported => ("Status", "Unsupported file type"),
+                _ => ("Error", "Metadata read error"),
+            };
+            lines.extend(preview_field(label, reason));
+            lines
         }
-        BrowserEntryKind::Error => vec![Line::from(path), Line::from("Metadata read error")],
-        BrowserEntryKind::File => vec![
-            Line::from("File"),
-            Line::from(path),
-            Line::from(""),
-            Line::from("Mode"),
-            Line::from("  File content"),
-            Line::from(""),
-        ],
+        BrowserEntryKind::File => {
+            let mut lines = preview_field("File", &path);
+            lines.extend(preview_field("Mode", "File content"));
+            lines.push(Line::from(""));
+            lines
+        }
     };
     if entry.kind == BrowserEntryKind::File {
         match &browser.preview {
@@ -199,7 +201,7 @@ fn browser_preview_lines(app: &App) -> Vec<Line<'static>> {
                     lines.push(Line::from("... file content truncated ..."));
                 }
             }
-            Some(Err(error)) => lines.push(Line::from(file_error_text(*error))),
+            Some(Err(error)) => lines.extend(preview_field("Error", file_error_text(*error))),
             None => lines.push(Line::from("Unavailable")),
         }
     }
@@ -265,7 +267,10 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
     let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(outer[1]);
     let list_area = if split { panes[0] } else { outer[1] };
-    let rows = inner_height(list_area);
+    // Unlike stacked Overview sections, this list needs no bottom separator.
+    let list_block = navigation_block("Files", true).padding(Padding::new(1, 1, 0, 0));
+    let list_inner = list_block.inner(list_area);
+    let rows = usize::from(list_inner.height);
     let start = browser
         .selected
         .unwrap_or(0)
@@ -305,7 +310,8 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
         lines
     };
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block("Files", true)),
+        Paragraph::new(fit_navigation_lines(lines, usize::from(list_inner.width)))
+            .block(list_block),
         list_area,
     );
     if split {
@@ -1465,6 +1471,102 @@ mod tests {
     }
 
     #[test]
+    fn browser_flat_files_uses_all_rows_and_keeps_preview_frame() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.file_browser.entries = (0..50)
+            .map(|index| BrowserEntry {
+                path: format!("entry-{index:02}.txt").into(),
+                name: format!("entry-{index:02}.txt").into(),
+                kind: BrowserEntryKind::File,
+            })
+            .collect();
+        for (width, height) in [(120, 40), (80, 30), (80, 25), (77, 30), (40, 18)] {
+            let area = Rect::new(0, 0, width, height);
+            let outer = browser_areas(area);
+            let rows = usize::from(outer[1].height - 1); // Title only, no bottom frame.
+            for selected in [0, 49] {
+                app.file_browser.selected = Some(selected);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|frame| render(frame, &app)).unwrap();
+                let buffer = terminal.backend().buffer();
+                let output = text(&terminal);
+                assert!(output.contains("▌ Files"));
+                assert!(buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
+                assert!(!output.contains('┏'));
+                assert_eq!(
+                    output.contains("┌ Preview "),
+                    preview_layout_available(width, height)
+                );
+                assert!(output.contains(&format!("> entry-{selected:02}.txt")));
+                let bottom_index = if selected == 0 { rows - 1 } else { selected };
+                for y in outer[1].y + 1..outer[1].bottom() {
+                    assert_eq!(buffer[(0, y)].symbol(), " ");
+                    let row = (1..20).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+                    assert!(row.contains("entry-"));
+                    if y == outer[1].bottom() - 1 {
+                        assert!(row.contains(&format!("entry-{bottom_index:02}.txt")));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn browser_compact_metadata_preserves_paths_and_long_name_identity() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.file_browser.entries = vec![BrowserEntry {
+            path: "docs/AGENTS.md".into(),
+            name: "AGENTS.md".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        app.file_browser.preview = Some(Ok(("text body".into(), false)));
+        assert_eq!(
+            browser_preview_lines(&app),
+            [
+                "File: docs/AGENTS.md",
+                "Mode: File content",
+                "",
+                "text body"
+            ]
+            .map(Line::from)
+            .to_vec()
+        );
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("File: docs/AGENTS.md"));
+        assert!(output.contains("Mode: File content"));
+        assert!(!output.contains("Ctrl+↑/↓ Scroll"));
+
+        let name = "日本語の非常に長いファイル名を省略しても元の識別情報は維持する.txt";
+        let path = std::path::PathBuf::from("docs").join(name);
+        app.file_browser.entries[0].name = name.into();
+        app.file_browser.entries[0].path = path.clone();
+        assert_eq!(
+            browser_preview_lines(&app)[0],
+            Line::from(format!("File: {}", browser_path(&path)))
+        );
+        for width in [20, 40, 80, 120] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let list_width = if preview_layout_available(width, 30) {
+                preview_pane_widths(width).0
+            } else {
+                width
+            };
+            let row = (0..list_width)
+                .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+                .collect::<String>();
+            assert!(row.contains("> "));
+            assert!(row.contains('…'));
+        }
+        assert_eq!(app.file_browser.entries[0].path, path);
+    }
+
+    #[test]
     fn browser_preview_escapes_controls_without_changing_observation() {
         use devscope::progress::{BrowserEntry, BrowserEntryKind};
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
@@ -1520,6 +1622,8 @@ mod tests {
         assert!(first.contains("browser line 00"));
         assert!(first.contains("Ctrl+↑/↓ Scroll"));
         let limit = browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30));
+        assert_eq!(browser_preview_lines(&app).len(), 64); // Two fields, gap, 60 lines, truncation.
+        assert_eq!(limit, 64 - 23); // Actual Preview viewport excludes frame and action row.
         app.file_browser.scroll(isize::MAX, limit);
         let last = draw(&app, 80, 30);
         assert!(last.contains("browser line 59"));
@@ -1550,11 +1654,20 @@ mod tests {
         app.file_browser.selected = Some(0);
         app.file_browser.preview = Some(Ok(("stale file text".into(), false)));
         for (kind, expected) in [
-            (BrowserEntryKind::Directory, "Directory"),
-            (BrowserEntryKind::Parent, "Parent"),
-            (BrowserEntryKind::UnsupportedLink, "Unsupported link"),
-            (BrowserEntryKind::Unsupported, "Unsupported file type"),
-            (BrowserEntryKind::Error, "Metadata read error"),
+            (BrowserEntryKind::Directory, "Directory: entry"),
+            (BrowserEntryKind::Parent, "Parent: entry"),
+            (
+                BrowserEntryKind::UnsupportedLink,
+                "Path: entry\nStatus: Unsupported link / reparse point",
+            ),
+            (
+                BrowserEntryKind::Unsupported,
+                "Path: entry\nStatus: Unsupported file type",
+            ),
+            (
+                BrowserEntryKind::Error,
+                "Path: entry\nError: Metadata read error",
+            ),
         ] {
             app.file_browser.entries = vec![BrowserEntry {
                 path: "entry".into(),
