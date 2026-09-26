@@ -126,7 +126,7 @@
 - [x] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
 - [x] Refine Preview content and density across focused panels
-- [ ] Refine TUI visual alignment for side-by-side Codex use
+- [x] Refine TUI visual alignment for side-by-side Codex use
 - [ ] Dogfood five-second project-state understanding
 
 The keyboard slice implements Left/Right panel navigation, Tab/Shift+Tab compatibility,
@@ -189,14 +189,13 @@ context, separate Evidence outcome/freshness, and width-aware wrapping preserve 
 and fixed contextual actions. Half-screen Windows Terminal dogfood accepted the result;
 Build profiles remain a separate pending task.
 
-Next, evaluate visual alignment for side-by-side Codex CLI use. The initial candidate keeps Project Progress
-as a clear status card while reducing always-on borders around Tasks, Evidence, Changed
-Files, and Recent Commits. Consider flatter navigation sections, restrained title or
-local marker emphasis for focus, a distinct Preview / Detail inspection area without
-excessive nested cards, and a lighter footer with optional future help-surface grouping.
-Use color mainly for source/status cues, never as the only carrier of meaning. Rounded
-Unicode corners on selected major frames are a candidate, not a contract; frame choice,
-focus treatment, and Windows Terminal/font compatibility remain for implementation dogfood.
+Visual alignment is complete after user-accepted side-by-side Windows Terminal dogfood.
+Project Progress and Preview retain their frames; Tasks, Evidence, Changed Files, and
+Recent Commits are flat sections separated by whitespace. `▌` plus a bold title marks
+focus, independently of `>` selection. Navigation truncation uses `…`, and Changed Files
+Preview no longer repeats its title path in a body field. Existing content geometry,
+responsive thresholds, interaction, and footer ownership are preserved. No colors,
+rounded corners, or additional help surface were introduced.
 
 This is presentation refinement, not a Codex UI replica or an information-structure
 redesign. Preserve NOW, Project Progress, focus versus selection, passive Preview,

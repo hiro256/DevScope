@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::Line,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
 
 const COMPACT_WIDTH: u16 = 20;
@@ -92,9 +92,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(header_title(app, usize::from(area.width)))
+            Line::from(header_title(app, usize::from(area.width))),
+            Line::from(now_label(app.current_work(), usize::from(area.width)))
                 .style(Style::default().add_modifier(Modifier::BOLD)),
-            Line::from(now_label(app.current_work(), usize::from(area.width))),
         ]),
         outer[0],
     );
@@ -412,14 +412,17 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
 
 fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(tasks(
-            app.tasks(),
-            app.selected_task(),
-            inner_height(area),
+        Paragraph::new(fit_navigation_lines(
+            tasks(
+                app.tasks(),
+                app.selected_task(),
+                inner_height(area),
+                inner_width(area),
+                app.current_work(),
+            ),
             inner_width(area),
-            app.current_work(),
         ))
-        .block(panel_block(
+        .block(navigation_block(
             "Tasks",
             app.focused_panel() == FocusedPanel::Tasks,
         )),
@@ -429,7 +432,11 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(evidence_selector_lines(app)).block(panel_block(
+        Paragraph::new(fit_navigation_lines(
+            evidence_selector_lines(app),
+            inner_width(area),
+        ))
+        .block(navigation_block(
             "Evidence",
             app.focused_panel() == FocusedPanel::Evidence,
         )),
@@ -493,13 +500,16 @@ fn artifact_selector_status(status: &devscope::progress::ArtifactStatus) -> &'st
 
 fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(changed_files(
-            app.activity(),
-            app.selected_changed_file(),
-            inner_height(area),
+        Paragraph::new(fit_navigation_lines(
+            changed_files(
+                app.activity(),
+                app.selected_changed_file(),
+                inner_height(area),
+                inner_width(area),
+            ),
             inner_width(area),
         ))
-        .block(panel_block(
+        .block(navigation_block(
             "Changed Files",
             app.focused_panel() == FocusedPanel::ChangedFiles,
         )),
@@ -509,11 +519,11 @@ fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(commits(app.activity(), inner_height(area))).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(padded_title("Recent Commits")),
-        ),
+        Paragraph::new(fit_navigation_lines(
+            commits(app.activity(), inner_height(area)),
+            inner_width(area),
+        ))
+        .block(navigation_block("Recent Commits", false)),
         area,
     );
 }
@@ -629,10 +639,8 @@ fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
             let title = selected_changed_file_path(app)
                 .map(|path| format!("Detail: {path}"))
                 .unwrap_or_else(|| "Detail: Changed Files".into());
-            let lines = if let Some(path) = selected_changed_file_path(app) {
-                let mut lines = preview_field("File", &path);
-                lines.extend(detail_inspection_lines(app.preview_inspection()));
-                lines
+            let lines = if app.selected_changed_file().is_some() {
+                detail_inspection_lines(app.preview_inspection())
             } else {
                 vec![Line::from("No file selected")]
             };
@@ -884,6 +892,19 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         lines.push(Line::from("... diff truncated ..."));
     }
 }
+fn navigation_block(title: &str, focused: bool) -> Block<'static> {
+    // Title reserves the top row; padding preserves the former frame's content rectangle.
+    // The short thick stroke belongs to the section title, never to a selected item.
+    Block::default()
+        .padding(Padding::new(1, 1, 0, 1))
+        .title(format!("{} {title} ", if focused { "▌" } else { " " }))
+        .title_style(if focused {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        })
+}
+
 fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -1167,6 +1188,13 @@ fn task_line(
     }
     let text = truncate_text(task.text(), width.saturating_sub(reserved));
     Line::from(format!("{prefix}{text}{INDICATOR}"))
+}
+
+fn fit_navigation_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| Line::from(truncate_text(&line.to_string(), width)))
+        .collect()
 }
 
 fn truncate_text(text: &str, width: usize) -> String {
@@ -3082,7 +3110,7 @@ mod tests {
         assert!(draw(&app, 80, 30).contains("Unavailable"));
     }
     #[test]
-    fn renders_focus_border_for_tasks_and_evidence() {
+    fn distinguishes_focus_from_selection_in_flat_navigation() {
         let mut app = app(
             TaskState::Available(TaskSummary::new(1, task_items(1))),
             ActivityState::Unavailable,
@@ -3090,12 +3118,162 @@ mod tests {
         let tasks_focused = draw(&app, 80, 30);
         assert!(tasks_focused.contains("Tasks"));
         assert!(tasks_focused.contains("Evidence"));
+        assert!(tasks_focused.contains("▌ Tasks "));
+        assert!(!tasks_focused.contains("▌ Evidence "));
+        assert!(!tasks_focused.contains("┌ Evidence "));
+        assert!(tasks_focused.contains("> □ Task 0"));
 
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         let evidence_focused = draw(&app, 80, 30);
         assert!(evidence_focused.contains("Tasks"));
         assert!(evidence_focused.contains("Evidence"));
+        assert!(evidence_focused.contains("▌ Evidence "));
+        assert!(!evidence_focused.contains("▌ Tasks "));
+        assert!(!evidence_focused.contains("┌ Tasks "));
+        assert!(evidence_focused.contains("> □ Task 0"));
         assert_ne!(tasks_focused, evidence_focused);
+    }
+
+    #[test]
+    fn navigation_ellipsis_preserves_markers_and_cell_width() {
+        let task = devscope::progress::TaskSummaryItem::new(
+            "roadmap.md".into(),
+            1,
+            "日本語の長いタスクと追加の説明を確認する".into(),
+        );
+        for width in 0..=80 {
+            for work in [false, true] {
+                let row = fit_navigation_lines(vec![task_line(&task, true, width, work)], width)
+                    .remove(0);
+                assert!(row.width() <= width);
+                if (16..=30).contains(&width) {
+                    let text = row.to_string();
+                    assert!(text.starts_with("> □ "));
+                    assert!(text.contains('…'));
+                    if work {
+                        assert!(text.ends_with("[Work]"));
+                    }
+                }
+            }
+        }
+        for text in [
+            "> M  src/日本語のとても長いファイル名.rs",
+            "abcdef0 Very long commit message to inspect",
+            "> Build  ! Passed (stale)",
+        ] {
+            let row = fit_navigation_lines(vec![Line::from(text)], 18).remove(0);
+            assert!(row.width() <= 18);
+            assert!(row.to_string().ends_with('…'));
+        }
+    }
+
+    #[test]
+    fn changed_file_preview_path_is_only_in_title() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "src/unique-preview.rs".into(),
+                status: GitFileStatus::Added,
+                changes: Default::default(),
+            }]),
+        );
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        app.apply_preview_inspection(GitFileInspection::FileContent {
+            text: "sample content".into(),
+            truncated: false,
+        });
+        let (title, lines) = preview_content(&app);
+        assert!(title.contains("src/unique-preview.rs"));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.to_string().contains("src/unique-preview.rs"))
+        );
+        assert_eq!(lines, detail_inspection_lines(app.preview_inspection()));
+    }
+
+    #[test]
+    fn only_focused_navigation_title_is_bold() {
+        for focused in [false, true] {
+            let mut terminal = Terminal::new(TestBackend::new(30, 5)).unwrap();
+            terminal
+                .draw(|frame| frame.render_widget(navigation_block("Tasks", focused), frame.area()))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(0, 0)].symbol(), if focused { "▌" } else { " " });
+            assert_eq!(buffer[(2, 0)].modifier.contains(Modifier::BOLD), focused);
+            assert!(!text(&terminal).contains('─'));
+        }
+    }
+
+    #[test]
+    fn navigation_frames_preserve_content_geometry_without_inactive_boxes() {
+        for width in 4..=160 {
+            for height in 3..=30 {
+                let area = Rect::new(0, 0, width, height);
+                assert_eq!(
+                    navigation_block("Tasks", false).inner(area),
+                    panel_block("Tasks", false).inner(area)
+                );
+                assert_eq!(
+                    navigation_block("Tasks", true).inner(area),
+                    panel_block("Tasks", true).inner(area)
+                );
+            }
+        }
+        let mut terminal = Terminal::new(TestBackend::new(30, 5)).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(navigation_block("Evidence", false), frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        for y in 1..5 {
+            assert_eq!(buffer[(0, y)].symbol(), " ");
+            assert_eq!(buffer[(29, y)].symbol(), " ");
+        }
+    }
+
+    #[test]
+    fn overview_hierarchy_remains_monochrome_across_layouts_and_preview_toggle() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(1, task_items(1))),
+            ActivityState::Unavailable,
+        );
+        for (width, height) in [
+            (160, 40),
+            (120, 30),
+            (80, 30),
+            (80, 25),
+            (77, 30),
+            (60, 24),
+            (40, 18),
+        ] {
+            for visible in [true, false] {
+                if app.preview_visible() != visible {
+                    app.toggle_preview();
+                }
+                for panel in focusable_panels(width, height) {
+                    app.reconcile_focus(&[*panel]);
+                    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    terminal.draw(|frame| render(frame, &app)).unwrap();
+                    let output = text(&terminal);
+                    assert!(output.contains("● NOW"));
+                    assert!(output.contains("┌ Project Progress "));
+                    assert_eq!(output.matches('▌').count(), 1);
+                    assert!(!output.contains('┏'));
+                    assert_eq!(
+                        output.contains("┌ Detail:"),
+                        has_global_preview(width, height, visible)
+                    );
+                    let buffer = terminal.backend().buffer();
+                    assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
+                    assert!(!buffer[(0, height - 1)].modifier.contains(Modifier::BOLD));
+                    for cell in buffer.content() {
+                        assert_eq!(cell.fg, ratatui::style::Color::Reset);
+                        assert_eq!(cell.bg, ratatui::style::Color::Reset);
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn now_uses_only_the_explicit_active_item() {

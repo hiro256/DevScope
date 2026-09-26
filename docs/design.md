@@ -59,7 +59,15 @@ The initial panel-focus experiment validated Tasks, Evidence, and Changed Files 
 Hidden panels are excluded from navigation, and panel-local selection persists independently.
 
 Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
-Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item. NOW is the TUI representation of explicit Current Work Active state, not an inference from Next or checklist order. Thick borders denote the focused panel; `>` denotes only a selected item; `[Work]` denotes Current Work association; `● NOW` denotes explicit Active state; and `│` in Task context denotes the source task line, not selection.
+Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item. NOW is the TUI representation of explicit Current Work Active state, not an inference from Next or checklist order. In Overview navigation, `▌` and a bold title denote the focused section; `>` denotes only a selected item; `[Work]` denotes Current Work association; `● NOW` denotes explicit Active state; and `│` in Task context denotes the source task line, not selection.
+
+Overview navigation sections are borderless and separated by whitespace; Project Progress
+retains its status-card frame and passive Preview retains its inspection frame. Nonfocused
+navigation titles remain normal, and truncated navigation rows use `…` within terminal-cell
+width, preserving selection/status cues and the reserved `[Work]` suffix. NOW remains bold;
+the footer remains subordinate. Focus does not depend on color or bold support alone.
+Side-by-side Windows Terminal dogfood accepted this hierarchy; displaying bold weight there
+may require the terminal profile's `intenseTextStyle` to be `bold` rather than `bright`.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
@@ -203,8 +211,8 @@ them. Recent Commits remains overview-only until a concrete selection or drill-d
 
 Overview Preview uses compact `Label: value` fields for task metadata and Evidence,
 keeping outcome and freshness separate. Matching Current Work and source Context remain
-source-grounded sections. Changed Files includes its selected path in the scrollable body
-and reuses the existing diff/current-content inspection. Long lines wrap at the actual
+source-grounded sections. Changed Files identifies its selected path in the Preview title,
+without a duplicate body field, and reuses the existing diff/current-content inspection. Long lines wrap at the actual
 Preview width, preferring word boundaries and preserving graphemes in long tokens; scroll
 limits use these same rendered rows and exclude the fixed action row. File Browser and
 Full Detail retain their separate presentation. Half-screen Windows Terminal dogfood
