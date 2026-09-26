@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use devscope::{
     current_work::CurrentWork,
     progress::{
@@ -95,6 +95,7 @@ pub struct App {
     detail_scroll: usize,
     preview_diff: Option<GitFileDiff>,
     preview_visible: bool,
+    preview_scroll: usize,
     current_work: CurrentWorkState,
     refresh_status: RefreshStatus,
     refresh_error: Option<String>,
@@ -119,6 +120,7 @@ impl App {
             detail_scroll: 0,
             preview_diff: None,
             preview_visible: true,
+            preview_scroll: 0,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
             refresh_error: None,
@@ -134,14 +136,36 @@ impl App {
     }
 
     pub fn apply_markdown_state(&mut self, plan: PlanState, tasks: TaskState) {
+        let previous = self.selected_task_identity();
         self.plan = plan;
         self.tasks = tasks;
         self.reconcile_selected_task();
+        if previous != self.selected_task_identity() && self.focused_panel == FocusedPanel::Tasks {
+            self.preview_scroll = 0;
+        }
+    }
+
+    fn selected_task_identity(&self) -> Option<(PathBuf, usize, String)> {
+        let TaskState::Available(summary) = &self.tasks else {
+            return None;
+        };
+        let task = summary.items().get(self.selected_task?)?;
+        Some((
+            task.path().to_path_buf(),
+            task.line(),
+            task.text().to_owned(),
+        ))
     }
 
     pub fn apply_activity_state(&mut self, activity: ActivityState) {
+        let previous = self.selected_changed_file_request();
         self.activity = activity;
         self.reconcile_selected_changed_file();
+        if previous != self.selected_changed_file_request()
+            && self.focused_panel == FocusedPanel::ChangedFiles
+        {
+            self.preview_scroll = 0;
+        }
         self.preview_diff = None;
         self.reconcile_detail_target();
     }
@@ -257,10 +281,14 @@ impl App {
         self.evidence_selection
     }
     pub fn select_evidence_detail(&mut self, kind: BuildTestKind) {
+        let previous = self.evidence_selection;
         self.evidence_selection = match kind {
             BuildTestKind::Build => EvidenceSelection::Build,
             BuildTestKind::Test => EvidenceSelection::Test,
         };
+        if previous != self.evidence_selection && self.focused_panel == FocusedPanel::Evidence {
+            self.preview_scroll = 0;
+        }
     }
     pub fn artifact(&self) -> Option<&ArtifactObservation> {
         self.artifact.as_ref()
@@ -269,6 +297,9 @@ impl App {
         self.artifact = artifact;
         if self.artifact.is_none() && self.evidence_selection == EvidenceSelection::Artifact {
             self.evidence_selection = EvidenceSelection::Build;
+            if self.focused_panel == FocusedPanel::Evidence {
+                self.preview_scroll = 0;
+            }
         }
     }
 
@@ -298,6 +329,17 @@ impl App {
 
     pub fn toggle_preview(&mut self) {
         self.preview_visible = !self.preview_visible;
+    }
+
+    pub const fn preview_scroll(&self) -> usize {
+        self.preview_scroll
+    }
+
+    pub fn scroll_preview(&mut self, delta: isize, max_scroll: usize) {
+        self.preview_scroll = self
+            .preview_scroll
+            .saturating_add_signed(delta)
+            .min(max_scroll);
     }
 
     pub fn apply_preview_diff(&mut self, diff: GitFileDiff) {
@@ -364,6 +406,9 @@ impl App {
             return;
         }
         if self.detail_target.is_some() {
+            if key.modifiers != KeyModifiers::NONE {
+                return;
+            }
             match key.code {
                 KeyCode::Char('q') => self.running = false,
                 KeyCode::Esc => {
@@ -375,12 +420,24 @@ impl App {
             }
             return;
         }
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Enter {
+            self.open_changed_file_detail();
+            return;
+        }
+        if key.modifiers == KeyModifiers::SHIFT
+            && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+        {
+            self.focus_panel(focusable_panels, -1);
+            return;
+        }
+        if key.modifiers != KeyModifiers::NONE {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
-            KeyCode::Enter => self.open_changed_file_detail(),
-            KeyCode::Char('p') => self.toggle_preview(),
-            KeyCode::Tab => self.focus_panel(focusable_panels, 1),
-            KeyCode::BackTab => self.focus_panel(focusable_panels, -1),
+            KeyCode::Enter | KeyCode::Char('p') => self.toggle_preview(),
+            KeyCode::Tab | KeyCode::Right => self.focus_panel(focusable_panels, 1),
+            KeyCode::BackTab | KeyCode::Left => self.focus_panel(focusable_panels, -1),
             KeyCode::Down | KeyCode::Char('j') => self.move_focused_selection(focusable_panels, 1),
             KeyCode::Up | KeyCode::Char('k') => self.move_focused_selection(focusable_panels, -1),
             _ => {}
@@ -390,6 +447,7 @@ impl App {
     pub fn reconcile_focus(&mut self, focusable_panels: &[FocusedPanel]) {
         if !focusable_panels.is_empty() && !focusable_panels.contains(&self.focused_panel) {
             self.focused_panel = focusable_panels[0];
+            self.preview_scroll = 0;
         }
     }
 
@@ -402,7 +460,10 @@ impl App {
             return;
         };
         let next = (current as isize + delta).rem_euclid(focusable_panels.len() as isize) as usize;
-        self.focused_panel = focusable_panels[next];
+        if self.focused_panel != focusable_panels[next] {
+            self.focused_panel = focusable_panels[next];
+            self.preview_scroll = 0;
+        }
     }
 
     fn move_focused_selection(&mut self, focusable_panels: &[FocusedPanel], delta: isize) {
@@ -446,9 +507,13 @@ impl App {
         };
         let last = summary.remaining().saturating_sub(1);
         self.selected_task = Some((current as isize + delta).clamp(0, last as isize) as usize);
+        if self.selected_task != Some(current) {
+            self.preview_scroll = 0;
+        }
     }
 
     fn move_evidence_selection(&mut self, delta: isize) {
+        let previous = self.evidence_selection;
         self.evidence_selection = match (
             self.evidence_selection,
             delta.is_positive(),
@@ -461,6 +526,9 @@ impl App {
             (EvidenceSelection::Artifact, false, _) => EvidenceSelection::Test,
             (selection, _, _) => selection,
         };
+        if previous != self.evidence_selection {
+            self.preview_scroll = 0;
+        }
     }
 
     fn move_changed_file_selection(&mut self, delta: isize) {
@@ -473,6 +541,9 @@ impl App {
         let last = summary.changed_files().saturating_sub(1);
         self.selected_changed_file =
             Some((current as isize + delta).clamp(0, last as isize) as usize);
+        if self.selected_changed_file != Some(current) {
+            self.preview_scroll = 0;
+        }
     }
 }
 
@@ -513,6 +584,129 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn arrows_cycle_visible_panels_and_compatibility_keys_match() {
+        let mut app = app(3);
+        for panels in [ALL_PANELS, &ALL_PANELS[..2]] {
+            app.reconcile_focus(&[FocusedPanel::Tasks]);
+            for expected in panels.iter().cycle().skip(1).take(panels.len()) {
+                app.handle_key_with_focusable_panels(key(KeyCode::Right), panels);
+                assert_eq!(app.focused_panel(), *expected);
+            }
+            app.handle_key_with_focusable_panels(key(KeyCode::Left), panels);
+            assert_eq!(app.focused_panel(), *panels.last().unwrap());
+            app.handle_key_with_focusable_panels(key(KeyCode::Tab), panels);
+            assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
+            app.handle_key_with_focusable_panels(
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+                panels,
+            );
+            assert_eq!(app.focused_panel(), *panels.last().unwrap());
+        }
+    }
+
+    #[test]
+    fn preview_keys_are_modifier_aware_and_enter_never_opens_detail() {
+        let mut app = app(3);
+        app.apply_activity_state(activity_with_files(3));
+        for panel in ALL_PANELS {
+            app.reconcile_focus(&[*panel]);
+            app.scroll_preview(3, 10);
+            let selection = (
+                app.selected_task(),
+                app.selected_changed_file(),
+                app.evidence_selection(),
+            );
+            for code in [
+                KeyCode::Up,
+                KeyCode::Down,
+                KeyCode::Left,
+                KeyCode::Right,
+                KeyCode::Char('j'),
+                KeyCode::Char('k'),
+                KeyCode::Char('q'),
+                KeyCode::Char('p'),
+            ] {
+                app.handle_key_with_focusable_panels(
+                    KeyEvent::new(code, KeyModifiers::CONTROL),
+                    ALL_PANELS,
+                );
+            }
+            assert_eq!(app.focused_panel(), *panel);
+            assert_eq!(
+                selection,
+                (
+                    app.selected_task(),
+                    app.selected_changed_file(),
+                    app.evidence_selection()
+                )
+            );
+            assert!(app.is_running());
+            assert!(app.preview_visible());
+            app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+            assert!(!app.preview_visible());
+            assert!(!app.has_detail_view());
+            app.handle_key_with_focusable_panels(key(KeyCode::Char('p')), ALL_PANELS);
+            assert!(app.preview_visible());
+            assert_eq!(app.preview_scroll(), 3);
+            for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+                let mut event = key(KeyCode::Enter);
+                event.kind = kind;
+                app.handle_key_with_focusable_panels(event, ALL_PANELS);
+                assert!(app.preview_visible());
+            }
+            app.handle_key_with_focusable_panels(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                ALL_PANELS,
+            );
+            assert_eq!(app.has_detail_view(), *panel == FocusedPanel::ChangedFiles);
+        }
+    }
+
+    #[test]
+    fn preview_scroll_clamps_and_resets_on_target_changes_only() {
+        let mut app = app(3);
+        app.scroll_preview(-1, 5);
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(isize::MAX, 5);
+        assert_eq!(app.preview_scroll(), 5);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.preview_scroll(), 5);
+        app.apply_snapshot(snapshot(3));
+        assert_eq!(app.preview_scroll(), 5);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.apply_markdown_state(
+            PlanState::Unavailable,
+            TaskState::Available(TaskSummary::new(
+                1,
+                vec![TaskSummaryItem::new("other.md".into(), 1, "changed".into())],
+            )),
+        );
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.handle_key_with_focusable_panels(key(KeyCode::Right), ALL_PANELS);
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.select_evidence_detail(BuildTestKind::Test);
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.preview_scroll(), 0);
+        app.apply_activity_state(activity_with_files(3));
+        app.handle_key_with_focusable_panels(key(KeyCode::Right), ALL_PANELS);
+        app.scroll_preview(4, 5);
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.apply_activity_state(activity_with_files(1));
+        assert_eq!(app.preview_scroll(), 0);
+        app.scroll_preview(4, 5);
+        app.reconcile_focus(&ALL_PANELS[..2]);
+        assert_eq!(app.preview_scroll(), 0);
     }
 
     fn move_to(app: &mut App, index: usize) {
@@ -859,7 +1053,10 @@ mod tests {
         assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
         assert_eq!(app.selected_changed_file(), Some(1));
 
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert_eq!(
             app.detail_target(),
             Some(&DetailTarget::ChangedFile {
@@ -884,15 +1081,24 @@ mod tests {
     fn changed_file_detail_requires_a_selected_changed_file_and_ignores_other_panels() {
         let mut no_selection = app(1);
         no_selection.focused_panel = FocusedPanel::ChangedFiles;
-        no_selection.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        no_selection.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert!(!no_selection.has_detail_view());
 
         let mut tasks = app(1);
         tasks.apply_activity_state(activity_with_files(1));
-        tasks.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        tasks.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert!(!tasks.has_detail_view());
         tasks.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
-        tasks.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        tasks.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert!(!tasks.has_detail_view());
     }
 
@@ -905,7 +1111,10 @@ mod tests {
         app.handle_key_with_focusable_panels(key(KeyCode::Char('p')), ALL_PANELS);
         assert!(!app.preview_visible());
 
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert!(app.has_detail_view());
     }
 
@@ -928,7 +1137,10 @@ mod tests {
         app.apply_activity_state(activity(12, 4));
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         app.apply_activity_state(activity(20, 6));
         assert_eq!(
             app.detail_target(),
@@ -948,13 +1160,19 @@ mod tests {
         detail.apply_activity_state(activity_with_files(1));
         detail.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
         detail.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
-        detail.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        detail.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         assert!(detail.has_detail_view());
         detail.apply_activity_state(activity_with_files(0));
         assert!(!detail.has_detail_view());
 
         detail.apply_activity_state(activity_with_files(1));
-        detail.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        detail.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         detail.handle_key_with_focusable_panels(key(KeyCode::Char('q')), ALL_PANELS);
         assert!(!detail.is_running());
 
@@ -1014,7 +1232,10 @@ mod tests {
         app.apply_activity_state(activity_with_files(1));
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), ALL_PANELS);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            ALL_PANELS,
+        );
         app.apply_detail_diff(GitFileDiff::Unavailable(GitFileDiffUnavailable::NoContent));
         app.scroll_detail(20, 3);
         assert_eq!(app.detail_scroll(), 3);

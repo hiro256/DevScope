@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::terminal::AppTerminal;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use devscope::{
     change::{
         ConfigChange, ConfigChangeDetector, CurrentWorkChange, CurrentWorkChangeDetector,
@@ -566,7 +566,7 @@ fn initialize_build_test_availability(
 }
 
 fn manual_build_test_kind(key: KeyEvent) -> Option<BuildTestKind> {
-    if key.kind != KeyEventKind::Press {
+    if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
         return None;
     }
 
@@ -837,6 +837,7 @@ pub fn run(
             match event::read()? {
                 Event::Key(key)
                     if key.kind == KeyEventKind::Press
+                        && key.modifiers == KeyModifiers::NONE
                         && key.code == KeyCode::Char('r')
                         && !app.has_detail_view() =>
                 {
@@ -898,34 +899,7 @@ pub fn run(
                 }
                 Event::Key(key) => {
                     let size = terminal.size()?;
-                    let was_detail = app.has_detail_view();
-                    let selected_before = app.selected_changed_file();
-                    let preview_was_active =
-                        changed_file_preview_active(size.width, size.height, app);
-                    let focused_before = app.focused_panel();
-                    app.handle_key_with_focusable_panels(
-                        key,
-                        ui::focusable_panels(size.width, size.height),
-                    );
-                    if app.has_detail_view() {
-                        let delta = match key.code {
-                            KeyCode::Down | KeyCode::Char('j') => Some(1),
-                            KeyCode::Up | KeyCode::Char('k') => Some(-1),
-                            _ => None,
-                        };
-                        if let Some(delta) = delta {
-                            app.scroll_detail(delta, ui::detail_scroll_limit(app, size.into()));
-                        }
-                        if !was_detail {
-                            refresh_open_detail(project_root, app);
-                        }
-                    } else if changed_file_preview_active(size.width, size.height, app)
-                        && (selected_before != app.selected_changed_file()
-                            || !preview_was_active
-                            || focused_before != app.focused_panel())
-                    {
-                        refresh_changed_file_preview(project_root, app);
-                    }
+                    handle_navigation_key(project_root, app, key, size.into());
                     needs_render = true;
                 }
                 Event::Resize(width, height) => {
@@ -996,6 +970,57 @@ pub fn run(
     }
 
     Ok(())
+}
+
+fn handle_navigation_key(
+    project_root: Option<&Path>,
+    app: &mut App,
+    key: KeyEvent,
+    area: ratatui::layout::Rect,
+) {
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+    let was_detail = app.has_detail_view();
+    let selected_before = app.selected_changed_file();
+    let preview_was_active = changed_file_preview_active(area.width, area.height, app);
+    let focused_before = app.focused_panel();
+    app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
+    if app.has_detail_view() {
+        if key.modifiers == KeyModifiers::NONE {
+            let delta = match key.code {
+                KeyCode::Down | KeyCode::Char('j') => Some(1),
+                KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                app.scroll_detail(delta, ui::detail_scroll_limit(app, area));
+            }
+        }
+        if !was_detail {
+            refresh_open_detail(project_root, app);
+        }
+    } else {
+        if key.modifiers == KeyModifiers::CONTROL
+            && ui::has_global_preview(area.width, area.height, app.preview_visible())
+        {
+            let delta = match key.code {
+                KeyCode::Down => Some(1),
+                KeyCode::Up => Some(-1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                app.scroll_preview(delta, ui::preview_scroll_limit(app, area));
+            }
+        }
+        if changed_file_preview_active(area.width, area.height, app)
+            && (selected_before != app.selected_changed_file()
+                || !preview_was_active
+                || focused_before != app.focused_panel())
+        {
+            refresh_changed_file_preview(project_root, app);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2676,6 +2701,127 @@ mod tests {
         git(&root, &["commit", "-m", "initial"]);
         root
     }
+
+    #[test]
+    fn navigation_routes_preview_scroll_and_refresh_without_recollecting_on_scroll() {
+        let root = git_root();
+        let initial: String = (0..40).map(|i| format!("first {i}\n")).collect();
+        fs::write(root.join("tracked.txt"), initial).unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let area = ratatui::layout::Rect::new(0, 0, 80, 25);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+        assert_eq!(app.focused_panel(), crate::app::FocusedPanel::ChangedFiles);
+        assert!(format!("{:?}", app.preview_diff()).contains("first 0"));
+        let selected = app.selected_changed_file();
+        fs::write(root.join("tracked.txt"), "updated on disk\n").unwrap();
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.preview_scroll(), 1);
+        assert_eq!(app.selected_changed_file(), selected);
+        assert!(format!("{:?}", app.preview_diff()).contains("first 0"));
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.preview_scroll(), 0);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+        assert!(!app.preview_visible());
+        assert!(!app.has_detail_view());
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.preview_scroll(), 0);
+        assert_eq!(app.selected_changed_file(), selected);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+        assert!(format!("{:?}", app.preview_diff()).contains("updated on disk"));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Right), area);
+        assert_eq!(app.focused_panel(), crate::app::FocusedPanel::Tasks);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+        assert!(app.preview_diff().is_some());
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            area,
+        );
+        assert!(app.has_detail_view());
+        assert!(format!("{:?}", app.detail_diff()).contains("updated on disk"));
+        app.apply_detail_diff(devscope::progress::GitFileDiff::Available {
+            unstaged: Some(devscope::progress::GitDiffText {
+                text: (0..40).map(|i| format!("line {i}\n")).collect(),
+                truncated: false,
+            }),
+            staged: None,
+        });
+        for code in [KeyCode::Down, KeyCode::Char('j')] {
+            handle_navigation_key(Some(&root), &mut app, key(code), area);
+        }
+        assert_eq!(app.detail_scroll(), 2);
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.detail_scroll(), 2);
+        for code in [KeyCode::Up, KeyCode::Char('k')] {
+            handle_navigation_key(Some(&root), &mut app, key(code), area);
+        }
+        assert_eq!(app.detail_scroll(), 0);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        assert!(!app.has_detail_view());
+        assert!(app.is_running());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hidden_preview_and_modified_shortcuts_do_not_move_selection_or_run_verification() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
+        for area in [
+            ratatui::layout::Rect::new(0, 0, 80, 24),
+            ratatui::layout::Rect::new(0, 0, 1, 1),
+        ] {
+            handle_navigation_key(
+                None,
+                &mut app,
+                KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+                area,
+            );
+            assert_eq!(
+                app.evidence_selection(),
+                crate::app::EvidenceSelection::Build
+            );
+            assert_eq!(app.preview_scroll(), 0);
+        }
+        for modifier in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+        ] {
+            for code in [KeyCode::Char('b'), KeyCode::Char('t')] {
+                assert_eq!(manual_build_test_kind(KeyEvent::new(code, modifier)), None);
+            }
+        }
+        let mut release = KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL);
+        release.kind = KeyEventKind::Release;
+        handle_navigation_key(
+            None,
+            &mut app,
+            release,
+            ratatui::layout::Rect::new(0, 0, 120, 30),
+        );
+        assert_eq!(app.preview_scroll(), 0);
+    }
     #[test]
     fn automatic_git_refresh_reloads_open_detail_and_resets_scroll() {
         let root = git_root();
@@ -2688,7 +2834,10 @@ mod tests {
         ];
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), &panels);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            &panels,
+        );
         assert!(refresh_open_detail(Some(&root), &mut app));
         app.scroll_detail(9, 9);
 
@@ -2834,7 +2983,10 @@ mod tests {
         ];
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
-        app.handle_key_with_focusable_panels(key(KeyCode::Enter), &panels);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            &panels,
+        );
         assert!(refresh_open_detail(Some(&root), &mut app));
         fs::remove_dir_all(root.join(".git")).unwrap();
         assert!(refresh_open_detail(Some(&root), &mut app));

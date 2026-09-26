@@ -84,13 +84,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_compact(frame, area);
         return;
     };
-    let outer = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Length(6),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(area);
+    let outer = overview_areas(area);
 
     frame.render_widget(
         Paragraph::new(vec![
@@ -117,6 +111,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     );
 }
 
+fn overview_areas(area: Rect) -> [Rect; 4] {
+    let areas = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(6),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+
+    [areas[0], areas[1], areas[2], areas[3]]
+}
+
 fn header_title(app: &App, width: usize) -> String {
     const TITLE: &str = "DevScope";
     const GAP: &str = "  ";
@@ -141,13 +147,20 @@ fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
     format!("{PREFIX}{}", truncate_text(value, available))
 }
 fn footer_text(width: u16, height: u16) -> &'static str {
-    match (width >= 96, preview_layout_available(width, height)) {
-        (true, true) => {
-            "Tab:Panel  j/k:Move  Enter:Detail  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit"
+    if preview_layout_available(width, height) {
+        if width >= 120 {
+            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+↑/↓:Scroll  Ctrl+Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit"
+        } else if width >= 96 {
+            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+↑/↓:Scroll  b:Build  t:Test  r:Reload  q/Esc:Quit"
+        } else {
+            "←/→:Panel ↑/↓:Move Enter:Preview Ctrl+↑/↓:Scroll b/t:Verify r:Reload q:Quit"
         }
-        (true, false) => "Tab:Panel  j/k:Move  Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit",
-        (false, true) => "Tab:Panel  j/k:Move  p:Preview  b:Build  t:Test  r:Reload  q/Esc:Quit",
-        (false, false) => "Tab:Panel  j/k:Move  b:Build  t:Test  r:Reload  q/Esc:Quit",
+    } else if width >= 65 {
+        "←/→:Panel  ↑/↓:Move  b:Build  t:Test  r:Reload  q/Esc:Quit"
+    } else if width >= 40 {
+        "←/→:Panel  ↑/↓:Move  b/t:Verify  q:Quit"
+    } else {
+        "←/→:Panel ↑/↓:Move q"
     }
 }
 fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant, app: &App) {
@@ -293,7 +306,30 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
-    let (title, lines) = match app.focused_panel() {
+    let (title, lines) = preview_content(app);
+    let limit = lines.len().saturating_sub(inner_height(area));
+    let scroll = app.preview_scroll().min(limit).min(u16::MAX as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block(title, false))
+            .scroll((scroll, 0)),
+        area,
+    );
+}
+
+pub fn preview_scroll_limit(app: &App, area: Rect) -> usize {
+    if app.has_detail_view() || !has_global_preview(area.width, area.height, app.preview_visible())
+    {
+        return 0;
+    }
+    preview_content(app)
+        .1
+        .len()
+        .saturating_sub(inner_height(overview_areas(area)[2]))
+}
+
+fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
+    match app.focused_panel() {
         FocusedPanel::Tasks => ("Detail: Task".to_owned(), task_preview_lines(app)),
         FocusedPanel::Evidence => evidence_preview(app),
 
@@ -308,8 +344,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
             };
             (title, lines)
         }
-    };
-    frame.render_widget(Paragraph::new(lines).block(panel_block(title, false)), area);
+    }
 }
 
 fn evidence_preview(app: &App) -> (String, Vec<Line<'static>>) {
@@ -1042,6 +1077,115 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn preview_scrolling_renders_later_lines_for_each_source() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(
+                1,
+                vec![preview_task(
+                    "roadmap.md",
+                    3,
+                    "Task title",
+                    "Section name",
+                    &[
+                        "context zero",
+                        "context one",
+                        "context two",
+                        "context three",
+                    ],
+                )],
+            )),
+            activity_with_files(vec![GitChangedFile {
+                path: "file.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        app.apply_preview_diff(GitFileDiff::Available {
+            unstaged: Some(GitDiffText {
+                text: (0..25).map(|i| format!("+diff {i}\n")).collect(),
+                truncated: false,
+            }),
+            staged: None,
+        });
+        for panel in [
+            FocusedPanel::Tasks,
+            FocusedPanel::Evidence,
+            FocusedPanel::ChangedFiles,
+        ] {
+            app.reconcile_focus(&[panel]);
+            let area = Rect::new(0, 0, 60, 6);
+            let limit = preview_content(&app)
+                .1
+                .len()
+                .saturating_sub(inner_height(area));
+            assert!(limit > 0);
+            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+            terminal
+                .draw(|frame| render_preview(frame, area, &app))
+                .unwrap();
+            let before = text(&terminal);
+            app.scroll_preview(isize::MAX, limit);
+            terminal
+                .draw(|frame| render_preview(frame, area, &app))
+                .unwrap();
+            assert_ne!(before, text(&terminal), "{panel:?}");
+            assert_eq!(app.preview_scroll(), limit);
+        }
+    }
+
+    #[test]
+    fn preview_limit_matches_real_layout_and_footer_fits() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        for (width, height) in [(120, 30), (80, 25), (80, 24), (40, 20), (1, 1)] {
+            assert_eq!(
+                preview_scroll_limit(&app, Rect::new(0, 0, width, height)),
+                0
+            );
+            app.scroll_preview(
+                1,
+                preview_scroll_limit(&app, Rect::new(0, 0, width, height)),
+            );
+            assert_eq!(app.preview_scroll(), 0);
+            draw(&app, width, height);
+        }
+        for width in 20..160 {
+            assert!(
+                Line::from(footer_text(width, 30)).width() <= usize::from(width),
+                "width {width}"
+            );
+        }
+        let context: Vec<String> = (0..40).map(|i| format!("context {i}")).collect();
+        let refs: Vec<&str> = context.iter().map(String::as_str).collect();
+        app.apply_markdown_state(
+            PlanState::Unavailable,
+            TaskState::Available(TaskSummary::new(
+                1,
+                vec![preview_task("roadmap.md", 3, "Task", "TUI", &refs)],
+            )),
+        );
+        let area = Rect::new(0, 0, 80, 25);
+        let limit = preview_scroll_limit(&app, area);
+        assert_eq!(
+            limit,
+            task_preview_lines(&app).len() - inner_height(overview_areas(area)[2])
+        );
+        let before = draw(&app, 80, 25);
+        app.scroll_preview(1, limit);
+        assert_ne!(before, draw(&app, 80, 25));
+        app.toggle_preview();
+        assert_eq!(preview_scroll_limit(&app, area), 0);
+        assert_eq!(app.preview_scroll(), 1);
+    }
+
     fn text(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()
@@ -1494,11 +1638,11 @@ mod tests {
     #[test]
     fn renders_manual_evidence_controls_in_the_footer() {
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
-        let output = draw(&app, 80, 30);
+        let output = draw(&app, 120, 30);
         assert!(output.contains("b:Build"));
         assert!(output.contains("t:Test"));
         assert!(output.contains("r:Reload"));
-        assert!(output.contains("p:Preview"));
+        assert!(output.contains("Enter:Preview"));
         assert!(output.contains("q/Esc:Quit"));
     }
 
@@ -2013,7 +2157,7 @@ mod tests {
         assert!(draw(&app, 120, 30).contains("Detail: src/b.rs"));
         assert!(draw(&app, 120, 30).contains("+preview-b"));
         app.handle_key_with_focusable_panels(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             panels,
         );
         assert!(app.has_detail_view());
@@ -2049,9 +2193,9 @@ mod tests {
 
     #[test]
     fn footer_advertises_preview_only_when_the_layout_can_show_it() {
-        assert!(footer_text(80, 30).contains("p:Preview"));
-        assert!(!footer_text(77, 30).contains("p:Preview"));
-        assert!(!footer_text(80, 24).contains("p:Preview"));
+        assert!(footer_text(80, 30).contains("Enter:Preview"));
+        assert!(!footer_text(77, 30).contains("Enter:Preview"));
+        assert!(!footer_text(80, 24).contains("Enter:Preview"));
     }
     #[test]
     fn maps_git_file_statuses_to_short_prefixes() {
@@ -2084,7 +2228,7 @@ mod tests {
             panels,
         );
         app.handle_key_with_focusable_panels(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             panels,
         );
 

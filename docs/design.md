@@ -74,7 +74,7 @@ optional drill-down over additional permanent overview panels.
 Detail View is optional drill-down from an existing panel. The first experiment uses
 whole-screen replacement to validate the interaction before introducing a split-pane
 layout; a later split-pane implementation should preserve the same target and
-interaction model. Enter opens the selected detail, Esc returns when detail is open,
+interaction model. Ctrl+Enter opens the selected detail, Esc returns when detail is open,
 and q always quits.
 Changed File Detail may surface observed change magnitude in addition to path and status.
 Change magnitude remains Activity data, not Evidence.
@@ -104,10 +104,10 @@ details. Freshness is shown separately from the underlying outcome.
 
 The Detail View experiment validated a passive right-side Detail Pane that follows the focused
 panel and selection. Left panels favor navigation and concise state; the Detail Pane carries richer
-context, can be toggled with `p`, and may be hidden responsively. This remained usable beside Codex
+context, can be toggled with Enter or the compatibility key `p`, and may be hidden responsively. This remained usable beside Codex
 at half-screen width, with the toggle serving as an effective escape hatch.
 
-Full Detail is an explicitly opened deeper inspection mode. It is opened with Enter only where a
+Full Detail is an explicitly opened deeper inspection mode. It is opened with Ctrl+Enter only where a
 concrete need exists, supports deeper inspection and scrolling, and does not need to exist for every
 panel.
 
@@ -120,11 +120,16 @@ Changed Files  Detail Pane and Full Detail
 Recent Commits overview-only
 ```
 
-Navigation uses Tab / Shift+Tab for panel focus and j/k for selection within the focused panel.
-The Preview is a passive common detail area that follows that focus and selection; it is not a
-focus target. `p` toggles Preview visibility only when the responsive layout can show it. Enter
-opens deeper detail only for an item that provides it. Esc returns from Full Detail; on the overview
-it retains the existing quit behavior. `q` quits in either state.
+Navigation uses Left/Right for previous/next visible panel focus, with Tab / Shift+Tab
+retained as compatible navigation. Up/Down and j/k move selection within the focused panel.
+Preview remains a passive common detail area, never a focus target. Plain Enter and `p`
+toggle the same visibility preference; responsive layouts may still hide Preview.
+Ctrl+Up/Down scroll visible Preview one line without moving focus or selection. The scroll
+offset resets when its focused panel or selected target changes; hiding and showing the same
+target preserves it, and rendering clamps it to the current content and viewport.
+Ctrl+Enter opens Full Detail only for a selected Changed File. Full Detail keeps Up/Down
+and j/k scrolling and Esc to return; Esc on Overview retains quit behavior, and `q` quits
+in either state. Other modifier combinations do not trigger plain-letter shortcuts.
 
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
 NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`
@@ -144,7 +149,7 @@ current useful contents, not final contracts: future observation sources and wor
 them. Recent Commits remains overview-only until a concrete selection or drill-down need appears.
 
 Future Detail Pane work, if justified, may refine content density, examine a Recent Commits detail,
-or consider syntax highlighting and colors. It does not imply Detail Pane focus, scrolling, or Full
+or consider syntax highlighting and colors. It does not imply Detail Pane focus or Full
 Detail for Tasks or Evidence.
 ## Instrumented verification experiment
 

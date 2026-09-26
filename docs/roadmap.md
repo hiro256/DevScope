@@ -126,12 +126,11 @@
 - [ ] Refine TUI visual alignment for side-by-side Codex use
 - [ ] Dogfood five-second project-state understanding
 
-The planned keyboard slice keeps Preview passive: Left/Right move among focusable panels,
-Tab/Shift+Tab remain compatible, and Up/Down or j/k select within a panel. Enter is a
-candidate Preview toggle (with p retained), Ctrl+Up/Down scroll Preview without moving
-focus, and Ctrl+Enter is the candidate Full Detail shortcut. Confirm event handling and
-Windows Terminal behavior before finalizing the bindings; Esc still returns from Full
-Detail and q quits.
+The keyboard slice implements Left/Right panel navigation, Tab/Shift+Tab compatibility,
+Up/Down or j/k selection, Enter/p Preview toggle, Ctrl+Up/Down passive Preview scrolling,
+and Ctrl+Enter Full Detail. Esc returns from Full Detail (or quits from Overview), and q
+quits. Closure is pending Windows Terminal dogfood, especially distinguishing Ctrl+Enter
+from plain Enter; no alternative shortcut is selected without that observation.
 
 Changed File inspection should label current file content separately from a Git diff
 when a diff is unavailable, including for Added files. Keep it read-only, rooted in the
