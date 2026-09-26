@@ -69,6 +69,13 @@ the footer remains subordinate. Focus does not depend on color or bold support a
 Side-by-side Windows Terminal dogfood accepted this hierarchy; displaying bold weight there
 may require the terminal profile's `intenseTextStyle` to be `bold` rather than `bright`.
 
+Large/Medium navigation sizes Evidence from its displayed item count so Artifact remains
+visible. Large distributes spare rows alternately to Tasks and Changed Files, stopping at
+their content height and reserving three recent commits where available (two at the
+shortest Large boundary with three Evidence items). Remaining space can show more commits;
+Small priorities and Preview geometry are unchanged. Windows Terminal dogfood accepted
+both tall full listings and shorter layouts with accurate overflow counts.
+
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
 The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.

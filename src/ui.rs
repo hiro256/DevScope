@@ -377,13 +377,19 @@ fn footer_text(width: u16, height: u16) -> &'static str {
     }
 }
 fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant, app: &App) {
+    // Navigation reserves one title row and one separating row around its content.
+    let evidence_height = u16::try_from(evidence_selector_lines(app).len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
     match layout {
         LayoutVariant::Large => {
+            let heights = large_navigation_heights(area.height, evidence_height, app);
             let panels = Layout::vertical([
-                Constraint::Length(6),
-                Constraint::Length(4),
-                Constraint::Length(6),
-                Constraint::Min(2),
+                Constraint::Length(heights[0]),
+                Constraint::Length(heights[1]),
+                Constraint::Length(heights[2]),
+                Constraint::Length(heights[3]),
+                Constraint::Min(0),
             ])
             .split(area);
             render_tasks(frame, panels[0], app);
@@ -394,7 +400,7 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
         LayoutVariant::Medium => {
             let panels = Layout::vertical([
                 Constraint::Length(6),
-                Constraint::Length(4),
+                Constraint::Length(evidence_height),
                 Constraint::Min(4),
             ])
             .split(area);
@@ -408,6 +414,47 @@ fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant
             render_evidence(frame, panels[1], app);
         }
     }
+}
+
+fn large_navigation_heights(height: u16, evidence_height: u16, app: &App) -> [u16; 4] {
+    let task_rows = match app.tasks() {
+        TaskState::Available(summary) => summary.remaining(),
+        TaskState::Unavailable => 0,
+    };
+    let (file_rows, commit_rows) = match app.activity() {
+        ActivityState::Available(summary) => (
+            summary.changed_file_items().len(),
+            summary.recent_commits().len(),
+        ),
+        _ => (0, 0),
+    };
+    let section_height = |rows: usize| {
+        u16::try_from(rows.max(1))
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+    };
+    let task_height = section_height(task_rows);
+    let file_height = section_height(file_rows);
+    let commit_height = section_height(commit_rows);
+    let mut heights = [task_height.min(6), evidence_height, file_height.min(6), 0];
+    let mut remaining = height
+        .saturating_sub(heights[0])
+        .saturating_sub(heights[1])
+        .saturating_sub(heights[2]);
+    // Reserve up to three commits before growing the selectable lists. At the
+    // shortest Large height, three Evidence items leave room for two commits.
+    heights[3] = commit_height.min(5).min(remaining);
+    remaining -= heights[3];
+    while remaining > 0 && (heights[0] < task_height || heights[2] < file_height) {
+        for (index, needed) in [(0, task_height), (2, file_height)] {
+            if remaining > 0 && heights[index] < needed {
+                heights[index] += 1;
+                remaining -= 1;
+            }
+        }
+    }
+    heights[3] += remaining.min(commit_height.saturating_sub(heights[3]));
+    heights
 }
 
 fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
@@ -1863,6 +1910,35 @@ mod tests {
     }
 
     #[test]
+    fn overview_renders_selected_artifact_in_navigation() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_artifact(Some(
+            devscope::progress::ArtifactObservation::observation_error(
+                "target/output.bin".into(),
+                "permission denied",
+            ),
+        ));
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        for _ in 0..2 {
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        for height in [25, 29, 30, 50] {
+            for preview in [true, false] {
+                if app.preview_visible() != preview {
+                    app.toggle_preview();
+                }
+                let output = draw(&app, 80, height);
+                assert!(
+                    output.contains("> Artifact  ! Error"),
+                    "height={height}, preview={preview}\n{output}"
+                );
+                assert!(output.contains("Build  ? Unavailable"));
+                assert!(output.contains("Test  ? Unavailable"));
+            }
+        }
+    }
+
+    #[test]
     fn evidence_selector_and_preview_render_configured_artifact() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_artifact(Some(
@@ -2196,12 +2272,13 @@ mod tests {
     #[test]
     fn renders_tasks_and_overflow() {
         let app = app(
-            TaskState::Available(TaskSummary::new(8, task_items(8))),
+            TaskState::Available(TaskSummary::new(20, task_items(20))),
             ActivityState::Unavailable,
         );
         let output = draw(&app, 70, 30);
         assert!(output.contains("Task 0"));
-        assert!(output.contains("... and 5 more"));
+        assert!(output.contains("Task 7"));
+        assert!(output.contains("... and 12 more"));
     }
 
     #[test]
@@ -3063,7 +3140,7 @@ mod tests {
 
     #[test]
     fn renders_changed_file_overflow() {
-        let files = (0..8)
+        let files = (0..20)
             .map(|index| GitChangedFile {
                 path: format!("src/file-{index}.rs").into(),
                 status: GitFileStatus::Modified,
@@ -3074,7 +3151,89 @@ mod tests {
         let output = draw(&app, 80, 30);
         assert!(output.contains("M  src/file-0.rs"));
         assert!(output.contains("M  src/file-2.rs"));
-        assert!(output.contains("... and 5 more"));
+        assert!(output.contains("M  src/file-7.rs"));
+        assert!(output.contains("... and 12 more"));
+    }
+
+    #[test]
+    fn navigation_lists_grow_with_height_and_keep_recent_commits() {
+        let files = (0..20)
+            .map(|index| GitChangedFile {
+                path: format!("src/file-{index}.rs").into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            })
+            .collect();
+        let activity = ActivityState::Available(ActivitySummary::from(&GitActivity {
+            changed_files: files,
+            recent_commits: (0..5)
+                .map(|index| GitCommit {
+                    id: format!("abc{index}"),
+                    summary: format!("commit-{index}"),
+                })
+                .collect(),
+        }));
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(20, task_items(20))),
+            activity,
+        );
+        for preview in [true, false] {
+            if app.preview_visible() != preview {
+                app.toggle_preview();
+            }
+            for (height, visible) in [(30, 3), (42, 9), (70, 20)] {
+                let output = draw(&app, 80, height);
+                assert_eq!(output.matches("□ Task ").count(), visible);
+                assert_eq!(output.matches("M  src/file-").count(), visible);
+                if visible < 20 {
+                    assert_eq!(
+                        output
+                            .matches(&format!("... and {} more", 20 - visible))
+                            .count(),
+                        2
+                    );
+                } else {
+                    assert!(!output.contains(" more"));
+                    assert!(output.contains("commit-4"));
+                }
+                assert!(output.contains("commit-2"));
+            }
+        }
+        // With a third Evidence row, only the shortest Large boundary has two
+        // commit rows; adding one terminal row restores the third commit.
+        app.apply_artifact(Some(
+            devscope::progress::ArtifactObservation::observation_error("artifact".into(), "test"),
+        ));
+        assert!(draw(&app, 80, 30).contains("commit-1"));
+        assert!(draw(&app, 80, 31).contains("commit-2"));
+        assert!(draw(&app, 80, 30).contains("Artifact  ! Error"));
+    }
+
+    #[test]
+    fn navigation_height_stops_at_content_and_reuses_spare_rows() {
+        for (task_count, file_count) in [(1, 20), (20, 1), (0, 0), (5, 5)] {
+            let files = (0..file_count)
+                .map(|index| GitChangedFile {
+                    path: format!("src/file-{index}.rs").into(),
+                    status: GitFileStatus::Modified,
+                    changes: Default::default(),
+                })
+                .collect();
+            let app = app(
+                TaskState::Available(TaskSummary::new(task_count, task_items(task_count))),
+                activity_with_files(files),
+            );
+            let heights = large_navigation_heights(41, 4, &app);
+            assert_eq!(usize::from(heights[0]), task_count.max(1) + 2);
+            assert_eq!(usize::from(heights[2]), file_count.max(1) + 2);
+            assert_eq!(heights[1], 4);
+            assert_eq!(heights[3], 3);
+            let output = draw(&app, 80, 50);
+            assert!(!output.contains(" more"));
+            assert_eq!(output.matches("□ Task ").count(), task_count);
+            assert_eq!(output.matches("M  src/file-").count(), file_count);
+            assert!(output.contains("abc  recent"));
+        }
     }
 
     #[test]

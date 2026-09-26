@@ -193,8 +193,10 @@ Visual alignment is complete after user-accepted side-by-side Windows Terminal d
 Project Progress and Preview retain their frames; Tasks, Evidence, Changed Files, and
 Recent Commits are flat sections separated by whitespace. `▌` plus a bold title marks
 focus, independently of `>` selection. Navigation truncation uses `…`, and Changed Files
-Preview no longer repeats its title path in a body field. Existing content geometry,
-responsive thresholds, interaction, and footer ownership are preserved. No colors,
+Preview no longer repeats its title path in a body field. A follow-up accepted in Windows
+Terminal sizes Evidence to its items and lets Large Tasks/Changed Files use spare rows
+while keeping useful Recent Commits space. Responsive thresholds, Preview geometry,
+interaction, and footer ownership are preserved. No colors,
 rounded corners, or additional help surface were introduced.
 
 This is presentation refinement, not a Codex UI replica or an information-structure
