@@ -144,6 +144,31 @@ Full Detail. Enter on Overview remains the Preview toggle; Esc on Overview retai
 behavior, and `q` quits in either state. Other modifier combinations do not trigger
 plain-letter shortcuts.
 
+File Browser is a separate read-only inspection view, opened from Overview with Ctrl+F.
+It starts at project root and retains the last directory in memory for the session;
+reopening refreshes it, falling back to root with a notice if it is no longer safe or valid.
+Esc restores Overview focus, selections, and Preview preferences; q quits. Up/Down and j/k
+select entries, Right/Enter enters a directory, and Left goes to the checked parent.
+Enter on a file does nothing. Browser-local r refreshes only the directory and selected
+Preview; browser keys never fall through to Overview reload or verification shortcuts.
+
+Listing reads only the current directory, bounded to 4,096 raw entries plus an overflow
+probe, with incomplete/error notices. Parent comes first below root, followed by directories,
+files, and unsupported entries in native lexical order within each group. Built-in visibility
+hides .git and .devscope, plus target and node_modules directories, ASCII-case-insensitively;
+bin, obj, other dotfiles, and Git-ignored files remain visible. Plan/Activity/Verify exclusions
+are not reused. Paths remain root-confined; symlink/reparse entries are shown but not followed.
+
+The passive Browser Preview shares the bounded 64 KiB UTF-8 reader with Changed File
+inspection, explicitly labels File content, escapes terminal controls, and explains
+unsupported content and truncation. Large/Medium use the existing usable-width split;
+narrow/Small layouts show only the list. Ctrl+Up/Down scroll visible Preview independently
+of Overview, resetting on target changes and retaining/clamping for the same target.
+Rendering and scrolling do not read files; background project polling does not refresh
+Browser content. No file operations, recursive preload, watcher, or Full File Detail are added.
+Windows Terminal dogfood confirmed navigation, Preview scrolling, local reload, Overview
+restoration, remembered directory, and narrow-to-wide resizing.
+
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
 NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`
 neutral state, and `?` unavailable. They retain source-specific semantics: Stale keeps its Build/Test

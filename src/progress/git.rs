@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use super::file::safe_inspection_path;
 use crate::change::{WorktreeScanDiagnostics, diagnose_worktree_subtree_with_exclusions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,7 @@ pub enum GitFileInspectionUnavailable {
     GitError,
 }
 
+#[cfg(test)]
 const MAX_FILE_CONTENT_BYTES: usize = 64 * 1024;
 
 pub fn collect_git_file_inspection(
@@ -129,104 +131,18 @@ pub fn collect_git_file_inspection(
     }
 }
 
-fn safe_inspection_path(path: &Path) -> bool {
-    let Some(text) = path.to_str() else {
-        return false;
-    };
-    !text.is_empty()
-        && !text.contains(['\0', ':'])
-        && !text
-            .split(['/', '\\'])
-            .any(|part| part.is_empty() || part == "." || part == "..")
-        && path
-            .components()
-            .all(|part| matches!(part, std::path::Component::Normal(_)))
-}
-
-fn content_io_error(error: io::Error) -> GitFileInspectionUnavailable {
-    if error.kind() == io::ErrorKind::NotFound {
-        GitFileInspectionUnavailable::Missing
-    } else {
-        GitFileInspectionUnavailable::ReadError
-    }
-}
-
 fn read_current_file_content(
     root: &Path,
     path: &Path,
 ) -> Result<(String, bool), GitFileInspectionUnavailable> {
-    use GitFileInspectionUnavailable as Reason;
-    let mut target = root.to_path_buf();
-    for component in path.components() {
-        target.push(component);
-        let metadata = std::fs::symlink_metadata(&target).map_err(content_io_error)?;
-        if is_inspection_link(&metadata) {
-            return Err(Reason::Symlink);
-        }
-        if !metadata.is_dir() && !metadata.is_file() {
-            return Err(Reason::NotRegularFile);
-        }
-    }
-    let metadata = std::fs::symlink_metadata(&target).map_err(content_io_error)?;
-    if !metadata.is_file() {
-        return Err(Reason::NotRegularFile);
-    }
-    // Component checks reject links before canonicalization or opening content.
-    let canonical_root = root.canonicalize().map_err(content_io_error)?;
-    if !target
-        .canonicalize()
-        .map_err(content_io_error)?
-        .starts_with(&canonical_root)
-    {
-        return Err(Reason::UnsafePath);
-    }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Do not follow a final-component reparse point replaced before open.
-        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
-    }
-    let file = options.open(&target).map_err(content_io_error)?;
-    let opened = file.metadata().map_err(content_io_error)?;
-    if is_inspection_link(&opened) {
-        return Err(Reason::Symlink);
-    }
-    if !opened.is_file() {
-        return Err(Reason::NotRegularFile);
-    }
-    let mut bytes = Vec::new();
-    file.take((MAX_FILE_CONTENT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(content_io_error)?;
-    let truncated = bytes.len() > MAX_FILE_CONTENT_BYTES;
-    if bytes.contains(&0) {
-        return Err(Reason::Binary);
-    }
-    if truncated {
-        bytes.truncate(MAX_FILE_CONTENT_BYTES);
-    }
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(text) => text,
-        Err(error) if truncated && error.error_len().is_none() => {
-            // A bounded read can split a valid UTF-8 character; omit that suffix.
-            std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(|_| Reason::Binary)?
-        }
-        Err(_) => return Err(Reason::Binary),
-    };
-    Ok((text.to_owned(), truncated))
-}
-
-fn is_inspection_link(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // Includes junctions and other reparse points, not only symlinks.
-        metadata.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    metadata.file_type().is_symlink()
+    super::file::read_safe_text_file(root, path).map_err(|reason| match reason {
+        super::file::SafeTextError::Missing => GitFileInspectionUnavailable::Missing,
+        super::file::SafeTextError::UnsafePath => GitFileInspectionUnavailable::UnsafePath,
+        super::file::SafeTextError::Symlink => GitFileInspectionUnavailable::Symlink,
+        super::file::SafeTextError::NotRegularFile => GitFileInspectionUnavailable::NotRegularFile,
+        super::file::SafeTextError::Binary => GitFileInspectionUnavailable::Binary,
+        super::file::SafeTextError::ReadError => GitFileInspectionUnavailable::ReadError,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

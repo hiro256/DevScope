@@ -447,7 +447,8 @@ fn refresh_open_detail(root: Option<&Path>, app: &mut App) -> bool {
     true
 }
 fn changed_file_preview_active(width: u16, height: u16, app: &App) -> bool {
-    ui::has_global_preview(width, height, app.preview_visible())
+    !app.is_file_browser_open()
+        && ui::has_global_preview(width, height, app.preview_visible())
         && app.focused_panel() == FocusedPanel::ChangedFiles
 }
 
@@ -837,6 +838,11 @@ pub fn run(
 
         if event::poll(EVENT_POLL_TIMEOUT)? {
             match event::read()? {
+                Event::Key(key) if app.is_file_browser_open() => {
+                    let size = terminal.size()?;
+                    handle_navigation_key(project_root, app, key, size.into());
+                    needs_render = true;
+                }
                 Event::Key(key)
                     if key.kind == KeyEventKind::Press
                         && key.modifiers == KeyModifiers::NONE
@@ -905,7 +911,9 @@ pub fn run(
                     needs_render = true;
                 }
                 Event::Resize(width, height) => {
-                    app.reconcile_focus(ui::focusable_panels(width, height));
+                    if !app.is_file_browser_open() {
+                        app.reconcile_focus(ui::focusable_panels(width, height));
+                    }
                     if changed_file_preview_active(width, height, app) {
                         refresh_changed_file_preview(project_root, app);
                     }
@@ -981,6 +989,51 @@ fn handle_navigation_key(
     area: ratatui::layout::Rect,
 ) {
     if key.kind != KeyEventKind::Press {
+        return;
+    }
+    let was_browser = app.is_file_browser_open();
+    if was_browser
+        || (!app.has_detail_view()
+            && key.code == KeyCode::Char('f')
+            && key.modifiers == KeyModifiers::CONTROL)
+    {
+        app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
+        if !app.is_file_browser_open() {
+            if changed_file_preview_active(area.width, area.height, app) {
+                refresh_changed_file_preview(project_root, app);
+            }
+            return;
+        }
+        if !was_browser {
+            app.file_browser.refresh(project_root, true);
+        } else if key.modifiers == KeyModifiers::NONE {
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.file_browser.move_selection(1, project_root)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.file_browser.move_selection(-1, project_root)
+                }
+                KeyCode::Right | KeyCode::Enter => app.file_browser.enter_selected(project_root),
+                KeyCode::Left => app.file_browser.parent(project_root),
+                KeyCode::Char('r') => app.file_browser.refresh(project_root, false),
+                _ => {}
+            }
+        } else if key.modifiers == KeyModifiers::CONTROL
+            && ui::preview_layout_available(area.width, area.height)
+        {
+            let delta = match key.code {
+                KeyCode::Down => 1,
+                KeyCode::Up => -1,
+                _ => 0,
+            };
+            let limit = ui::browser_preview_scroll_limit(app, area);
+            app.file_browser.scroll(delta, limit);
+        }
+        if ui::preview_layout_available(area.width, area.height) {
+            app.file_browser
+                .scroll(0, ui::browser_preview_scroll_limit(app, area));
+        }
         return;
     }
     let was_detail = app.has_detail_view();
@@ -2923,6 +2976,119 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn browser_navigation_refresh_scroll_and_reopen_are_view_local() {
+        let root = git_root();
+        fs::create_dir(root.join("browser-dir")).unwrap();
+        let original: String = (0..60).map(|i| format!("original {i}\n")).collect();
+        fs::write(root.join("browser-dir/a.txt"), &original).unwrap();
+        fs::write(root.join("browser-dir/b.txt"), "second file").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+        let open = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert!(app.is_file_browser_open());
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Right), area);
+        assert_eq!(app.file_browser.current_dir, Path::new("browser-dir"));
+        assert_eq!(
+            app.file_browser.preview,
+            Some(Ok((original.clone(), false)))
+        );
+        let selected = app.file_browser.selected;
+        fs::write(root.join("browser-dir/a.txt"), "updated").unwrap();
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL);
+        handle_navigation_key(Some(&root), &mut app, down, area);
+        assert_eq!(app.file_browser.preview_scroll, 1);
+        assert_eq!(app.file_browser.selected, selected);
+        assert_eq!(
+            app.file_browser.preview,
+            Some(Ok((original.clone(), false)))
+        );
+        for k in [
+            key(KeyCode::Char('b')),
+            key(KeyCode::Char('t')),
+            key(KeyCode::Char('p')),
+            key(KeyCode::Tab),
+            key(KeyCode::Enter),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            open,
+        ] {
+            handle_navigation_key(Some(&root), &mut app, k, area);
+            assert!(app.is_file_browser_open());
+            assert!(!app.has_detail_view());
+            assert_eq!(
+                app.file_browser.preview,
+                Some(Ok((original.clone(), false)))
+            );
+        }
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            down,
+            ratatui::layout::Rect::new(0, 0, 40, 20),
+        );
+        assert_eq!(app.file_browser.preview_scroll, 1);
+        let tasks = format!("{:?}", app.tasks());
+        fs::write(
+            root.join("new-plan.md"),
+            "- [ ] browser r must not reload Plan",
+        )
+        .unwrap();
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Char('r')), area);
+        assert_eq!(format!("{:?}", app.tasks()), tasks);
+        assert_eq!(
+            app.file_browser.preview,
+            Some(Ok(("updated".into(), false)))
+        );
+        assert_eq!(app.file_browser.preview_scroll, 0);
+        let before = app.file_browser.entries.clone();
+        fs::write(root.join("browser-dir/c.txt"), "new").unwrap();
+        app.apply_snapshot(collect_project_snapshot(&root));
+        assert_eq!(app.file_browser.entries, before);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert_eq!(app.file_browser.current_dir, Path::new("browser-dir"));
+        assert!(app.file_browser.entries.iter().any(|e| e.name == "c.txt"));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+        assert_eq!(app.file_browser.current_dir, Path::new("browser-dir"));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        fs::remove_dir_all(root.join("browser-dir")).unwrap();
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert!(app.file_browser.current_dir.as_os_str().is_empty());
+        assert!(app.file_browser.notice.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn browser_return_refreshes_overview_inspection_after_background_update() {
+        let root = git_root();
+        fs::write(root.join("a-new.txt"), "before").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+        let selected = app.selected_changed_file();
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            area,
+        );
+        fs::write(root.join("a-new.txt"), "after").unwrap();
+        app.apply_snapshot(collect_project_snapshot(&root));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        assert!(!app.is_file_browser_open());
+        assert_eq!(app.selected_changed_file(), selected);
+        assert_eq!(
+            app.preview_inspection(),
+            Some(&GitFileInspection::FileContent {
+                text: "after".into(),
+                truncated: false,
+            })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn untracked_inspection_refreshes_preview_and_detail_without_reads_on_scroll() {
         let root = git_root();

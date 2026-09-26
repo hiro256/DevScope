@@ -78,7 +78,15 @@ pub enum DetailTarget {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppView {
+    Overview,
+    FileBrowser,
+}
+
 pub struct App {
+    view: AppView,
+    pub file_browser: crate::file_browser::FileBrowserState,
     running: bool,
     plan: PlanState,
     activity: ActivityState,
@@ -104,6 +112,8 @@ pub struct App {
 impl App {
     pub fn new(snapshot: ProjectSnapshot) -> Self {
         let mut app = Self {
+            view: AppView::Overview,
+            file_browser: crate::file_browser::FileBrowserState::default(),
             running: true,
             plan: PlanState::Unavailable,
             activity: ActivityState::Unavailable,
@@ -388,6 +398,10 @@ impl App {
         self.detail_target.is_some()
     }
 
+    pub const fn is_file_browser_open(&self) -> bool {
+        matches!(self.view, AppView::FileBrowser)
+    }
+
     pub const fn refresh_status(&self) -> RefreshStatus {
         self.refresh_status
     }
@@ -405,6 +419,19 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        if self.is_file_browser_open() {
+            if key.modifiers == KeyModifiers::NONE {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.view = AppView::Overview;
+                        self.reconcile_focus(focusable_panels);
+                    }
+                    KeyCode::Char('q') => self.running = false,
+                    _ => {}
+                }
+            }
+            return;
+        }
         if self.detail_target.is_some() {
             if key.modifiers != KeyModifiers::NONE {
                 return;
@@ -418,6 +445,10 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('f') {
+            self.view = AppView::FileBrowser;
             return;
         }
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Enter {
@@ -584,6 +615,58 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn browser_keys_preserve_overview_and_never_open_from_detail() {
+        let mut app = app(3);
+        app.apply_activity_state(activity_with_files(3));
+        app.focused_panel = FocusedPanel::ChangedFiles;
+        app.selected_task = Some(1);
+        app.selected_changed_file = Some(1);
+        app.evidence_selection = EvidenceSelection::Test;
+        app.preview_visible = false;
+        app.preview_scroll = 7;
+        let open = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('f')), ALL_PANELS);
+        assert!(!app.is_file_browser_open());
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            app.handle_key_with_focusable_panels(KeyEvent { kind, ..open }, ALL_PANELS);
+            assert!(!app.is_file_browser_open());
+        }
+        app.handle_key_with_focusable_panels(open, ALL_PANELS);
+        assert!(app.is_file_browser_open());
+        for key in [
+            open,
+            key(KeyCode::Char('b')),
+            key(KeyCode::Char('t')),
+            key(KeyCode::Char('p')),
+            key(KeyCode::Tab),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        ] {
+            app.handle_key_with_focusable_panels(key, ALL_PANELS);
+            assert!(app.is_file_browser_open());
+            assert!(!app.has_detail_view());
+        }
+        app.file_browser.scroll(2, 10);
+        assert_eq!(app.preview_scroll(), 7);
+        app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
+        assert!(!app.is_file_browser_open());
+        assert!(app.is_running());
+        assert_eq!(app.focused_panel, FocusedPanel::ChangedFiles);
+        assert_eq!(app.selected_task, Some(1));
+        assert_eq!(app.selected_changed_file, Some(1));
+        assert_eq!(app.evidence_selection, EvidenceSelection::Test);
+        assert!(!app.preview_visible);
+        assert_eq!(app.preview_scroll, 7);
+        app.open_changed_file_detail();
+        app.handle_key_with_focusable_panels(open, ALL_PANELS);
+        assert!(!app.is_file_browser_open());
+        assert!(app.has_detail_view());
+        app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
+        app.handle_key_with_focusable_panels(open, ALL_PANELS);
+        app.handle_key_with_focusable_panels(key(KeyCode::Char('q')), ALL_PANELS);
+        assert!(!app.is_running());
     }
 
     #[test]

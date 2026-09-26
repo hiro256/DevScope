@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod event_loop;
+mod file_browser;
 mod terminal;
 mod ui;
 

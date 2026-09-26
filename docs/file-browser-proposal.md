@@ -1,8 +1,10 @@
 # Minimal File Browser contract
 
-Status: exploration complete; accepted first implementation scope, not implemented.
-The implementation task is tracked in [roadmap.md](roadmap.md). Existing behavior in
-[design.md](design.md) remains unchanged until implementation and Windows dogfood.
+Status: minimal implementation complete; Windows Terminal dogfood accepted.
+This document retains the accepted scope and implementation rationale. Implemented behavior
+is summarized in [design.md](design.md); completion is tracked in [roadmap.md](roadmap.md).
+Ctrl+F, navigation, Preview scrolling, local reload, Overview restoration, and responsive
+resizing were accepted in user-operated Windows Terminal dogfood.
 
 ## Role and view lifetime
 

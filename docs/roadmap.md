@@ -122,7 +122,7 @@
 - [ ] Refine keyboard navigation and Preview controls
 - [x] Show file content when Changed File diff is unavailable
 - [x] Explore read-only project File Browser with Preview
-- [ ] Implement minimal read-only project File Browser
+- [x] Implement minimal read-only project File Browser
 - [ ] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
 - [ ] Refine Preview content and density across focused panels
@@ -142,16 +142,17 @@ plus one detection byte. Truncation and unsupported/read-error reasons are expli
 Windows Terminal dogfood confirmed content labeling, Preview scrolling, and Full Detail
 navigation with an untracked UTF-8 text file.
 
-File Browser exploration is complete; implementation remains separate and follows the
-[minimal contract](file-browser-proposal.md). Build a separate read-only view starting
+File Browser exploration and minimal implementation are complete, following the
+[minimal contract](file-browser-proposal.md). The separate read-only view starts
 at project root, with session-local last directory, bounded on-demand filesystem listing,
 directory-first ordering, checked parent navigation, and no symlink/reparse traversal.
-Use Left/Right plus Enter for directory navigation, Esc Back, passive bounded text Preview,
+It uses Left/Right plus Enter for directory navigation, Esc Back, passive bounded text Preview,
 and Ctrl+Up/Down scroll; Large/Medium split and Small list-only preserve root confinement
-without file operations. Ctrl+F is the entry candidate for Windows implementation dogfood.
+without file operations. Windows Terminal dogfood validated Ctrl+F entry, navigation,
+Preview scrolling, browser-local reload, Overview restoration, and responsive resizing.
 Browser visibility has its own built-in exclusions, not Plan/Activity/Verify policies.
-Added-file inspection may inform minimal internal safe-text reuse at implementation time;
-no shared public API is defined now.
+Changed File inspection and File Browser reuse the same narrow safe-text reader;
+no generic filesystem or Evidence API was introduced.
 
 After the inspection surfaces, plan contextual actions: the global footer owns navigation
 and application-wide controls, while passive Detail / Preview shows only actions available

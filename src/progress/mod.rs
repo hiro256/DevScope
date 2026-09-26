@@ -27,7 +27,12 @@ pub use build_test_store::{
     PersistedBuildTestState, load_build_test_states, save_build_test_state,
 };
 pub use cargo_build_test::{cargo_build_test_command, is_cargo_project};
+mod file;
 mod git;
+pub use file::{
+    BrowserEntry, BrowserEntryKind, DirectoryListing, SafeTextError, read_project_directory,
+    read_safe_text_file,
+};
 mod markdown;
 pub use git::{
     ActivityExcludeCandidateAssessment, ActivityExcludeCandidateReason,
