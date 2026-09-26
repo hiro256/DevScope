@@ -2,7 +2,7 @@
 
 Use this guide to make DevScope available on a machine and to confirm that it observes a
 specific project correctly. Setup is not the project's implementation workflow. After
-setup, return to the [DevScope Skill prototype](../examples/devscope-skill.md) for
+setup, return to the [DevScope Skill](../../.agents/skills/devscope/SKILL.md) for
 normal daily work.
 
 Setup does not define Plan authority, Current Work, Evidence, or AI memory. It must not
@@ -18,10 +18,17 @@ First check whether the command is available:
 devscope --help
 ```
 
-If it is not, place a built DevScope executable in a stable user-level directory and
+If it is not, download a Windows x64 ZIP from a release that provides one on
+[GitHub Releases](https://github.com/hiro256/DevScope/releases), extract it, and place
+the executable in a stable user-level directory. Alternatively, build from source as
+described in the [README](../../README.md#build-from-source). Optionally
 add that directory to the user PATH. On Windows, `C:\Tools\DevScope\` is one possible
 example, not a required DevScope location. Validate the PATH change in a new shell with
 `devscope --help`.
+
+Without PATH setup, run `& 'C:\Tools\DevScope\devscope.exe' context` from the project
+root. Use no arguments to start the TUI. Published package controls may differ from
+current `main`; check that release's notes.
 
 Do not use a development repository's `target/debug/devscope.exe` as a permanent PATH
 target. It couples the tool used for observation to an in-progress build; rebuilds
@@ -49,7 +56,7 @@ Use the TUI when a broader human view helps. Check the available surfaces:
 
 - Plan and Git Activity;
 - Current Work, when the project uses it;
-- Build/Test availability; and
+- Build/Test availability and latest saved outcome/Freshness; and
 - an Artifact target, only when one is configured.
 
 Missing Current Work, an empty history, or an unconfigured Artifact are normal unused
@@ -63,11 +70,14 @@ default-valued `.devscope/config.toml` merely because setup is occurring.
 The current project Config is optional observation policy, not Plan, Current Work,
 Evidence, or AI memory. It can address implemented project-specific cases:
 
-- `[plan].exclude` for a literal project-relative file or directory that should not be
+- `[plan].include` to opt into accepted Markdown files or directory subtrees, and
+  `[plan].exclude` for a literal project-relative file or directory that should not be
   observed as Plan, such as a derived or duplicated Markdown source;
-- `[artifact].path` for one optional project-relative Artifact observation target; and
+- `[artifact].path` for one optional project-relative Artifact observation target;
 - `[verify]`, `[verify.build]`, and `[verify.test]` for Build/Test command resolution
-  and freshness-only exclusions.
+  and freshness-only exclusions;
+- `[activity].exclude` for explicit worktree scan exclusions, maintained separately
+  from Plan and verification freshness. Use the Skill's approval-gated proposal workflow.
 
 For example:
 
@@ -83,6 +93,9 @@ path = "target/release/example.exe"
 parent-directory traversal, and cannot re-include mandatory exclusions. An Artifact
 configuration is optional. A missing configured target is an observed `Missing` result,
 not necessarily a setup failure.
+
+Omitting `plan.include` keeps broad Markdown discovery; `include = []` selects none.
+Include paths must exist and remain project-relative; existing excludes still win.
 
 ### Build/Test verification
 
@@ -160,7 +173,7 @@ Setup is complete when:
 - Build/Test verification availability and its command source are understood; and
 - optional Artifact behavior is understood when configured.
 
-Return to the [DevScope Skill prototype](../examples/devscope-skill.md) for the normal
+Return to the [DevScope Skill](../../.agents/skills/devscope/SKILL.md) for the normal
 workflow: orient, set or update explicit Current Work when applicable, implement,
 verify, and record a logical work boundary.
 

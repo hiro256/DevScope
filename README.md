@@ -5,45 +5,130 @@ in AI-assisted software development. It derives progress from observable project
 state rather than an agent's self-reported state.
 
 ```text
-Markdown   = Plan
-Git        = Activity
-Build/Test = Evidence
-Agent      = Current activity
+Markdown     = Plan
+Current Work = Recorded working context; explicit Active drives NOW
+Git          = Activity
+Build/Test   = Evidence: outcome and separate Fresh/Stale status
+Artifact     = Evidence: Exists / Missing / observation error
 ```
 
-The latest release is v0.4.0, **Workflow and Observation Refinement**. It builds on v0.3.0
-Build/Test Evidence with Current Work, configurable verification, and refined Git worktree
-observation.
+Activity is not Evidence, Current Work is not Plan, and agent self-report is not
+verification. Fresh means observed relevant inputs do not contradict a result, not a
+quality guarantee. Artifact existence does not prove validity and has no Fresh/Stale
+interpretation. Agent integrations remain optional future adapters, not core dependencies.
 
-## v0.4.0 features
+This README describes the current `main` implementation. Published binaries may lag
+behind it; consult the package's release notes for its features and controls.
+
+## Current capabilities
 
 - Current Work with explicit Active state, NOW presentation, and compact history
 - Focused-panel Preview and Task Detail support for source-grounded context
 - Configurable Build/Test commands and project-specific freshness exclusions
 - Artifact Evidence alongside Build/Test Evidence
 - Background Git worktree observation with safe Activity exclusion proposals and an approval-gated workflow
+- Changed File Full View with Git diff or explicitly labeled safe current text
+- Read-only File Browser with passive Preview and cached-file Full View
+- Responsive layouts, wrapped inspection content, and contextual action hints
 
-## v0.3.0 features
+## Quick start: Windows binary
 
-- Cargo project detection
-- Manual `cargo check` Build and `cargo test` Test execution
-- Non-blocking process observation and Build/Test lifecycle states
-- Evidence Details for commands, outcomes, and bounded diagnostics
-- Automatic Fresh/Stale tracking, including relevant input changes while a run is active
-- Windows Build/Test Evidence verification
+1. Open [GitHub Releases](https://github.com/hiro256/DevScope/releases) and download a
+   Windows x64 ZIP from a release that provides one.
+2. Extract it to a stable directory, for example `C:\Tools\DevScope`.
+3. Optionally add that directory to your user PATH, then open a new shell.
+4. From the project root you want to observe, run:
 
-## v0.2.0 features
+   ```powershell
+   cd C:\path\to\your-project
+   devscope
+   ```
 
-- Markdown task discovery across multiple Markdown files
-- Markdown checkbox parsing and completed / total progress
-- Task Summary with keyboard navigation
-- Git repository detection and changed-file count
-- Changed Files panel with Git status details
-- Recent Git commits
-- Automatic live refresh for Markdown, Git worktree, and Git metadata changes
-- Manual full reload with `r`
-- Refresh status and session-relative last-refresh timestamp
-- Responsive terminal layout
+5. For AI or automation orientation, run `devscope context` from the same root.
+
+Without PATH setup, use `& 'C:\Tools\DevScope\devscope.exe'` and append `context` for
+CLI orientation. No Config file is required to start. If no suitable binary is
+published, use [Build from source](#build-from-source).
+See the [Setup Guide](docs/guides/devscope-setup.md) for project-specific details.
+
+## AI-assisted workflow
+
+Use the existing [DevScope Skill](.agents/skills/devscope/SKILL.md):
+
+1. Run `devscope context`.
+2. Identify the relevant Plan and Current Work; use `devscope task list` or
+   `devscope work list` only when needed.
+3. Read only needed detail; set or update explicit Current Work when applicable and authorized.
+4. Implement a small step.
+5. When relevant, run `devscope verify build` and `devscope verify test`.
+6. Before stopping, inspect `devscope context` and `git status --short`.
+
+Current Work completion does not complete its parent Plan task. Read `work list`
+immediately before numbered `work active` or `work done` operations; Active is explicit,
+never inferred from Next. The CLI works without an agent or Skill.
+
+## Controls and inspection
+
+### Overview
+
+- Left/Right moves panel focus; Tab/Shift+Tab remains compatible. Up/Down or j/k
+  moves local selection. `▌` marks focus; `>` marks selection.
+- Enter or p toggles passive Preview; Ctrl+Up/Down scrolls it when visible.
+- Space runs/re-runs the selected runnable Build/Test only with Evidence focused
+  and Preview actually visible. Hidden/narrow-layout Preview, Artifact, Unavailable,
+  or any active verification prevents execution. Global b/t execution shortcuts
+  are removed; CLI verification is unchanged.
+- Ctrl+Enter opens Full View for a selected Changed File. Ctrl+F opens File Browser.
+- r reloads project state; q or Esc quits from Overview.
+
+Preview shows source-grounded Task context, separate Evidence outcome/freshness, or
+Changed File inspection. Git diff is preferred; unavailable diff may fall back to
+safe current UTF-8 text explicitly labeled **File content**, never presented as a diff.
+Contextual action hints stay fixed near Preview, separate from the global footer.
+
+### File Browser and Full View
+
+File Browser starts at project root and retains the last directory within the session.
+Up/Down or j/k selects, Right/Enter enters a directory, Left goes to the parent, and
+Enter on a file does nothing. r refreshes Browser listing and selected content only;
+Esc returns to Overview; q quits.
+
+Selection shows passive text Preview with Ctrl+Up/Down scrolling. Ctrl+Enter opens
+Full View only for a readable cached file. Large/Medium uses a 40/60 Files/Preview
+split; Small shows only the list. Listing is bounded and on demand; symlink/reparse
+entries are not followed. No file editing or external editor launch is provided.
+
+In either Full View, Up/Down or j/k scrolls, plain Enter/Esc returns to its originating
+view (Overview or Browser) preserving selection and Preview state, and q quits.
+Ctrl+Enter does not close Full View. Long inspection lines wrap; safe text reads are
+bounded to 64 KiB with explicit truncation and unsupported-content reasons.
+
+## CLI reference (main)
+
+The read-only CLI, Current Work, and Skill workflow experiments are complete. Commands
+are available for daily use; plain-text output is not a versioned JSON/API contract.
+Use `devscope --help` for the current command list.
+
+```powershell
+devscope context
+devscope task list
+devscope work list
+devscope activity suggest-excludes
+devscope verify build
+devscope verify test
+devscope artifact inspect
+```
+
+`context`, `task list`, and `work list` print compact plain text without entering the
+TUI. `context` includes Build/Test availability and latest saved outcome with current
+Fresh/Stale status or Not run. Verification runs the resolved command and persists the
+latest observed result locally for later CLI/TUI use; this is not Evidence history.
+Cargo defaults are `cargo check` for Build and `cargo test` for Test. Other toolchains
+can use configured commands; see [verification setup](docs/guides/devscope-setup.md#buildtest-verification).
+
+`activity suggest-excludes` runs a read-only diagnostic and reports up to three Git-safe
+Activity exclusion proposals; it never edits Config. The Skill permits an Activity
+exclusion edit only after explicit human approval of an exact reported path.
 
 ## Plan sources
 
@@ -60,6 +145,20 @@ A file selects that Markdown file; a directory selects its subtree. Existing
 `[plan].exclude` and built-in exclusions still apply. Omitting `include` keeps
 broad discovery; `include = []` explicitly selects no Plan sources. Invalid or
 missing include paths are Config errors, not a fallback to broad discovery.
+
+## Artifact target
+
+One optional target may be declared in `.devscope/config.toml`:
+
+```toml
+[artifact]
+path = "target/debug/devscope.exe"
+```
+
+`devscope artifact inspect` observes the configured target; `devscope artifact inspect <path>` overrides it. Configuration defines what DevScope should observe; the observation result is Evidence.
+
+When configured, Artifact is selectable in the TUI Evidence panel; it is re-observed
+at startup/refresh and has no persisted history or Fresh/Stale state.
 
 ## Live observation
 
@@ -95,17 +194,6 @@ R  Renamed
 DevScope observes Git state only; it does not edit files or perform Git write
 operations.
 
-## Controls
-
-```text
-Up / k      Previous task
-Down / j    Next task
-b           Run Build evidence
-t           Run Test evidence
-r           Manual full reload
-q / Esc     Quit
-```
-
 ## Requirements
 
 - Git must be available on `PATH` for Git Activity collection.
@@ -113,14 +201,17 @@ q / Esc     Quit
 - Build/Test Evidence needs either project-configured executable commands or, for a Cargo root, Cargo on `PATH`.
 - Windows is the primary verified platform for v0.4.0.
 
-## Build and run
+## Build from source
 
-In PowerShell:
+From the DevScope repository in PowerShell:
 
 ```powershell
 cargo build
 cargo run
 ```
+
+For development CLI checks use `cargo run -- context`. For repeated AI use, prefer
+an installed or built executable so Cargo output does not mix with CLI output.
 
 To build an optimized binary:
 
@@ -131,72 +222,28 @@ cargo build --release
 
 ## Windows x64 binary
 
-When published, the prebuilt Windows x64 binary is available from GitHub Releases. Download the
+The v0.4.0 package target is Windows x64; consult [GitHub Releases](https://github.com/hiro256/DevScope/releases)
+for actual asset availability and release-specific features. When provided, download the
 `devscope-v0.4.0-windows-x64.zip` archive, extract it to a directory of your choice, then run
 `devscope.exe` from a project root. Add that directory to `PATH` for commands such as `devscope
 context`, or invoke the executable by its absolute path. Run `devscope` with no arguments to start
 the TUI.
 
-## Experimental CLI (main)
-
-The initial read-only and Current Work CLI experiments completed successfully. The
-commands remain experimental while the later Skill and workflow work continues.
-
-For project onboarding, use the [Setup Guide](docs/guides/devscope-setup.md). The
-repo-local [DevScope Skill](.agents/skills/devscope/SKILL.md) supports the daily
-AI/human workflow; the [Skill prototype](docs/examples/devscope-skill.md) remains its
-design reference.
-For development checks, use Cargo:
-
-```powershell
-cargo run
-cargo run -- context
-cargo run -- task list
-cargo run -- work list
-cargo run -- work done 3
-cargo run -- activity suggest-excludes
-cargo run -- --help
-```
-
-For AI dogfooding or repeated use, invoke the built executable directly so Cargo build
-output is not mixed with compact CLI output:
-
-```powershell
-.\target\debug\devscope.exe context
-.\target\debug\devscope.exe task list
-.\target\debug\devscope.exe work list
-.\target\debug\devscope.exe work done 3
-.\target\debug\devscope.exe activity suggest-excludes
-.\target\debug\devscope.exe verify build
-.\target\debug\devscope.exe verify test
-.\target\debug\devscope.exe artifact inspect target\debug\devscope.exe
-```
-
-If DevScope is already available on `PATH`, `devscope context` and `devscope task list`
-are equivalent. `context`, `task list`, and experimental `work list` print compact plain text without entering the
-TUI. In `context`, the CLI reports Build/Test availability and the latest saved
-outcome with current Fresh/Stale status (or Not run). `verify build` and `verify test` run the resolved command, then
-persist the observed current result locally for restoration in a later TUI session.
-Freshness compares relevant project inputs around the verification run. `activity suggest-excludes` runs an on-demand, read-only worktree diagnostic and reports up to three Git-safe Activity exclusion proposals; it never edits Config. The repo-local Skill permits a separate `[activity].exclude` edit only after explicit human approval of an exact reported path.
-
 ## Not yet implemented
 
-- Scrollable, full-screen Evidence diagnostics and history
+- Build Debug/Release profiles; dedicated Full View for Evidence and Evidence history
 - Agent adapters, including a Codex adapter
-- Task editing and Git write operations
-- Task weighting, progress history, and IDE or Web/API frontends
+- IDE or Web/API frontends
+- Package-manager distribution
 
-DevScope v0.3.0 was a source-only release. The v0.4.0 prebuilt package target is Windows x64.
+Task editing and Git/file write operations are outside the current observation-focused
+scope, not promised onboarding features. Evidence Preview already scrolls; it is not a
+dedicated full-screen diagnostics or history view.
 
-See [docs/roadmap.md](docs/roadmap.md) for the planned work.
+## Further reading
 
-## Artifact target
-
-One optional target may be declared in `.devscope/config.toml`:
-
-```toml
-[artifact]
-path = "target/debug/devscope.exe"
-```
-
-`devscope artifact inspect` observes the configured target; `devscope artifact inspect <path>` overrides it. Configuration defines what DevScope should observe; the observation result is Evidence.
+- [Setup Guide](docs/guides/devscope-setup.md): installation and observation policy
+- [DevScope Skill](.agents/skills/devscope/SKILL.md): daily AI/human workflow
+- [Design](docs/design.md): state meanings and interaction boundaries
+- [Roadmap](docs/roadmap.md): accepted work
+- [Backlog](docs/backlog.md): candidates, not implementation commitments

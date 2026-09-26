@@ -228,6 +228,17 @@ confirms a selection, while File Browser provides optional surrounding-file insp
 - [x] Progress history experiment
 - [x] Refine Git worktree change detection boundary
 
+### Product clarity and onboarding
+
+- [x] Align public documentation and first-use onboarding with current implementation
+- [ ] Reassess UI and event-loop module boundaries after TUI refinement
+- [ ] Explore package-manager distribution after onboarding refinement
+
+The completed documentation slice covers current controls, implementation status, the Windows binary
+first-use path, and the existing Skill workflow. Five-second project-state understanding
+remains the separate TUI dogfood task above; module reassessment and distribution exploration
+do not authorize refactoring or packaging implementation in this slice.
+
 ### External surfaces
 
 - [ ] VS Code integration

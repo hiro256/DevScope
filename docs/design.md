@@ -5,15 +5,17 @@ project itself. It does not treat an AI agent's self-reported status as the sour
 truth.
 
 ```text
-Markdown   = Intent / Plan
-Git        = Activity
-Build/Test = Evidence
-Agent      = Current activity
+Markdown       = Intent / Plan
+Current Work   = Recorded working context; explicit Active drives NOW
+Git            = Activity
+Build/Test     = Execution Evidence
+Artifact       = Filesystem Evidence
 ```
 
-Markdown and Git are implemented as the Plan and Activity sources, with a TUI that
-presents both. Build/Test Evidence is the next source under development. Agent
-integrations remain optional future adapters.
+Markdown and Git are implemented as Plan and Activity sources. Build/Test and Artifact
+Evidence, Current Work with explicit Active/NOW, passive Preview, Changed File Full View,
+and read-only File Browser with Browser Full View are implemented. Agent integrations
+remain optional future adapters.
 
 ## Target architecture
 
@@ -45,12 +47,12 @@ become a dependency of the core model.
 The TUI supports human-oriented project understanding, while the CLI remains the
 precise interface for AI and automation. A focused panel identifies the visible
 interaction surface that receives navigation; selection identifies an item within that
-panel. Project Progress remains an overview rather than a focus target. A future Detail
-View may provide optional human drill-down.
+panel. Project Progress remains an overview rather than a focus target. Passive Preview
+and explicitly opened Full View provide optional human drill-down.
 
 This follows lazygit's separation of focus and local selection without copying its UI:
-DevScope remains observation- and understanding-centered, and avoids accumulating
-context-dependent shortcuts.
+DevScope remains observation- and understanding-centered, separating global navigation
+from selection-specific actions advertised near inspection content.
 
 Visual hierarchy should prefer spacing, borders, and restrained progress marks before decorative
 color or additional widgets. Hidden panels must not retain interactive focus.
@@ -86,10 +88,10 @@ drill-down need appears.
 
 The primary TUI screen should remain stable and compact. New information should prefer
 optional drill-down over additional permanent overview panels.
-Detail View is optional drill-down from an existing panel. The first experiment uses
-whole-screen replacement to validate the interaction before introducing a split-pane
-layout; a later split-pane implementation should preserve the same target and
-interaction model. Ctrl+Enter opens the selected detail, plain Enter or Esc returns when detail is open,
+Detail View is optional drill-down from an existing panel. The initial whole-screen
+experiment preceded the implemented passive split-pane Preview; explicit Full View
+remains available for supported inspection targets. Ctrl+Enter opens the selected detail,
+plain Enter or Esc returns when detail is open,
 and q always quits.
 Changed File Detail may surface observed change magnitude in addition to path and status.
 Change magnitude remains Activity data, not Evidence.
@@ -288,9 +290,9 @@ The experiment intentionally excludes automatic verification after file changes,
 
 ## Artifact Evidence experiment
 
-Artifact Evidence directly observes one project-relative filesystem path. Its first slice distinguishes `Exists`, `Missing`, and observation failure with optional descriptive metadata, without persistence, freshness, validation rules, configuration, TUI integration, or generic Evidence abstractions. It is a second concrete Observed Evidence source to compare before stabilizing shared APIs.
+Artifact Evidence directly observes one project-relative filesystem path. The initial CLI-only slice distinguished `Exists`, `Missing`, and observation failure with optional descriptive metadata. Configuration and TUI selection were subsequently implemented as described below; persistence, freshness, validation rules, and generic Evidence abstractions remain outside the current scope. It is a second concrete Observed Evidence source to compare before stabilizing shared APIs.
 
-Build/Test Evidence observes process execution, reports Passed or Failed, and has meaningful Fresh/Stale semantics. Artifact Evidence observes filesystem state and reports Exists or Missing; freshness is not yet defined. This first slice keeps target selection explicit at the CLI and does not imply that mtime or size proves validity, verification, or recency.
+Build/Test Evidence observes process execution, reports Passed or Failed, and has meaningful Fresh/Stale semantics. Artifact Evidence observes filesystem state and reports Exists or Missing; freshness is not defined. Target selection uses one configured path or an explicit CLI override and does not imply that mtime or size proves validity, verification, or recency.
 Artifact paths are project-relative both lexically and physically. DevScope rejects paths that resolve outside the project root through symlinks, junctions, or similar filesystem indirection. This is an observation boundary, not a general filesystem sandbox or a TOCTOU-proof security mechanism.
 
 Broken filesystem indirection is treated as observation failure rather than Missing.
