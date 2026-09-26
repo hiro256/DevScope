@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use devscope::{
     current_work::CurrentWork,
     progress::{
-        ArtifactObservation, BuildTestKind, BuildTestState, GitChangeCounts, GitFileDiff,
+        ArtifactObservation, BuildTestKind, BuildTestState, GitChangeCounts, GitFileInspection,
         GitFileStatus,
     },
     project::ProjectSnapshot,
@@ -91,9 +91,9 @@ pub struct App {
     selected_task: Option<usize>,
     selected_changed_file: Option<usize>,
     detail_target: Option<DetailTarget>,
-    detail_diff: Option<GitFileDiff>,
+    detail_inspection: Option<GitFileInspection>,
     detail_scroll: usize,
-    preview_diff: Option<GitFileDiff>,
+    preview_inspection: Option<GitFileInspection>,
     preview_visible: bool,
     preview_scroll: usize,
     current_work: CurrentWorkState,
@@ -116,9 +116,9 @@ impl App {
             selected_task: None,
             selected_changed_file: None,
             detail_target: None,
-            detail_diff: None,
+            detail_inspection: None,
             detail_scroll: 0,
-            preview_diff: None,
+            preview_inspection: None,
             preview_visible: true,
             preview_scroll: 0,
             current_work: CurrentWorkState::NotSet,
@@ -166,7 +166,7 @@ impl App {
         {
             self.preview_scroll = 0;
         }
-        self.preview_diff = None;
+        self.preview_inspection = None;
         self.reconcile_detail_target();
     }
     pub fn apply_current_work(&mut self, current_work: CurrentWorkState) {
@@ -233,7 +233,7 @@ impl App {
                 }),
             ActivityState::NotRepository | ActivityState::Unavailable => None,
         };
-        self.detail_diff = None;
+        self.detail_inspection = None;
         self.detail_scroll = 0;
     }
 
@@ -315,12 +315,12 @@ impl App {
         self.selected_changed_file
     }
 
-    pub fn detail_diff(&self) -> Option<&GitFileDiff> {
-        self.detail_diff.as_ref()
+    pub fn detail_inspection(&self) -> Option<&GitFileInspection> {
+        self.detail_inspection.as_ref()
     }
 
-    pub fn preview_diff(&self) -> Option<&GitFileDiff> {
-        self.preview_diff.as_ref()
+    pub fn preview_inspection(&self) -> Option<&GitFileInspection> {
+        self.preview_inspection.as_ref()
     }
 
     pub const fn preview_visible(&self) -> bool {
@@ -342,9 +342,9 @@ impl App {
             .min(max_scroll);
     }
 
-    pub fn apply_preview_diff(&mut self, diff: GitFileDiff) {
+    pub fn apply_preview_inspection(&mut self, inspection: GitFileInspection) {
         if self.selected_changed_file_request().is_some() {
-            self.preview_diff = Some(diff);
+            self.preview_inspection = Some(inspection);
         }
     }
 
@@ -352,9 +352,9 @@ impl App {
         self.detail_scroll
     }
 
-    pub fn apply_detail_diff(&mut self, diff: GitFileDiff) {
+    pub fn apply_detail_inspection(&mut self, inspection: GitFileInspection) {
         if self.detail_target.is_some() {
-            self.detail_diff = Some(diff);
+            self.detail_inspection = Some(inspection);
             self.detail_scroll = 0;
         }
     }
@@ -413,7 +413,7 @@ impl App {
                 KeyCode::Char('q') => self.running = false,
                 KeyCode::Enter | KeyCode::Esc => {
                     self.detail_target = None;
-                    self.detail_diff = None;
+                    self.detail_inspection = None;
                     self.detail_scroll = 0;
                 }
                 _ => {}
@@ -494,7 +494,7 @@ impl App {
             status: file.status.clone(),
             changes: file.changes,
         });
-        self.detail_diff = None;
+        self.detail_inspection = None;
         self.detail_scroll = 0;
     }
 
@@ -555,7 +555,7 @@ mod tests {
         progress::{
             ActivitySummary, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
             BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, GitActivity,
-            GitChangedFile, GitFileDiffUnavailable, GitFileStatus, PlanSummary, TaskSummary,
+            GitChangedFile, GitFileInspectionUnavailable, GitFileStatus, PlanSummary, TaskSummary,
             TaskSummaryItem,
         },
         project::{ProjectSnapshot, collect_project_snapshot},
@@ -1236,7 +1236,9 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             ALL_PANELS,
         );
-        app.apply_detail_diff(GitFileDiff::Unavailable(GitFileDiffUnavailable::NoContent));
+        app.apply_detail_inspection(GitFileInspection::Unavailable(
+            GitFileInspectionUnavailable::Missing,
+        ));
         app.scroll_detail(20, 3);
         assert_eq!(app.detail_scroll(), 3);
         app.scroll_detail(-20, 3);
@@ -1262,10 +1264,12 @@ mod tests {
                     KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
                     ALL_PANELS,
                 );
-                app.apply_detail_diff(GitFileDiff::Unavailable(GitFileDiffUnavailable::NoContent));
+                app.apply_detail_inspection(GitFileInspection::Unavailable(
+                    GitFileInspectionUnavailable::Missing,
+                ));
                 app.scroll_detail(3, 5);
                 let target = app.detail_target().cloned();
-                let diff = app.detail_diff().cloned();
+                let diff = app.detail_inspection().cloned();
                 for modifier in [
                     KeyModifiers::CONTROL,
                     KeyModifiers::SHIFT,
@@ -1276,12 +1280,12 @@ mod tests {
                         ALL_PANELS,
                     );
                     assert_eq!(app.detail_target(), target.as_ref());
-                    assert_eq!(app.detail_diff(), diff.as_ref());
+                    assert_eq!(app.detail_inspection(), diff.as_ref());
                     assert_eq!(app.detail_scroll(), 3);
                 }
                 app.handle_key_with_focusable_panels(key(close), ALL_PANELS);
                 assert_eq!(app.detail_target(), None);
-                assert_eq!(app.detail_diff(), None);
+                assert_eq!(app.detail_inspection(), None);
                 assert_eq!(app.detail_scroll(), 0);
                 assert!(app.is_running());
                 assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);

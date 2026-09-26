@@ -82,6 +82,16 @@ Changed Files may also surface observed change magnitude for quick comparison ac
 Change counts are secondary to path and status and may be omitted in narrow layouts.
 Changed File Detail uses optional on-demand Activity drill-down for file content changes.
 The overview remains compact; diff content belongs in detail rather than the Changed Files list.
+Changed File inspection in Preview and Full Detail prefers Git diff. When Git reports no
+available diff, a regular project-local UTF-8 file may instead appear explicitly as
+`Mode: File content`; it is current content, never a diff or Evidence. Git collection
+errors do not trigger this fallback. Reads reject non-normal project-relative paths and
+symlink/reparse-point components before opening, check root confinement, and read at most
+64 KiB plus one detection byte. Oversized text displays a bounded UTF-8 prefix with an
+explicit truncation marker; missing, binary/invalid UTF-8, unsupported, and unreadable
+files have concise reasons. These filesystem checks are an observation boundary, not a
+sandbox against concurrent hostile path replacement. Existing selection, Git refresh,
+Preview scrolling, and Full Detail navigation also apply to current-content inspection.
 The primary overview keeps Project Progress full-width. Large and Medium layouts may expose a
 passive right-side Detail Pane beside the navigation panels. It follows the focused panel and
 selection, can be hidden without changing project state, and carries richer context while left

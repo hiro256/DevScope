@@ -120,7 +120,7 @@
 - [x] Refine NOW presentation from explicit Current Work Active state
 - [x] Refine Project Progress visual hierarchy and progress indicators
 - [ ] Refine keyboard navigation and Preview controls
-- [ ] Show file content when Changed File diff is unavailable
+- [x] Show file content when Changed File diff is unavailable
 - [ ] Explore read-only project File Browser with Preview
 - [ ] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
@@ -134,11 +134,12 @@ and Ctrl+Enter Full Detail. Plain Enter or Esc returns from Full Detail; Esc qui
 Overview, and q quits. Closure is pending Windows Terminal dogfood, especially distinguishing Ctrl+Enter
 from plain Enter; no alternative shortcut is selected without that observation.
 
-Changed File inspection should label current file content separately from a Git diff
-when a diff is unavailable, including for Added files. Keep it read-only, rooted in the
-project, text-oriented, and bounded in reading and rendering; do not follow symlinks or
-path traversal outside the root. Explain binary, oversized, unreadable, and read-error
-cases rather than displaying misleading content. Exact limits remain for implementation.
+Changed File inspection now prefers Git diff and explicitly labels safe current UTF-8
+file content when a diff is unavailable, including for Added files. Reads are read-only,
+project-root confined, reject symlink/reparse-point components, and are bounded to 64 KiB
+plus one detection byte. Truncation and unsupported/read-error reasons are explicit.
+Windows Terminal dogfood confirmed content labeling, Preview scrolling, and Full Detail
+navigation with an untracked UTF-8 text file.
 
 The File Browser is an experiment in a separate read-only inspection view, not a
 permanent Overview panel or a general file manager. Start at the project root and

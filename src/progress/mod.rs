@@ -33,8 +33,9 @@ pub use git::{
     ActivityExcludeCandidateAssessment, ActivityExcludeCandidateReason,
     ActivityExcludeCandidateStatus, ActivityExcludeProposal, ActivityExcludeProposalSource,
     GitActivity, GitActivityError, GitChangeCounts, GitChangedFile, GitCommit, GitDiffText,
-    GitFileDiff, GitFileDiffUnavailable, GitFileStatus, assess_activity_exclude_candidates,
-    collect_git_activity, collect_git_file_diff, is_git_repository, propose_activity_exclusions,
+    GitFileDiff, GitFileDiffUnavailable, GitFileInspection, GitFileInspectionUnavailable,
+    GitFileStatus, assess_activity_exclude_candidates, collect_git_activity, collect_git_file_diff,
+    collect_git_file_inspection, is_git_repository, propose_activity_exclusions,
 };
 pub use markdown::{
     MarkdownProgress, MarkdownProgressError, MarkdownTask, analyze_markdown_progress,

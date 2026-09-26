@@ -80,6 +80,155 @@ pub enum GitFileDiffUnavailable {
 
 const MAX_FILE_DIFF_BYTES: usize = 64 * 1024;
 
+/// Changed-file inspection only; current content is not a Git diff or Evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitFileInspection {
+    Diff {
+        unstaged: Option<GitDiffText>,
+        staged: Option<GitDiffText>,
+    },
+    FileContent {
+        text: String,
+        truncated: bool,
+    },
+    Unavailable(GitFileInspectionUnavailable),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitFileInspectionUnavailable {
+    Missing,
+    UnsafePath,
+    Symlink,
+    NotRegularFile,
+    Binary,
+    ReadError,
+    GitError,
+}
+
+const MAX_FILE_CONTENT_BYTES: usize = 64 * 1024;
+
+pub fn collect_git_file_inspection(
+    root: &Path,
+    path: &Path,
+    status: &GitFileStatus,
+) -> Result<GitFileInspection, GitActivityError> {
+    // Validate before invoking Git as well as before opening filesystem content.
+    if !safe_inspection_path(path) {
+        return Ok(GitFileInspection::Unavailable(
+            GitFileInspectionUnavailable::UnsafePath,
+        ));
+    }
+    match collect_git_file_diff(root, path, status)? {
+        GitFileDiff::Available { unstaged, staged } => {
+            Ok(GitFileInspection::Diff { unstaged, staged })
+        }
+        GitFileDiff::Unavailable(_) => Ok(match read_current_file_content(root, path) {
+            Ok((text, truncated)) => GitFileInspection::FileContent { text, truncated },
+            Err(reason) => GitFileInspection::Unavailable(reason),
+        }),
+    }
+}
+
+fn safe_inspection_path(path: &Path) -> bool {
+    let Some(text) = path.to_str() else {
+        return false;
+    };
+    !text.is_empty()
+        && !text.contains(['\0', ':'])
+        && !text
+            .split(['/', '\\'])
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        && path
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+}
+
+fn content_io_error(error: io::Error) -> GitFileInspectionUnavailable {
+    if error.kind() == io::ErrorKind::NotFound {
+        GitFileInspectionUnavailable::Missing
+    } else {
+        GitFileInspectionUnavailable::ReadError
+    }
+}
+
+fn read_current_file_content(
+    root: &Path,
+    path: &Path,
+) -> Result<(String, bool), GitFileInspectionUnavailable> {
+    use GitFileInspectionUnavailable as Reason;
+    let mut target = root.to_path_buf();
+    for component in path.components() {
+        target.push(component);
+        let metadata = std::fs::symlink_metadata(&target).map_err(content_io_error)?;
+        if is_inspection_link(&metadata) {
+            return Err(Reason::Symlink);
+        }
+        if !metadata.is_dir() && !metadata.is_file() {
+            return Err(Reason::NotRegularFile);
+        }
+    }
+    let metadata = std::fs::symlink_metadata(&target).map_err(content_io_error)?;
+    if !metadata.is_file() {
+        return Err(Reason::NotRegularFile);
+    }
+    // Component checks reject links before canonicalization or opening content.
+    let canonical_root = root.canonicalize().map_err(content_io_error)?;
+    if !target
+        .canonicalize()
+        .map_err(content_io_error)?
+        .starts_with(&canonical_root)
+    {
+        return Err(Reason::UnsafePath);
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Do not follow a final-component reparse point replaced before open.
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let file = options.open(&target).map_err(content_io_error)?;
+    let opened = file.metadata().map_err(content_io_error)?;
+    if is_inspection_link(&opened) {
+        return Err(Reason::Symlink);
+    }
+    if !opened.is_file() {
+        return Err(Reason::NotRegularFile);
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_FILE_CONTENT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(content_io_error)?;
+    let truncated = bytes.len() > MAX_FILE_CONTENT_BYTES;
+    if bytes.contains(&0) {
+        return Err(Reason::Binary);
+    }
+    if truncated {
+        bytes.truncate(MAX_FILE_CONTENT_BYTES);
+    }
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(text) => text,
+        Err(error) if truncated && error.error_len().is_none() => {
+            // A bounded read can split a valid UTF-8 character; omit that suffix.
+            std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(|_| Reason::Binary)?
+        }
+        Err(_) => return Err(Reason::Binary),
+    };
+    Ok((text.to_owned(), truncated))
+}
+
+fn is_inspection_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Includes junctions and other reparse points, not only symlinks.
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    metadata.file_type().is_symlink()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommit {
     pub id: String,
@@ -801,6 +950,200 @@ mod tests {
             GitFileDiff::Unavailable(GitFileDiffUnavailable::Renamed)
         );
     }
+    #[test]
+    fn inspection_reads_untracked_nested_renamed_and_no_diff_text() {
+        let repo = Repo::new(true);
+        fs::create_dir(repo.0.join("nested")).unwrap();
+        fs::write(repo.0.join("nested/new.txt"), "日本語\ncurrent text\n").unwrap();
+        for status in [
+            GitFileStatus::Added,
+            GitFileStatus::Renamed,
+            GitFileStatus::Modified,
+        ] {
+            assert_eq!(
+                collect_git_file_inspection(&repo.0, Path::new("nested/new.txt"), &status).unwrap(),
+                GitFileInspection::FileContent {
+                    text: "日本語\ncurrent text\n".into(),
+                    truncated: false,
+                }
+            );
+        }
+        fs::write(repo.0.join("empty.txt"), "").unwrap();
+        assert_eq!(
+            collect_git_file_inspection(&repo.0, Path::new("empty.txt"), &GitFileStatus::Added)
+                .unwrap(),
+            GitFileInspection::FileContent {
+                text: String::new(),
+                truncated: false
+            }
+        );
+    }
+
+    #[test]
+    fn inspection_prefers_staged_modified_and_deleted_diffs() {
+        let repo = Repo::new(true);
+        repo.commit("old\n");
+        fs::write(repo.0.join("new.txt"), "new text\n").unwrap();
+        cmd(&repo.0, &["add", "new.txt"]);
+        fs::write(repo.0.join("a.txt"), "modified text\n").unwrap();
+        for (path, status) in [
+            ("new.txt", GitFileStatus::Added),
+            ("a.txt", GitFileStatus::Modified),
+        ] {
+            assert!(matches!(
+                collect_git_file_inspection(&repo.0, Path::new(path), &status).unwrap(),
+                GitFileInspection::Diff { .. }
+            ));
+        }
+        fs::remove_file(repo.0.join("a.txt")).unwrap();
+        assert!(matches!(
+            collect_git_file_inspection(&repo.0, Path::new("a.txt"), &GitFileStatus::Deleted)
+                .unwrap(),
+            GitFileInspection::Diff { .. }
+        ));
+    }
+
+    #[test]
+    fn inspection_explains_missing_directory_and_non_text_content() {
+        let repo = Repo::new(true);
+        fs::create_dir(repo.0.join("directory")).unwrap();
+        fs::write(repo.0.join("binary"), b"text\0binary").unwrap();
+        fs::write(repo.0.join("invalid"), [0xff, 0xfe]).unwrap();
+        for (path, reason) in [
+            ("missing", GitFileInspectionUnavailable::Missing),
+            ("directory", GitFileInspectionUnavailable::NotRegularFile),
+            ("binary", GitFileInspectionUnavailable::Binary),
+            ("invalid", GitFileInspectionUnavailable::Binary),
+        ] {
+            assert_eq!(
+                collect_git_file_inspection(&repo.0, Path::new(path), &GitFileStatus::Added)
+                    .unwrap(),
+                GitFileInspection::Unavailable(reason)
+            );
+        }
+    }
+
+    #[test]
+    fn inspection_rejects_non_normal_paths_before_collection() {
+        let repo = Repo::new(true);
+        let absolute = repo.0.join("outside");
+        for path in [
+            "",
+            "../outside",
+            "nested/../outside",
+            "./file",
+            "nested/./file",
+            "nested//file",
+            "C:\\outside",
+            "file:stream",
+            "\\outside",
+            "../outside\0",
+        ] {
+            assert_eq!(
+                collect_git_file_inspection(&repo.0, Path::new(path), &GitFileStatus::Added)
+                    .unwrap(),
+                GitFileInspection::Unavailable(GitFileInspectionUnavailable::UnsafePath)
+            );
+        }
+        assert_eq!(
+            collect_git_file_inspection(&repo.0, &absolute, &GitFileStatus::Added).unwrap(),
+            GitFileInspection::Unavailable(GitFileInspectionUnavailable::UnsafePath)
+        );
+    }
+
+    #[test]
+    fn inspection_bounds_content_and_preserves_utf8_at_truncation() {
+        let repo = Repo::new(true);
+        for (size, suffix, expected, truncated) in [
+            (MAX_FILE_CONTENT_BYTES, "", MAX_FILE_CONTENT_BYTES, false),
+            (MAX_FILE_CONTENT_BYTES, "more", MAX_FILE_CONTENT_BYTES, true),
+            (
+                MAX_FILE_CONTENT_BYTES - 1,
+                "日本語",
+                MAX_FILE_CONTENT_BYTES - 1,
+                true,
+            ),
+        ] {
+            fs::write(
+                repo.0.join("large.txt"),
+                format!("{}{suffix}", "a".repeat(size)),
+            )
+            .unwrap();
+            let GitFileInspection::FileContent {
+                text,
+                truncated: actual,
+            } = collect_git_file_inspection(&repo.0, Path::new("large.txt"), &GitFileStatus::Added)
+                .unwrap()
+            else {
+                panic!("expected bounded UTF-8 text")
+            };
+            assert_eq!(text.len(), expected);
+            assert_eq!(actual, truncated);
+        }
+    }
+
+    #[test]
+    fn inspection_does_not_hide_git_collection_error_with_content() {
+        let repo = Repo::new(false);
+        fs::write(repo.0.join("new.txt"), "readable").unwrap();
+        assert!(
+            collect_git_file_inspection(&repo.0, Path::new("new.txt"), &GitFileStatus::Added)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn inspection_rejects_target_and_parent_symlinks() {
+        let repo = Repo::new(true);
+        let outside = Repo::new(false);
+        fs::write(outside.0.join("secret.txt"), "outside content").unwrap();
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(
+                outside.0.join("secret.txt"),
+                repo.0.join("link.txt"),
+            )
+            .unwrap();
+            std::os::windows::fs::symlink_dir(&outside.0, repo.0.join("linked-dir")).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.0.join("secret.txt"), repo.0.join("link.txt"))
+                .unwrap();
+            std::os::unix::fs::symlink(&outside.0, repo.0.join("linked-dir")).unwrap();
+        }
+        for path in ["link.txt", "linked-dir/secret.txt"] {
+            assert_eq!(
+                collect_git_file_inspection(&repo.0, Path::new(path), &GitFileStatus::Added)
+                    .unwrap(),
+                GitFileInspection::Unavailable(GitFileInspectionUnavailable::Symlink)
+            );
+        }
+        fs::remove_file(outside.0.join("secret.txt")).unwrap();
+        assert_eq!(
+            collect_git_file_inspection(&repo.0, Path::new("link.txt"), &GitFileStatus::Added)
+                .unwrap(),
+            GitFileInspection::Unavailable(GitFileInspectionUnavailable::Symlink)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inspection_reports_read_error_for_exclusively_locked_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let repo = Repo::new(true);
+        fs::write(repo.0.join("locked.txt"), "readable UTF-8").unwrap();
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(repo.0.join("locked.txt"))
+            .unwrap();
+        assert_eq!(
+            read_current_file_content(&repo.0, Path::new("locked.txt")),
+            Err(GitFileInspectionUnavailable::ReadError)
+        );
+    }
+
     #[test]
     fn detection_and_zero_commits() {
         let n = Repo::new(false);

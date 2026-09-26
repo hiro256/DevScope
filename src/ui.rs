@@ -6,7 +6,7 @@ use crate::app::{
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, GitChangeCounts,
-    GitDiffText, GitFileDiff, GitFileDiffUnavailable, GitFileStatus,
+    GitDiffText, GitFileInspection, GitFileInspectionUnavailable, GitFileStatus,
 };
 use ratatui::{
     Frame,
@@ -338,7 +338,7 @@ fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
                 .map(|path| format!("Detail: {path}"))
                 .unwrap_or_else(|| "Detail: Changed Files".into());
             let lines = if app.selected_changed_file().is_some() {
-                detail_diff_lines(app.preview_diff())
+                detail_inspection_lines(app.preview_inspection())
             } else {
                 vec![Line::from("No file selected")]
             };
@@ -520,8 +520,15 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         areas[0],
     );
     frame.render_widget(
-        Paragraph::new(detail_diff_lines(app.detail_diff()))
-            .block(panel_block("Diff", false))
+        Paragraph::new(detail_inspection_lines(app.detail_inspection()))
+            .block(panel_block(
+                match app.detail_inspection() {
+                    Some(GitFileInspection::Diff { .. }) => "Diff",
+                    Some(GitFileInspection::FileContent { .. }) => "File content",
+                    _ => "Inspection",
+                },
+                false,
+            ))
             .scroll((app.detail_scroll().min(u16::MAX as usize) as u16, 0)),
         areas[1],
     );
@@ -533,22 +540,40 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
 
 pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
     let body_height = usize::from(area.height.saturating_sub(11).saturating_sub(2));
-    detail_diff_lines(app.detail_diff())
+    detail_inspection_lines(app.detail_inspection())
         .len()
         .saturating_sub(body_height)
 }
 
-fn detail_diff_lines(diff: Option<&GitFileDiff>) -> Vec<Line<'static>> {
+fn detail_inspection_lines(diff: Option<&GitFileInspection>) -> Vec<Line<'static>> {
     match diff {
-        None => vec![Line::from("Loading diff...")],
-        Some(GitFileDiff::Unavailable(reason)) => vec![Line::from(match reason {
-            GitFileDiffUnavailable::Untracked => "Unavailable for untracked file",
-            GitFileDiffUnavailable::Renamed => "Unavailable for renamed file",
-            GitFileDiffUnavailable::NoContent => "No diff available",
-            GitFileDiffUnavailable::Error => "Diff unavailable",
-        })],
-        Some(GitFileDiff::Available { unstaged, staged }) => {
-            let mut lines = Vec::new();
+        None => vec![Line::from("Loading inspection...")],
+        Some(GitFileInspection::Unavailable(reason)) => vec![
+            Line::from("Inspection unavailable"),
+            Line::from(match reason {
+                GitFileInspectionUnavailable::Missing => "File is missing",
+                GitFileInspectionUnavailable::UnsafePath => "Unsafe project-relative path",
+                GitFileInspectionUnavailable::Symlink => "Symlink / reparse point is not followed",
+                GitFileInspectionUnavailable::NotRegularFile => "Not a regular file",
+                GitFileInspectionUnavailable::Binary => "Binary or unsupported UTF-8 text",
+                GitFileInspectionUnavailable::ReadError => "File could not be read",
+                GitFileInspectionUnavailable::GitError => "Git diff collection failed",
+            }),
+        ],
+        Some(GitFileInspection::FileContent { text, truncated }) => {
+            let mut lines = vec![
+                Line::from("Mode"),
+                Line::from("  File content"),
+                Line::from(""),
+            ];
+            lines.extend(text.lines().map(|line| Line::from(line.to_owned())));
+            if *truncated {
+                lines.push(Line::from("... file content truncated ..."));
+            }
+            lines
+        }
+        Some(GitFileInspection::Diff { unstaged, staged }) => {
+            let mut lines = vec![Line::from("Mode"), Line::from("  Git diff")];
             append_diff_section(&mut lines, "Unstaged", unstaged.as_ref());
             append_diff_section(&mut lines, "Staged", staged.as_ref());
             lines
@@ -1112,7 +1137,7 @@ mod tests {
                 BuildTestFreshness::Fresh,
             ),
         );
-        app.apply_preview_diff(GitFileDiff::Available {
+        app.apply_preview_inspection(GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
                 text: (0..25).map(|i| format!("+diff {i}\n")).collect(),
                 truncated: false,
@@ -2093,7 +2118,7 @@ mod tests {
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             panels,
         );
-        app.apply_preview_diff(GitFileDiff::Available {
+        app.apply_preview_inspection(GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
                 text: "+preview-a".into(),
                 truncated: false,
@@ -2150,7 +2175,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
             panels,
         );
-        app.apply_preview_diff(GitFileDiff::Available {
+        app.apply_preview_inspection(GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
                 text: "+preview-b".into(),
                 truncated: false,
@@ -2209,6 +2234,91 @@ mod tests {
     }
 
     #[test]
+    fn file_content_inspection_renders_mode_and_scrolls_in_preview_and_detail() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "new.txt".into(),
+                status: GitFileStatus::Added,
+                changes: GitChangeCounts::unavailable(),
+            }]),
+        );
+        let panels = focusable_panels(80, 30);
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            panels,
+        );
+        let inspection = GitFileInspection::FileContent {
+            text: (0..40).map(|i| format!("current line {i:02}\n")).collect(),
+            truncated: true,
+        };
+        app.apply_preview_inspection(inspection.clone());
+        let first = draw(&app, 80, 30);
+        assert!(first.contains("Detail: new.txt"));
+        assert!(first.contains("File content"));
+        assert!(first.contains("current line 00"));
+        assert!(!first.contains("Git diff"));
+        let limit = preview_scroll_limit(&app, Rect::new(0, 0, 80, 30));
+        assert!(limit > 0);
+        app.scroll_preview(isize::MAX, limit);
+        let scrolled = draw(&app, 80, 30);
+        assert!(!scrolled.contains("current line 00"));
+        assert!(scrolled.contains("current line 39"));
+        assert!(scrolled.contains("file content truncated"));
+        for (width, height) in [(160, 40), (80, 25), (60, 20), (1, 1)] {
+            let _ = draw(&app, width, height);
+        }
+        app.handle_key_with_focusable_panels(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            panels,
+        );
+        app.apply_detail_inspection(inspection);
+        let detail = draw(&app, 80, 30);
+        assert!(detail.contains("Changed File Detail"));
+        assert!(detail.contains("Added"));
+        assert!(detail.contains("File content"));
+        assert!(detail.contains("current line 00"));
+        let limit = detail_scroll_limit(&app, Rect::new(0, 0, 80, 30));
+        app.scroll_detail(limit as isize, limit);
+        assert!(draw(&app, 80, 30).contains("... file content truncated ..."));
+    }
+
+    #[test]
+    fn inspection_unavailable_reasons_are_explicit() {
+        for (reason, expected) in [
+            (GitFileInspectionUnavailable::Missing, "File is missing"),
+            (
+                GitFileInspectionUnavailable::UnsafePath,
+                "Unsafe project-relative path",
+            ),
+            (
+                GitFileInspectionUnavailable::Symlink,
+                "Symlink / reparse point is not followed",
+            ),
+            (
+                GitFileInspectionUnavailable::NotRegularFile,
+                "Not a regular file",
+            ),
+            (
+                GitFileInspectionUnavailable::Binary,
+                "Binary or unsupported UTF-8 text",
+            ),
+            (
+                GitFileInspectionUnavailable::ReadError,
+                "File could not be read",
+            ),
+            (
+                GitFileInspectionUnavailable::GitError,
+                "Git diff collection failed",
+            ),
+        ] {
+            let lines = detail_inspection_lines(Some(&GitFileInspection::Unavailable(reason)));
+            assert_eq!(lines[0].to_string(), "Inspection unavailable");
+            assert_eq!(lines[1].to_string(), expected);
+        }
+    }
+
+    #[test]
     fn renders_changed_file_detail_with_path_status_and_small_terminal_safety() {
         let mut app = app(
             TaskState::Unavailable,
@@ -2235,7 +2345,7 @@ mod tests {
             panels,
         );
 
-        app.apply_detail_diff(GitFileDiff::Available {
+        app.apply_detail_inspection(GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
                 text: "@@ -1 +1 @@\n-old\n+new\n".into(),
                 truncated: false,
@@ -2250,6 +2360,7 @@ mod tests {
         assert!(output.contains("src/ui.rs"));
         assert!(output.contains("Modified"));
         assert!(output.contains("+12 -4"));
+        assert!(output.contains("Git diff"));
         assert!(output.contains("Unstaged"));
         assert!(output.contains("-old"));
         assert!(output.contains("+new"));

@@ -20,7 +20,7 @@ use devscope::{
     progress::{
         ArtifactObservation, BuildTestExecution, BuildTestExecutionCompletion, BuildTestFreshness,
         BuildTestFreshnessBaseline, BuildTestInputChange, BuildTestKind, BuildTestState,
-        GitFileDiff, GitFileDiffUnavailable, collect_git_file_diff,
+        GitFileInspection, GitFileInspectionUnavailable, collect_git_file_inspection,
         evaluate_completed_build_test_freshness_with_exclusions, observe_artifact,
         resolve_build_test_command, save_build_test_state,
     },
@@ -440,9 +440,10 @@ fn refresh_open_detail(root: Option<&Path>, app: &mut App) -> bool {
     let (Some(root), Some((path, status))) = (root, app.detail_request()) else {
         return false;
     };
-    let diff = collect_git_file_diff(root, &path, &status)
-        .unwrap_or(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error));
-    app.apply_detail_diff(diff);
+    let inspection = collect_git_file_inspection(root, &path, &status).unwrap_or(
+        GitFileInspection::Unavailable(GitFileInspectionUnavailable::GitError),
+    );
+    app.apply_detail_inspection(inspection);
     true
 }
 fn changed_file_preview_active(width: u16, height: u16, app: &App) -> bool {
@@ -454,9 +455,10 @@ fn refresh_changed_file_preview(root: Option<&Path>, app: &mut App) -> bool {
     let (Some(root), Some((path, status))) = (root, app.selected_changed_file_request()) else {
         return false;
     };
-    let diff = collect_git_file_diff(root, &path, &status)
-        .unwrap_or(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error));
-    app.apply_preview_diff(diff);
+    let inspection = collect_git_file_inspection(root, &path, &status).unwrap_or(
+        GitFileInspection::Unavailable(GitFileInspectionUnavailable::GitError),
+    );
+    app.apply_preview_inspection(inspection);
     true
 }
 
@@ -2731,7 +2733,7 @@ mod tests {
             assert_eq!(app.detail_scroll(), 3);
             handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
             assert!(!app.has_detail_view());
-            assert!(app.detail_diff().is_none());
+            assert!(app.detail_inspection().is_none());
             assert_eq!(app.detail_scroll(), 0);
             assert_eq!(app.focused_panel(), crate::app::FocusedPanel::ChangedFiles);
             assert_eq!(app.selected_changed_file(), Some(0));
@@ -2755,7 +2757,7 @@ mod tests {
         let area = ratatui::layout::Rect::new(0, 0, 80, 25);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
         assert_eq!(app.focused_panel(), crate::app::FocusedPanel::ChangedFiles);
-        assert!(format!("{:?}", app.preview_diff()).contains("first 0"));
+        assert!(format!("{:?}", app.preview_inspection()).contains("first 0"));
         let selected = app.selected_changed_file();
         fs::write(root.join("tracked.txt"), "updated on disk\n").unwrap();
         handle_navigation_key(
@@ -2766,7 +2768,7 @@ mod tests {
         );
         assert_eq!(app.preview_scroll(), 1);
         assert_eq!(app.selected_changed_file(), selected);
-        assert!(format!("{:?}", app.preview_diff()).contains("first 0"));
+        assert!(format!("{:?}", app.preview_inspection()).contains("first 0"));
         handle_navigation_key(
             Some(&root),
             &mut app,
@@ -2786,11 +2788,11 @@ mod tests {
         assert_eq!(app.preview_scroll(), 0);
         assert_eq!(app.selected_changed_file(), selected);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
-        assert!(format!("{:?}", app.preview_diff()).contains("updated on disk"));
+        assert!(format!("{:?}", app.preview_inspection()).contains("updated on disk"));
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Right), area);
         assert_eq!(app.focused_panel(), crate::app::FocusedPanel::Tasks);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
-        assert!(app.preview_diff().is_some());
+        assert!(app.preview_inspection().is_some());
         handle_navigation_key(
             Some(&root),
             &mut app,
@@ -2798,8 +2800,8 @@ mod tests {
             area,
         );
         assert!(app.has_detail_view());
-        assert!(format!("{:?}", app.detail_diff()).contains("updated on disk"));
-        app.apply_detail_diff(devscope::progress::GitFileDiff::Available {
+        assert!(format!("{:?}", app.detail_inspection()).contains("updated on disk"));
+        app.apply_detail_inspection(devscope::progress::GitFileInspection::Diff {
             unstaged: Some(devscope::progress::GitDiffText {
                 text: (0..40).map(|i| format!("line {i}\n")).collect(),
                 truncated: false,
@@ -2909,7 +2911,7 @@ mod tests {
             &root, &mut app, &outcome, true
         ));
         assert_eq!(app.detail_scroll(), 0);
-        assert!(format!("{:?}", app.detail_diff()).contains("second"));
+        assert!(format!("{:?}", app.detail_inspection()).contains("second"));
 
         fs::write(root.join("tracked.txt"), "tracked").unwrap();
         requests.git = true;
@@ -2922,6 +2924,73 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
     #[test]
+    fn untracked_inspection_refreshes_preview_and_detail_without_reads_on_scroll() {
+        let root = git_root();
+        let text: String = (0..40).map(|i| format!("untracked line {i}\n")).collect();
+        fs::write(root.join("a-new.txt"), &text).unwrap();
+        fs::write(root.join("b-new.txt"), "second untracked file\n").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+        let initial = GitFileInspection::FileContent {
+            text,
+            truncated: false,
+        };
+        assert_eq!(app.preview_inspection(), Some(&initial));
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.detail_inspection(), Some(&initial));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+        fs::write(root.join("a-new.txt"), "updated current content\n").unwrap();
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+            area,
+        );
+        assert_eq!(app.preview_scroll(), 1);
+        assert_eq!(app.selected_changed_file(), Some(0));
+        assert_eq!(app.preview_inspection(), Some(&initial));
+        handle_navigation_key(
+            Some(&root),
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            area,
+        );
+        let mut requests = RefreshRequest {
+            markdown: false,
+            git: true,
+        };
+        let mut worktree = new_git_worktree_detector(Some(&root), &app);
+        let outcome = apply_pending_refreshes(&root, &mut app, &mut worktree, &mut requests);
+        assert!(outcome.git);
+        assert!(refresh_detail_after_git_refresh(
+            &root, &mut app, &outcome, true
+        ));
+        let updated = GitFileInspection::FileContent {
+            text: "updated current content\n".into(),
+            truncated: false,
+        };
+        assert_eq!(app.preview_inspection(), Some(&updated));
+        assert_eq!(app.detail_inspection(), Some(&updated));
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Down), area);
+        assert_eq!(app.preview_scroll(), 0);
+        assert_eq!(
+            app.preview_inspection(),
+            Some(&GitFileInspection::FileContent {
+                text: "second untracked file\n".into(),
+                truncated: false,
+            })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn passive_preview_follows_selection_and_refreshes_after_git_changes() {
         let root = git_root();
         fs::write(root.join("second.txt"), "original").unwrap();
@@ -2933,7 +3002,7 @@ mod tests {
 
         assert!(refresh_changed_file_preview(Some(&root), &mut app));
         let first_path = app.selected_changed_file_request().unwrap().0;
-        let first_diff = format!("{:?}", app.preview_diff());
+        let first_diff = format!("{:?}", app.preview_inspection());
         app.handle_key_with_focusable_panels(
             key(KeyCode::Tab),
             &[
@@ -2961,7 +3030,7 @@ mod tests {
         assert!(refresh_changed_file_preview(Some(&root), &mut app));
         let selected_path = app.selected_changed_file_request().unwrap().0;
         assert_ne!(selected_path, first_path);
-        assert_ne!(format!("{:?}", app.preview_diff()), first_diff);
+        assert_ne!(format!("{:?}", app.preview_inspection()), first_diff);
 
         fs::write(root.join(selected_path), "preview refreshed").unwrap();
         let mut requests = RefreshRequest {
@@ -2974,7 +3043,7 @@ mod tests {
         assert!(refresh_detail_after_git_refresh(
             &root, &mut app, &outcome, true
         ));
-        assert!(format!("{:?}", app.preview_diff()).contains("refreshed"));
+        assert!(format!("{:?}", app.preview_inspection()).contains("refreshed"));
 
         fs::write(root.join("tracked.txt"), "tracked").unwrap();
         fs::write(root.join("second.txt"), "original").unwrap();
@@ -2984,7 +3053,7 @@ mod tests {
         assert!(!refresh_detail_after_git_refresh(
             &root, &mut app, &outcome, true
         ));
-        assert!(app.preview_diff().is_none());
+        assert!(app.preview_inspection().is_none());
         let _ = fs::remove_dir_all(root);
     }
     #[test]
@@ -3012,7 +3081,7 @@ mod tests {
         assert!(!refresh_detail_after_git_refresh(
             &root, &mut app, &outcome, false
         ));
-        assert!(app.preview_diff().is_none());
+        assert!(app.preview_inspection().is_none());
         let _ = fs::remove_dir_all(root);
     }
     #[test]
@@ -3035,8 +3104,10 @@ mod tests {
         fs::remove_dir_all(root.join(".git")).unwrap();
         assert!(refresh_open_detail(Some(&root), &mut app));
         assert!(matches!(
-            app.detail_diff(),
-            Some(GitFileDiff::Unavailable(GitFileDiffUnavailable::Error))
+            app.detail_inspection(),
+            Some(GitFileInspection::Unavailable(
+                GitFileInspectionUnavailable::GitError
+            ))
         ));
         let _ = fs::remove_dir_all(root);
     }
