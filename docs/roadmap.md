@@ -123,6 +123,7 @@
 - [ ] Show file content when Changed File diff is unavailable
 - [ ] Explore read-only project File Browser with Preview
 - [ ] Refine Preview content and density across focused panels
+- [ ] Refine TUI visual alignment for side-by-side Codex use
 - [ ] Dogfood five-second project-state understanding
 
 The planned keyboard slice keeps Preview passive: Left/Right move among focusable panels,
@@ -148,9 +149,29 @@ the last is the initial candidate. Do not reuse plan, activity, or verify exclus
 File Browser visibility policy. Added-file inspection may inform later safe text-file
 observation reuse, without defining a shared API now.
 
-Refine common Preview density after these inspection slices. The final five-second
-dogfood tests whether Overview alone reveals project state quickly; Preview confirms a
-selection, while File Browser provides optional surrounding-file inspection.
+Refine common Preview density after these inspection slices, then evaluate visual
+alignment for side-by-side Codex CLI use. The initial candidate keeps Project Progress
+as a clear status card while reducing always-on borders around Tasks, Evidence, Changed
+Files, and Recent Commits. Consider flatter navigation sections, restrained title or
+local marker emphasis for focus, a distinct Preview / Detail inspection area without
+excessive nested cards, and a lighter footer with optional future help-surface grouping.
+Use color mainly for source/status cues, never as the only carrier of meaning. Rounded
+Unicode corners on selected major frames are a candidate, not a contract; frame choice,
+focus treatment, and Windows Terminal/font compatibility remain for implementation dogfood.
+
+This is presentation refinement, not a Codex UI replica or an information-structure
+redesign. Preserve NOW, Project Progress, focus versus selection, passive Preview,
+Full Detail, source/status marker semantics, and the Overview-to-Preview-to-deeper-
+inspection hierarchy. Preserve Large/Medium/Small behavior, hidden-panel focus
+reconciliation, and Preview minimum width/height behavior without substantially widening
+the minimum terminal size; validate narrow Windows Terminal and side-by-side use.
+Themes, arbitrary color customization, syntax highlighting, animation, mouse interaction,
+graphical widgets, and terminal-specific hacks are outside this task.
+
+The final five-second dogfood follows visual refinement and tests whether Overview alone
+reveals project state quickly: NOW, project health, and changed areas should be easy to
+scan, selected detail easy to locate, and eye movement natural beside Codex. Preview
+confirms a selection, while File Browser provides optional surrounding-file inspection.
 
 ### AI workflow refinement
 
