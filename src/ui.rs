@@ -220,9 +220,41 @@ fn browser_file_content_lines(
     lines
 }
 
-fn browser_areas(area: Rect) -> [Rect; 3] {
+fn browser_panes(area: Rect) -> [Rect; 2] {
+    let panes =
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
+    [panes[0], panes[1]]
+}
+
+fn browser_header_lines(app: &App) -> Vec<Line<'static>> {
+    let browser = &app.file_browser;
+    let mut lines = vec![Line::from(format!(
+        "File Browser  {}",
+        browser_path(&browser.current_dir)
+    ))];
+    let status = [
+        browser.notice.map(str::to_owned),
+        browser
+            .error
+            .map(|error| format!("Unavailable: {}", file_error_text(error))),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|text| !text.is_empty())
+    .collect::<Vec<_>>()
+    .join(" | ");
+    if !status.is_empty() {
+        lines.push(Line::from(status));
+    }
+    if browser.listing_incomplete {
+        lines.push(Line::from("Listing incomplete (bounded subset)"));
+    }
+    lines
+}
+
+fn browser_areas(app: &App, area: Rect) -> [Rect; 3] {
     let areas = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(browser_header_lines(app).len() as u16),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
@@ -234,8 +266,7 @@ pub fn browser_preview_scroll_limit(app: &App, area: Rect) -> usize {
     if !preview_layout_available(area.width, area.height) {
         return 0;
     }
-    let mut pane = browser_areas(area)[1];
-    pane.width = preview_pane_widths(area.width).1;
+    let pane = browser_panes(browser_areas(app, area)[1])[1];
     let viewport = preview_inner_areas(pane)[0];
     wrap_preview_lines(browser_preview_lines(app), viewport.width)
         .len()
@@ -263,35 +294,10 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
     let browser = &app.file_browser;
-    let outer = browser_areas(area);
-    let status = [
-        browser.notice.map(str::to_owned),
-        browser
-            .error
-            .map(|error| format!("Unavailable: {}", file_error_text(error))),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" | ");
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!(
-                "File Browser  {}",
-                browser_path(&browser.current_dir)
-            )),
-            Line::from(status),
-            Line::from(if browser.listing_incomplete {
-                "Listing incomplete (bounded subset)"
-            } else {
-                ""
-            }),
-        ]),
-        outer[0],
-    );
+    let outer = browser_areas(app, area);
+    frame.render_widget(Paragraph::new(browser_header_lines(app)), outer[0]);
     let split = preview_layout_available(area.width, area.height);
-    let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(outer[1]);
+    let panes = browser_panes(outer[1]);
     let list_area = if split { panes[0] } else { outer[1] };
     // Unlike stacked Overview sections, this list needs no bottom separator.
     let list_block = navigation_block("Files", true).padding(Padding::new(1, 1, 0, 0));
@@ -939,14 +945,20 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         )),
         areas[1],
     );
-    frame.render_widget(
-        Paragraph::new(if app.is_file_browser_open() {
-            "↑/↓:Scroll Enter/Esc:Back q:Quit"
-        } else {
-            "j/k: Scroll  Enter/Esc: Back  q: Quit"
-        }),
-        areas[2],
-    );
+    frame.render_widget(Paragraph::new(full_view_footer_text(area.width)), areas[2]);
+}
+
+fn full_view_footer_text(width: u16) -> &'static str {
+    [
+        "↑/↓/j/k:Scroll  Enter/Esc:Back  q:Quit",
+        "↑/↓/j/k:Scroll Enter/Esc:Back q:Quit",
+        "↑/↓:Scroll Enter/Esc:Back q:Quit",
+        "Enter/Esc:Back q:Quit",
+        "q:Quit",
+    ]
+    .into_iter()
+    .find(|text| Line::from(*text).width() <= usize::from(width))
+    .unwrap_or("")
 }
 
 pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
@@ -1610,8 +1622,7 @@ mod tests {
         app.file_browser.preview = Some(Ok((content.clone(), false)));
         for width in [80, 96, 120] {
             let area = Rect::new(0, 0, width, 25);
-            let mut pane = browser_areas(area)[1];
-            pane.width = preview_pane_widths(width).1;
+            let pane = browser_panes(browser_areas(&app, area)[1])[1];
             let viewport = preview_inner_areas(pane)[0];
             let logical = browser_preview_lines(&app);
             let wrapped = wrap_preview_lines(logical.clone(), viewport.width);
@@ -1746,6 +1757,77 @@ mod tests {
     }
 
     #[test]
+    fn browser_dynamic_header_and_geometry_match_rendered_viewport() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind, SafeTextError};
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.file_browser.entries = vec![BrowserEntry {
+            path: "long.txt".into(),
+            name: "long.txt".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        app.file_browser.preview = Some(Ok(("long content ".repeat(800), false)));
+        for (notice, error, incomplete, height) in [
+            (None, None, false, 1),
+            (Some("Notice"), None, false, 2),
+            (None, Some(SafeTextError::ReadError), false, 2),
+            (None, None, true, 2),
+            (Some("Notice"), Some(SafeTextError::ReadError), true, 3),
+        ] {
+            app.file_browser.notice = notice;
+            app.file_browser.error = error;
+            app.file_browser.listing_incomplete = incomplete;
+            for (width, rows) in [(120, 40), (80, 25), (40, 18)] {
+                let area = Rect::new(0, 0, width, rows);
+                let outer = browser_areas(&app, area);
+                assert_eq!(outer[0].height, height);
+                assert_eq!(outer[1].height, rows - height - 1);
+                let mut terminal = Terminal::new(TestBackend::new(width, rows)).unwrap();
+                terminal.draw(|frame| render(frame, &app)).unwrap();
+                let output = text(&terminal);
+                let title = (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, height)].symbol())
+                    .collect::<String>();
+                assert!(title.contains("▌ Files"));
+                assert_eq!(output.contains("Listing incomplete"), incomplete);
+                assert_eq!(output.contains("Read error"), error.is_some());
+                let panes = browser_panes(outer[1]);
+                assert_eq!(panes[0].width, width * 40 / 100);
+                assert_eq!(panes[1].width, width * 60 / 100);
+                let viewport = preview_inner_areas(panes[1])[0];
+                let expected = if preview_layout_available(width, rows) {
+                    wrap_preview_lines(browser_preview_lines(&app), viewport.width)
+                        .len()
+                        .saturating_sub(viewport.height as usize)
+                } else {
+                    0
+                };
+                assert_eq!(browser_preview_scroll_limit(&app, area), expected);
+                if preview_layout_available(width, rows) {
+                    assert!(expected > 0);
+                }
+            }
+        }
+        assert_eq!(preview_pane_widths(100), (45, 55));
+    }
+
+    #[test]
+    fn full_view_footer_fits_and_uses_compact_notation() {
+        for width in 1..160 {
+            let footer = full_view_footer_text(width);
+            assert!(Line::from(footer).width() <= width as usize);
+            assert!(!footer.contains(": "));
+            if width >= 6 {
+                assert!(footer.contains("q:Quit"));
+            }
+            if width >= 40 {
+                assert!(footer.contains("↑/↓/j/k:Scroll"));
+            }
+        }
+    }
+
+    #[test]
     fn browser_flat_files_uses_all_rows_and_keeps_preview_frame() {
         use devscope::progress::{BrowserEntry, BrowserEntryKind};
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
@@ -1759,7 +1841,7 @@ mod tests {
             .collect();
         for (width, height) in [(120, 40), (80, 30), (80, 25), (77, 30), (40, 18)] {
             let area = Rect::new(0, 0, width, height);
-            let outer = browser_areas(area);
+            let outer = browser_areas(&app, area);
             let rows = usize::from(outer[1].height - 1); // Title only, no bottom frame.
             for selected in [0, 49] {
                 app.file_browser.selected = Some(selected);
@@ -1828,12 +1910,12 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
             terminal.draw(|frame| render(frame, &app)).unwrap();
             let list_width = if preview_layout_available(width, 30) {
-                preview_pane_widths(width).0
+                browser_panes(Rect::new(0, 0, width, 1))[0].width
             } else {
                 width
             };
             let row = (0..list_width)
-                .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+                .map(|x| terminal.backend().buffer()[(x, 2)].symbol())
                 .collect::<String>();
             assert!(row.contains("> "));
             assert!(row.contains('…'));
@@ -3412,7 +3494,7 @@ mod tests {
         assert!(output.contains("+new"));
         assert!(output.contains("Staged"));
         assert!(output.contains("... diff truncated ..."));
-        assert!(output.contains("j/k: Scroll  Enter/Esc: Back  q: Quit"));
+        assert!(output.contains(full_view_footer_text(80)));
         assert_eq!(change_summary(Default::default()), "unavailable");
         for (width, height) in [(40, 18), (20, 5), (1, 1)] {
             let _ = draw(&app, width, height);

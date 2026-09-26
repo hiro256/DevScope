@@ -191,7 +191,8 @@ are not reused. Paths remain root-confined; symlink/reparse entries are shown bu
 
 The passive Browser Preview shares the bounded 64 KiB UTF-8 reader with Changed File
 inspection, explicitly labels File content, escapes terminal controls, and explains
-unsupported content and truncation. Large/Medium use the existing usable-width split;
+unsupported content and truncation. Large/Medium use a 40/60 Files/Preview split with
+the existing visibility thresholds (Overview retains its 45/55 split);
 narrow/Small layouts show only the list. Ctrl+Up/Down scroll visible Preview independently
 of Overview, resetting on target changes and retaining/clamping for the same target.
 Rendering and scrolling do not read files; background project polling does not refresh
@@ -205,14 +206,19 @@ text observation without rereading the file or collecting Git diff. Up/Down and 
 plain Enter or Esc returns to Browser with directory, selection, listing, and Preview scroll
 preserved, while q quits. Modified Enter is a no-op within Full View. This is current-file
 inspection, not Git diff or Evidence. Browser footer hints use `Key:Action` consistently
-across responsive variants, without changing the existing navigation controls.
+across responsive variants, without changing the existing navigation controls. Browser
+and Changed File Full View share compact `Key:Action` footer variants that fit the width,
+advertising Up/Down and j/k scrolling, Enter/Esc Back, and q Quit where space permits.
 
 File Browser follows Overview's visual rule: borderless `▌ Files` with a bold focus title,
 `>` for selection, and a framed passive Preview. The list uses its actual inner area through
 the last row, without a bottom separator. Preview metadata uses compact `Label: value`
 fields, retaining `File: <path>` because its title is only `Preview`; existing safe text and
-fixed scroll hints are preserved. Windows Terminal dogfood accepted this alignment without
-changing the 45/55 split, responsive behavior, footer, or controls.
+fixed scroll hints are preserved. The Browser header uses one title row, one status row
+only when notice/error text exists, and one incomplete-listing row only when needed.
+Rendering and scroll limits share this geometry, reclaiming unused rows for Files and
+Preview. Windows Terminal dogfood accepted the 40/60 split, compact header, and consistent
+Full View footer without changing navigation, wrapping, or Small list-only behavior.
 
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
 NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`
