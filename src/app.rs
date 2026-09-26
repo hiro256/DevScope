@@ -287,6 +287,22 @@ impl App {
             EvidenceSelection::Artifact => None,
         }
     }
+    pub fn runnable_evidence_kind(&self) -> Option<BuildTestKind> {
+        if [BuildTestKind::Build, BuildTestKind::Test]
+            .iter()
+            .any(|kind| matches!(self.build_test_state(*kind), BuildTestState::Running(_)))
+        {
+            return None;
+        }
+        self.evidence_detail_kind().filter(|kind| {
+            matches!(
+                self.build_test_state(*kind),
+                BuildTestState::NotRun
+                    | BuildTestState::Completed(_)
+                    | BuildTestState::ExecutionError(_)
+            )
+        })
+    }
     pub const fn evidence_selection(&self) -> EvidenceSelection {
         self.evidence_selection
     }

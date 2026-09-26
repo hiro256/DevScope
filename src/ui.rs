@@ -222,7 +222,7 @@ pub fn browser_preview_scroll_limit(app: &App, area: Rect) -> usize {
     }
     browser_preview_lines(app)
         .len()
-        .saturating_sub(inner_height(browser_areas(area)[1]))
+        .saturating_sub(preview_inner_areas(browser_areas(area)[1])[0].height as usize)
 }
 
 fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
@@ -313,17 +313,23 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
             .preview_scroll
             .min(browser_preview_scroll_limit(app, area))
             .min(u16::MAX as usize) as u16;
+        frame.render_widget(panel_block("Preview", false), panes[1]);
+        let inner = preview_inner_areas(panes[1]);
         frame.render_widget(
-            Paragraph::new(browser_preview_lines(app))
-                .block(panel_block("Preview", false))
-                .scroll((scroll, 0)),
-            panes[1],
+            Paragraph::new(browser_preview_lines(app)).scroll((scroll, 0)),
+            inner[0],
         );
+        let hint = if browser_preview_scroll_limit(app, area) > 0 {
+            "Ctrl+↑/↓ Scroll"
+        } else {
+            ""
+        };
+        frame.render_widget(Paragraph::new(hint), inner[1]);
     }
     let footer = if area.width >= 110 {
-        "↑/↓ Select  ←/→ Navigate  Enter Open  Ctrl+↑/↓ Scroll  r Reload  Esc Back  q Quit"
+        "↑/↓ Select  ←/→ Navigate  Enter Open  r Reload  Esc Back  q Quit"
     } else if split {
-        "↑/↓ Select ←/→ Dir Enter Open Ctrl+↑/↓ Scroll r Reload Esc Back q Quit"
+        "↑/↓ Select ←/→ Dir Enter Open r Reload Esc Back q Quit"
     } else if area.width >= 45 {
         "↑/↓ Select ←/→ Dir Enter Open r Reload Esc Back q"
     } else {
@@ -357,17 +363,15 @@ fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
 }
 fn footer_text(width: u16, height: u16) -> &'static str {
     if preview_layout_available(width, height) {
-        if width >= 120 {
-            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+↑/↓:Scroll  Ctrl+Enter:Detail  b:Build  t:Test  r:Reload  q/Esc:Quit"
-        } else if width >= 96 {
-            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+↑/↓:Scroll  b:Build  t:Test  r:Reload  q/Esc:Quit"
+        if width >= 96 {
+            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+F:Files  r:Reload  q/Esc:Quit"
         } else {
-            "←/→:Panel ↑/↓:Move Enter:Preview Ctrl+↑/↓:Scroll b/t:Verify r:Reload q:Quit"
+            "←/→:Panel ↑/↓:Move Enter:Preview Ctrl+F:Files r:Reload q:Quit"
         }
     } else if width >= 65 {
-        "←/→:Panel  ↑/↓:Move  b:Build  t:Test  r:Reload  q/Esc:Quit"
+        "←/→:Panel  ↑/↓:Move  Ctrl+F:Files  r:Reload  q/Esc:Quit"
     } else if width >= 40 {
-        "←/→:Panel  ↑/↓:Move  b/t:Verify  q:Quit"
+        "←/→:Panel  ↑/↓:Move  Ctrl+F:Files  q"
     } else {
         "←/→:Panel ↑/↓:Move q"
     }
@@ -516,25 +520,69 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = preview_content(app);
-    let limit = lines.len().saturating_sub(inner_height(area));
+    let inner = preview_inner_areas(area);
+    let limit = lines.len().saturating_sub(inner[0].height as usize);
     let scroll = app.preview_scroll().min(limit).min(u16::MAX as usize) as u16;
+    frame.render_widget(panel_block(title, false), area);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner[0]);
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block(title, false))
-            .scroll((scroll, 0)),
-        area,
+        Paragraph::new(preview_action_text(app, limit, inner[1].width)),
+        inner[1],
     );
 }
 
+// Both rendering and limits reserve one fixed row inside the existing border.
+fn preview_inner_areas(area: Rect) -> [Rect; 2] {
+    let inner = panel_block("", false).inner(area);
+    let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(inner);
+    [rows[0], rows[1]]
+}
+
+pub fn contextual_verification_target(app: &App, area: Rect) -> Option<BuildTestKind> {
+    if app.is_file_browser_open()
+        || app.has_detail_view()
+        || app.focused_panel() != FocusedPanel::Evidence
+        || !has_global_preview(area.width, area.height, app.preview_visible())
+    {
+        return None;
+    }
+    app.runnable_evidence_kind()
+}
+
+fn preview_action_text(app: &App, limit: usize, width: u16) -> String {
+    let primary = match app.focused_panel() {
+        FocusedPanel::Evidence if app.runnable_evidence_kind().is_some() => "Space Run",
+        FocusedPanel::Evidence
+            if app.evidence_detail_kind().is_some_and(|kind| {
+                matches!(app.build_test_state(kind), BuildTestState::Running(_))
+            }) =>
+        {
+            "Running..."
+        }
+        FocusedPanel::ChangedFiles if app.selected_changed_file().is_some() => {
+            "Ctrl+Enter Full Detail"
+        }
+        _ => "",
+    };
+    let hint = match (primary.is_empty(), limit > 0) {
+        (false, true) => format!("{primary}   Ctrl+↑/↓ Scroll"),
+        (true, true) => "Ctrl+↑/↓ Scroll".into(),
+        _ => primary.into(),
+    };
+    truncate_text(&hint, width as usize)
+}
+
 pub fn preview_scroll_limit(app: &App, area: Rect) -> usize {
-    if app.has_detail_view() || !has_global_preview(area.width, area.height, app.preview_visible())
+    if app.is_file_browser_open()
+        || app.has_detail_view()
+        || !has_global_preview(area.width, area.height, app.preview_visible())
     {
         return 0;
     }
     preview_content(app)
         .1
         .len()
-        .saturating_sub(inner_height(overview_areas(area)[2]))
+        .saturating_sub(preview_inner_areas(overview_areas(area)[2])[0].height as usize)
 }
 
 fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
@@ -595,17 +643,10 @@ fn artifact_preview(
     }
     ("Detail: Artifact".into(), lines)
 }
-fn evidence_preview_lines(kind: BuildTestKind, state: &BuildTestState) -> Vec<Line<'static>> {
+fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<Line<'static>> {
     match state {
         BuildTestState::Unavailable => preview_field("Status", "Unavailable"),
-        BuildTestState::NotRun => {
-            let mut lines = preview_field("Status", "Not run");
-            lines.extend(preview_field(
-                "Action",
-                &format!("Press {} to run {}.", detail_key(kind), detail_kind(kind)),
-            ));
-            lines
-        }
+        BuildTestState::NotRun => preview_field("Status", "Not run"),
         BuildTestState::Running(run) => {
             let mut lines = preview_field("Status", "Running");
             lines.extend(preview_field("Command", run.command_label()));
@@ -897,12 +938,6 @@ fn detail_kind(kind: BuildTestKind) -> &'static str {
     }
 }
 
-fn detail_key(kind: BuildTestKind) -> char {
-    match kind {
-        BuildTestKind::Build => 'b',
-        BuildTestKind::Test => 't',
-    }
-}
 fn inner_height(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2))
 }
@@ -1372,20 +1407,29 @@ mod tests {
         assert!(first.contains("Listing incomplete"));
         assert!(first.contains("Read error"));
         assert!(first.contains("browser line 00"));
+        assert!(first.contains("Ctrl+↑/↓ Scroll"));
         let limit = browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30));
         app.file_browser.scroll(isize::MAX, limit);
         let last = draw(&app, 80, 30);
         assert!(last.contains("browser line 59"));
         assert!(last.contains("file content truncated"));
+        assert!(last.contains("Ctrl+↑/↓ Scroll"));
         let offset = app.file_browser.preview_scroll;
         for (width, height) in [(160, 40), (80, 25), (77, 30), (80, 24), (40, 18), (1, 1)] {
             let output = draw(&app, width, height);
             if !preview_layout_available(width, height) {
                 assert!(!output.contains("browser line"));
+                assert!(!output.contains("Ctrl+↑/↓ Scroll"));
             }
         }
         assert_eq!(app.file_browser.preview_scroll, offset);
         assert!(draw(&app, 80, 30).contains("browser line 59"));
+        app.file_browser.preview = Some(Ok(("short".into(), false)));
+        assert_eq!(
+            browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30)),
+            0
+        );
+        assert!(!draw(&app, 80, 30).contains("Ctrl+↑/↓ Scroll"));
     }
 
     #[test]
@@ -1528,7 +1572,8 @@ mod tests {
         let limit = preview_scroll_limit(&app, area);
         assert_eq!(
             limit,
-            task_preview_lines(&app).len() - inner_height(overview_areas(area)[2])
+            task_preview_lines(&app).len()
+                - preview_inner_areas(overview_areas(area)[2])[0].height as usize
         );
         let before = draw(&app, 80, 25);
         app.scroll_preview(1, limit);
@@ -1595,7 +1640,8 @@ mod tests {
         assert!(not_run.contains("Detail: Build"));
         assert!(not_run.contains("Status"));
         assert!(not_run.contains("Not run"));
-        assert!(not_run.contains("Press b to run Build."));
+        assert!(not_run.contains("Space Run"));
+        assert!(!not_run.contains("Press b"));
         assert!(not_run.contains("> Build  · Not run"));
         assert!(not_run.contains("  Test  · Not run"));
 
@@ -1988,14 +2034,99 @@ mod tests {
     }
 
     #[test]
-    fn renders_manual_evidence_controls_in_the_footer() {
+    fn global_footer_only_advertises_navigation_and_application_controls() {
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
         let output = draw(&app, 120, 30);
-        assert!(output.contains("b:Build"));
-        assert!(output.contains("t:Test"));
+        assert!(!output.contains("b:Build"));
+        assert!(!output.contains("t:Test"));
+        for width in 20..=160 {
+            let footer = footer_text(width, 30);
+            for forbidden in ["Space", "Scroll", "Detail", "Verify", "b:Build", "t:Test"] {
+                assert!(!footer.contains(forbidden));
+            }
+        }
         assert!(output.contains("r:Reload"));
         assert!(output.contains("Enter:Preview"));
         assert!(output.contains("q/Esc:Quit"));
+    }
+
+    #[test]
+    fn contextual_hints_follow_availability_and_stay_fixed_while_scrolling() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let area = Rect::new(0, 0, 120, 30);
+        assert_eq!(preview_action_text(&app, 0, 60), "");
+        assert_eq!(preview_action_text(&app, 1, 60), "Ctrl+↑/↓ Scroll");
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        assert_eq!(preview_action_text(&app, 0, 60), "Space Run");
+        assert_eq!(
+            contextual_verification_target(&app, area),
+            Some(BuildTestKind::Build)
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Running(BuildTestRun::new(BuildTestKind::Test, "fixture", "test")),
+        );
+        assert!(!preview_action_text(&app, 0, 60).contains("Space"));
+        assert_eq!(contextual_verification_target(&app, area), None);
+        app.select_evidence_detail(BuildTestKind::Test);
+        assert_eq!(preview_action_text(&app, 0, 60), "Running...");
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
+        assert_eq!(preview_action_text(&app, 0, 60), "");
+        app.apply_artifact(Some(
+            devscope::progress::ArtifactObservation::observation_error(
+                "artifact".into(),
+                "fixture",
+            ),
+        ));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.evidence_selection(), EvidenceSelection::Artifact);
+        assert_eq!(preview_action_text(&app, 0, 60), "");
+        assert_eq!(contextual_verification_target(&app, area), None);
+        app.select_evidence_detail(BuildTestKind::Build);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            execution_error_state(BuildTestKind::Build),
+        );
+        assert_eq!(preview_action_text(&app, 0, 60), "Space Run");
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            completed_state(
+                BuildTestKind::Build,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        let pane = Rect::new(0, 0, 60, 8);
+        let limit = preview_content(&app)
+            .1
+            .len()
+            .saturating_sub(preview_inner_areas(pane)[0].height as usize);
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal
+            .draw(|frame| render_preview(frame, pane, &app))
+            .unwrap();
+        let before = text(&terminal);
+        app.scroll_preview(limit as isize, limit);
+        terminal
+            .draw(|frame| render_preview(frame, pane, &app))
+            .unwrap();
+        let after = text(&terminal);
+        assert_ne!(before, after);
+        assert!(before.contains("Space Run   Ctrl+↑/↓ Scroll"));
+        assert!(after.contains("Space Run   Ctrl+↑/↓ Scroll"));
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        assert_eq!(preview_action_text(&app, 0, 60), "");
+        app.apply_activity_state(activity_with_files(vec![GitChangedFile {
+            path: "file.txt".into(),
+            status: GitFileStatus::Added,
+            changes: Default::default(),
+        }]));
+        assert_eq!(preview_action_text(&app, 0, 60), "Ctrl+Enter Full Detail");
+        assert!(preview_action_text(&app, 1, 60).contains("Scroll"));
+        for width in 0..=160 {
+            assert!(Line::from(preview_action_text(&app, 1, width)).width() <= width as usize);
+        }
     }
 
     #[test]

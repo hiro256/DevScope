@@ -123,7 +123,7 @@
 - [x] Show file content when Changed File diff is unavailable
 - [x] Explore read-only project File Browser with Preview
 - [x] Implement minimal read-only project File Browser
-- [ ] Refine contextual Detail actions and Evidence execution
+- [x] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
 - [ ] Refine Preview content and density across focused panels
 - [ ] Refine TUI visual alignment for side-by-side Codex use
@@ -154,22 +154,20 @@ Browser visibility has its own built-in exclusions, not Plan/Activity/Verify pol
 Changed File inspection and File Browser reuse the same narrow safe-text reader;
 no generic filesystem or Evidence API was introduced.
 
-After the inspection surfaces, plan contextual actions: the global footer owns navigation
+Contextual actions are implemented: the global footer owns navigation
 and application-wide controls, while passive Detail / Preview shows only actions available
-for the current selection. Proposed verification execution requires Evidence focus, an
-actually visible Detail / Preview, and a selected executable target. Space is the candidate
-Run key, subject to implementation dogfood; Enter remains Preview toggle and Ctrl+Enter
-deeper inspection. Move away from global b/t execution, deciding during implementation
-whether to remove those shortcuts immediately or temporarily retain Evidence-focus-only
-compatibility. Running targets must disable Run or show Running instead.
+for the current selection. Space verification requires Evidence focus, an actually visible
+Overview Preview, and a selected runnable Build/Test target, with no verification active.
+Global b/t execution is removed without compatibility aliases; CLI verification is unchanged.
+Enter remains Preview toggle and Ctrl+Enter deeper inspection. Running/Unavailable targets
+and Artifact do not advertise Run. Windows Terminal dogfood accepted execution gating,
+contextual hints, and the preserved navigation controls.
 
-Keep contextual scroll and action hints near their content, with availability matching
-behavior: consider Ctrl+Up/Down for scrollable Preview and Ctrl+Enter for supported deeper
-inspection, omitting unavailable actions and unnecessary scroll hints. Full Detail retains
-Up/Down or j/k scrolling, Enter/Esc Back, and q Quit. Future File Browser Preview should
-follow the same ownership without adding browser features here. This lightens the global
-footer rather than listing every shortcut there; exact wording/layout remain open. This
-task owns interaction and action placement, while later visual alignment owns borders,
+Fixed Preview hint rows keep actions visible while content scrolls, and scroll limits
+exclude the hint row. Ctrl+Up/Down appears only for scrollable content, including File Browser;
+Changed Files advertises Ctrl+Enter only for a selected file. Full Detail retains
+Up/Down or j/k scrolling, Enter/Esc Back, and q Quit. Contextual shortcuts no longer clutter
+the global footer. This task owns interaction and action placement; later visual alignment owns borders,
 spacing, typography, and exact footer styling.
 
 Next, explore Build Debug and Build Release as independent verification targets on that

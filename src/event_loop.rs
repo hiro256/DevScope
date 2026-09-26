@@ -568,16 +568,18 @@ fn initialize_build_test_availability(
     }
 }
 
-fn manual_build_test_kind(key: KeyEvent) -> Option<BuildTestKind> {
-    if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+fn contextual_build_test_kind(
+    app: &App,
+    area: ratatui::layout::Rect,
+    key: KeyEvent,
+) -> Option<BuildTestKind> {
+    if key.kind != KeyEventKind::Press
+        || key.modifiers != KeyModifiers::NONE
+        || key.code != KeyCode::Char(' ')
+    {
         return None;
     }
-
-    match key.code {
-        KeyCode::Char('b') => Some(BuildTestKind::Build),
-        KeyCode::Char('t') => Some(BuildTestKind::Test),
-        _ => None,
-    }
+    ui::contextual_verification_target(app, area)
 }
 
 fn start_manual_build_test(
@@ -898,16 +900,13 @@ pub fn run(
                     }
                     needs_render = true;
                 }
-                Event::Key(key)
-                    if !app.has_detail_view()
-                        && let Some(kind) = manual_build_test_kind(key) =>
-                {
-                    needs_render |=
-                        start_manual_build_test(project_root, app, &mut build_test_runtime, kind);
-                }
                 Event::Key(key) => {
                     let size = terminal.size()?;
-                    handle_navigation_key(project_root, app, key, size.into());
+                    if let Some(kind) = contextual_build_test_kind(app, size.into(), key) {
+                        start_manual_build_test(project_root, app, &mut build_test_runtime, kind);
+                    } else {
+                        handle_navigation_key(project_root, app, key, size.into());
+                    }
                     needs_render = true;
                 }
                 Event::Resize(width, height) => {
@@ -1129,20 +1128,165 @@ mod tests {
 
     #[test]
     fn maps_manual_build_and_test_keys_only_on_press() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        let area = ratatui::layout::Rect::new(0, 0, 120, 30);
         assert_eq!(
-            manual_build_test_kind(key(KeyCode::Char('b'))),
+            contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))),
+            Some(BuildTestKind::Build)
+        );
+        app.select_evidence_detail(BuildTestKind::Test);
+        assert_eq!(
+            contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))),
+            Some(BuildTestKind::Test)
+        );
+        for code in [
+            KeyCode::Char('b'),
+            KeyCode::Char('t'),
+            KeyCode::Char('r'),
+            KeyCode::Char('q'),
+            KeyCode::Char('j'),
+        ] {
+            assert_eq!(contextual_build_test_kind(&app, area, key(code)), None);
+        }
+        let mut repeat = key(KeyCode::Char(' '));
+        repeat.kind = KeyEventKind::Repeat;
+        assert_eq!(contextual_build_test_kind(&app, area, repeat), None);
+    }
+
+    #[test]
+    fn contextual_run_requires_visible_evidence_and_runnable_selected_target() {
+        use crate::app::FocusedPanel;
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+        let space = key(KeyCode::Char(' '));
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+        for panel in [
+            FocusedPanel::Tasks,
+            FocusedPanel::ChangedFiles,
+            FocusedPanel::Evidence,
+        ] {
+            app.reconcile_focus(&[panel]);
+            for code in ['b', 't'] {
+                assert_eq!(
+                    contextual_build_test_kind(&app, area, key(KeyCode::Char(code))),
+                    None
+                );
+            }
+            assert_eq!(
+                contextual_build_test_kind(&app, area, space),
+                if panel == FocusedPanel::Evidence {
+                    Some(BuildTestKind::Build)
+                } else {
+                    None
+                }
+            );
+        }
+        app.toggle_preview();
+        assert_eq!(contextual_build_test_kind(&app, area, space), None);
+        handle_navigation_key(None, &mut app, key(KeyCode::Enter), area);
+        assert_eq!(
+            contextual_build_test_kind(&app, area, space),
             Some(BuildTestKind::Build)
         );
         assert_eq!(
-            manual_build_test_kind(key(KeyCode::Char('t'))),
+            contextual_build_test_kind(&app, ratatui::layout::Rect::new(0, 0, 40, 20), space),
+            None
+        );
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::Unavailable);
+        assert_eq!(contextual_build_test_kind(&app, area, space), None);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::Running(devscope::progress::BuildTestRun::new(
+                BuildTestKind::Build,
+                "fixture",
+                "build",
+            )),
+        );
+        assert_eq!(contextual_build_test_kind(&app, area, space), None);
+        app.select_evidence_detail(BuildTestKind::Test);
+        assert_eq!(contextual_build_test_kind(&app, area, space), None);
+        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::Test,
+                "fixture",
+                "test",
+                "error",
+            )),
+        );
+        assert_eq!(
+            contextual_build_test_kind(&app, area, space),
             Some(BuildTestKind::Test)
         );
-        for code in [KeyCode::Char('r'), KeyCode::Char('q'), KeyCode::Char('j')] {
-            assert_eq!(manual_build_test_kind(key(code)), None);
+        for modifier in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+        ] {
+            assert_eq!(
+                contextual_build_test_kind(&app, area, KeyEvent::new(KeyCode::Char(' '), modifier)),
+                None
+            );
         }
-        let mut repeat = key(KeyCode::Char('b'));
-        repeat.kind = KeyEventKind::Repeat;
-        assert_eq!(manual_build_test_kind(repeat), None);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(contextual_build_test_kind(&app, area, space), None);
+    }
+
+    #[test]
+    fn contextual_space_starts_selected_kind_and_does_not_cancel_when_hidden() {
+        let root = temp_root();
+        fs::create_dir_all(root.join(".devscope")).unwrap();
+        fs::write(root.join(".devscope/config.toml"),
+            "[verify.build]\nprogram = \"missing-contextual-fixture\"\n[verify.test]\nprogram = \"missing-contextual-fixture\"\n").unwrap();
+        let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+        for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+            let mut app = App::new(ProjectSnapshot::unavailable());
+            let mut runtime = BuildTestRuntime {
+                config: load_project_config(&root).unwrap(),
+                ..Default::default()
+            };
+            initialize_build_test_availability(Some(&root), &runtime.config, &mut app);
+            app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
+            app.select_evidence_detail(kind);
+            let selected = contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))).unwrap();
+            assert_eq!(selected, kind);
+            assert!(start_manual_build_test(
+                Some(&root),
+                &mut app,
+                &mut runtime,
+                selected
+            ));
+            assert_eq!(app.evidence_detail_kind(), Some(kind));
+            assert!(matches!(
+                app.build_test_state(kind),
+                BuildTestState::Running(_)
+            ));
+            assert_eq!(
+                contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))),
+                None
+            );
+            assert!(!start_manual_build_test(
+                Some(&root),
+                &mut app,
+                &mut runtime,
+                kind
+            ));
+            handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+            assert!(!app.preview_visible());
+            assert!(runtime.active.is_some());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while runtime.active.is_some() {
+                assert!(Instant::now() < deadline, "fixture worker did not finish");
+                poll_build_test_execution(Some(&root), &mut app, &mut runtime);
+                std::thread::yield_now();
+            }
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2908,7 +3052,14 @@ mod tests {
             KeyModifiers::SHIFT,
         ] {
             for code in [KeyCode::Char('b'), KeyCode::Char('t')] {
-                assert_eq!(manual_build_test_kind(KeyEvent::new(code, modifier)), None);
+                assert_eq!(
+                    contextual_build_test_kind(
+                        &app,
+                        ratatui::layout::Rect::new(0, 0, 120, 30),
+                        KeyEvent::new(code, modifier)
+                    ),
+                    None
+                );
             }
         }
         let mut release = KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL);

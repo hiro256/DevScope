@@ -144,6 +144,21 @@ Full Detail. Enter on Overview remains the Preview toggle; Esc on Overview retai
 behavior, and `q` quits in either state. Other modifier combinations do not trigger
 plain-letter shortcuts.
 
+The global footer owns navigation and application-wide controls. Preview owns currently
+available contextual actions in a fixed bottom row, separate from scrolling content;
+scroll limits use the remaining content viewport. Ctrl+Up/Down is advertised only when
+content can scroll, including in File Browser. Changed Files Preview advertises
+Ctrl+Enter Full Detail only when a file is selected.
+
+TUI verification uses plain Space only with Evidence focused, its Overview Preview
+actually visible, and a runnable Build or Test selected. NotRun can run, Completed can
+rerun, and ExecutionError can retry; Unavailable and Artifact cannot run. Neither target
+can start while either verification is Running. Run hints follow these same conditions;
+the selected running target shows Running instead. Hidden or responsive-hidden Preview,
+File Browser, and Full Detail cannot start verification. Global b/t shortcuts are removed,
+without compatibility aliases. CLI verify build/test and the runner, freshness, and
+persistence semantics are unchanged. Windows Terminal dogfood accepted this interaction.
+
 File Browser is a separate read-only inspection view, opened from Overview with Ctrl+F.
 It starts at project root and retains the last directory in memory for the session;
 reopening refreshes it, falling back to root with a notice if it is no longer safe or valid.
@@ -215,7 +230,7 @@ Stale results remain Stale through persistence and reload.
 
 ### Verification integration closure
 
-The verification integration experiment is validated. TUI `b` / `t` and CLI `devscope verify build` / `devscope verify test` invoke the same Build/Test runner. When DevScope runs a verification command and directly observes its process result, the result is Observed Evidence. This is agent-neutral: a human and an AI use the same path, and initiator identity is not part of the contract.
+The verification integration experiment is validated. TUI Space from a visible Evidence Preview and CLI `devscope verify build` / `devscope verify test` invoke the same Build/Test runner. When DevScope runs a verification command and directly observes its process result, the result is Observed Evidence. This is agent-neutral: a human and an AI use the same path, and initiator identity is not part of the contract.
 
 The latest Build/Test result is persisted as local-only current state and can be restored in a later TUI session. This is intentionally not Evidence history, a generic Evidence store, or a CI result database. Passed or Failed is independent from Fresh or Stale: every outcome/freshness combination is possible. Fresh means the observed start and end relevant inputs do not contradict the result; Stale means they differ, the TUI observed a relevant live change during the run, or baseline capture/comparison was unavailable. The CLI uses only start/end comparison, so Fresh does not prove that no transient change occurred. Failures to establish a comparison conservatively remain Stale.
 
