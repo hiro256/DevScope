@@ -122,6 +122,8 @@
 - [ ] Refine keyboard navigation and Preview controls
 - [ ] Show file content when Changed File diff is unavailable
 - [ ] Explore read-only project File Browser with Preview
+- [ ] Refine contextual Detail actions and Evidence execution
+- [ ] Support Build verification profiles for Debug and Release
 - [ ] Refine Preview content and density across focused panels
 - [ ] Refine TUI visual alignment for side-by-side Codex use
 - [ ] Dogfood five-second project-state understanding
@@ -148,7 +150,39 @@ the last is the initial candidate. Do not reuse plan, activity, or verify exclus
 File Browser visibility policy. Added-file inspection may inform later safe text-file
 observation reuse, without defining a shared API now.
 
-Refine common Preview density after these inspection slices, then evaluate visual
+After the inspection surfaces, plan contextual actions: the global footer owns navigation
+and application-wide controls, while passive Detail / Preview shows only actions available
+for the current selection. Proposed verification execution requires Evidence focus, an
+actually visible Detail / Preview, and a selected executable target. Space is the candidate
+Run key, subject to implementation dogfood; Enter remains Preview toggle and Ctrl+Enter
+deeper inspection. Move away from global b/t execution, deciding during implementation
+whether to remove those shortcuts immediately or temporarily retain Evidence-focus-only
+compatibility. Running targets must disable Run or show Running instead.
+
+Keep contextual scroll and action hints near their content, with availability matching
+behavior: consider Ctrl+Up/Down for scrollable Preview and Ctrl+Enter for supported deeper
+inspection, omitting unavailable actions and unnecessary scroll hints. Full Detail retains
+Up/Down or j/k scrolling, Enter/Esc Back, and q Quit. Future File Browser Preview should
+follow the same ownership without adding browser features here. This lightens the global
+footer rather than listing every shortcut there; exact wording/layout remain open. This
+task owns interaction and action placement, while later visual alignment owns borders,
+spacing, typography, and exact footer styling.
+
+Next, explore Build Debug and Build Release as independent verification targets on that
+action model, keeping Test as one target. Distinguish each Build profile's state, latest
+result, freshness, command, and persisted identity. Start with a small Build-plus-variant
+extension rather than an arbitrary named-command framework, workflow engine, plugin
+execution API, or stabilized generic Evidence API. Check possible future Test variants
+without including their generalization in this task. Preserve source-specific Evidence
+semantics and the UI / progress-analysis boundary.
+
+The Config schema remains undecided. Investigate existing single-build `[verify.build]`
+compatibility, Cargo auto-detection, command resolution, persistence keying and format
+compatibility, per-profile freshness, and CLI/TUI consistency before choosing it. Keep
+behavior toolchain-neutral: Cargo Debug/Release and .NET Debug/Release command differences
+belong in configuration/resolution, not tool-specific core or UI models.
+
+Refine common Preview density after inspection, contextual actions, and Build profiles, then evaluate visual
 alignment for side-by-side Codex CLI use. The initial candidate keeps Project Progress
 as a clear status card while reducing always-on borders around Tasks, Evidence, Changed
 Files, and Recent Commits. Consider flatter navigation sections, restrained title or
