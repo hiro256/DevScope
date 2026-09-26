@@ -119,8 +119,38 @@
 
 - [x] Refine NOW presentation from explicit Current Work Active state
 - [x] Refine Project Progress visual hierarchy and progress indicators
+- [ ] Refine keyboard navigation and Preview controls
+- [ ] Show file content when Changed File diff is unavailable
+- [ ] Explore read-only project File Browser with Preview
 - [ ] Refine Preview content and density across focused panels
 - [ ] Dogfood five-second project-state understanding
+
+The planned keyboard slice keeps Preview passive: Left/Right move among focusable panels,
+Tab/Shift+Tab remain compatible, and Up/Down or j/k select within a panel. Enter is a
+candidate Preview toggle (with p retained), Ctrl+Up/Down scroll Preview without moving
+focus, and Ctrl+Enter is the candidate Full Detail shortcut. Confirm event handling and
+Windows Terminal behavior before finalizing the bindings; Esc still returns from Full
+Detail and q quits.
+
+Changed File inspection should label current file content separately from a Git diff
+when a diff is unavailable, including for Added files. Keep it read-only, rooted in the
+project, text-oriented, and bounded in reading and rendering; do not follow symlinks or
+path traversal outside the root. Explain binary, oversized, unreadable, and read-error
+cases rather than displaying misleading content. Exact limits remain for implementation.
+
+The File Browser is an experiment in a separate read-only inspection view, not a
+permanent Overview panel or a general file manager. Start at the project root and
+evaluate directory/parent navigation, file selection, text Preview and scrolling,
+responsive layout, and root confinement. Editing, file operations, staging, search,
+syntax highlighting, image or archive Preview are outside the initial scope. Compare
+filesystem-wide, Git-centric, and filesystem browsing with built-in safety exclusions;
+the last is the initial candidate. Do not reuse plan, activity, or verify exclusions as
+File Browser visibility policy. Added-file inspection may inform later safe text-file
+observation reuse, without defining a shared API now.
+
+Refine common Preview density after these inspection slices. The final five-second
+dogfood tests whether Overview alone reveals project state quickly; Preview confirms a
+selection, while File Browser provides optional surrounding-file inspection.
 
 ### AI workflow refinement
 
