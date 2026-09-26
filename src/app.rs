@@ -411,7 +411,7 @@ impl App {
             }
             match key.code {
                 KeyCode::Char('q') => self.running = false,
-                KeyCode::Esc => {
+                KeyCode::Enter | KeyCode::Esc => {
                     self.detail_target = None;
                     self.detail_diff = None;
                     self.detail_scroll = 0;
@@ -1244,5 +1244,51 @@ mod tests {
         app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
         assert!(!app.has_detail_view());
         assert_eq!(app.detail_scroll(), 0);
+    }
+
+    #[test]
+    fn detail_enter_and_escape_share_cleanup_and_preserve_overview_state() {
+        for close in [KeyCode::Enter, KeyCode::Esc] {
+            for visible in [false, true] {
+                let mut app = app(1);
+                app.apply_activity_state(activity_with_files(2));
+                app.handle_key_with_focusable_panels(key(KeyCode::Left), ALL_PANELS);
+                app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+                if !visible {
+                    app.toggle_preview();
+                }
+                app.scroll_preview(2, 5);
+                app.handle_key_with_focusable_panels(
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                    ALL_PANELS,
+                );
+                app.apply_detail_diff(GitFileDiff::Unavailable(GitFileDiffUnavailable::NoContent));
+                app.scroll_detail(3, 5);
+                let target = app.detail_target().cloned();
+                let diff = app.detail_diff().cloned();
+                for modifier in [
+                    KeyModifiers::CONTROL,
+                    KeyModifiers::SHIFT,
+                    KeyModifiers::ALT,
+                ] {
+                    app.handle_key_with_focusable_panels(
+                        KeyEvent::new(KeyCode::Enter, modifier),
+                        ALL_PANELS,
+                    );
+                    assert_eq!(app.detail_target(), target.as_ref());
+                    assert_eq!(app.detail_diff(), diff.as_ref());
+                    assert_eq!(app.detail_scroll(), 3);
+                }
+                app.handle_key_with_focusable_panels(key(close), ALL_PANELS);
+                assert_eq!(app.detail_target(), None);
+                assert_eq!(app.detail_diff(), None);
+                assert_eq!(app.detail_scroll(), 0);
+                assert!(app.is_running());
+                assert_eq!(app.focused_panel(), FocusedPanel::ChangedFiles);
+                assert_eq!(app.selected_changed_file(), Some(1));
+                assert_eq!(app.preview_visible(), visible);
+                assert_eq!(app.preview_scroll(), 2);
+            }
+        }
     }
 }

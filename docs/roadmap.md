@@ -128,8 +128,8 @@
 
 The keyboard slice implements Left/Right panel navigation, Tab/Shift+Tab compatibility,
 Up/Down or j/k selection, Enter/p Preview toggle, Ctrl+Up/Down passive Preview scrolling,
-and Ctrl+Enter Full Detail. Esc returns from Full Detail (or quits from Overview), and q
-quits. Closure is pending Windows Terminal dogfood, especially distinguishing Ctrl+Enter
+and Ctrl+Enter Full Detail. Plain Enter or Esc returns from Full Detail; Esc quits from
+Overview, and q quits. Closure is pending Windows Terminal dogfood, especially distinguishing Ctrl+Enter
 from plain Enter; no alternative shortcut is selected without that observation.
 
 Changed File inspection should label current file content separately from a Git diff

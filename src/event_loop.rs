@@ -2703,6 +2703,50 @@ mod tests {
     }
 
     #[test]
+    fn detail_enter_returns_without_toggling_or_scrolling_overview_preview() {
+        let root = git_root();
+        fs::write(root.join("tracked.txt"), "changed\n").unwrap();
+        let area = ratatui::layout::Rect::new(0, 0, 80, 25);
+        for visible in [false, true] {
+            let mut app = App::new(collect_project_snapshot(&root));
+            handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
+            if !visible {
+                app.toggle_preview();
+            }
+            app.scroll_preview(2, 5);
+            handle_navigation_key(
+                Some(&root),
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                area,
+            );
+            app.scroll_detail(3, 5);
+            handle_navigation_key(
+                Some(&root),
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                area,
+            );
+            assert!(app.has_detail_view());
+            assert_eq!(app.detail_scroll(), 3);
+            handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+            assert!(!app.has_detail_view());
+            assert!(app.detail_diff().is_none());
+            assert_eq!(app.detail_scroll(), 0);
+            assert_eq!(app.focused_panel(), crate::app::FocusedPanel::ChangedFiles);
+            assert_eq!(app.selected_changed_file(), Some(0));
+            assert_eq!(app.preview_visible(), visible);
+            assert_eq!(app.preview_scroll(), 2);
+            assert!(app.is_running());
+            // Only a separate Overview Enter toggles Preview.
+            handle_navigation_key(Some(&root), &mut app, key(KeyCode::Enter), area);
+            assert_eq!(app.preview_visible(), !visible);
+            assert!(!app.has_detail_view());
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn navigation_routes_preview_scroll_and_refresh_without_recollecting_on_scroll() {
         let root = git_root();
         let initial: String = (0..40).map(|i| format!("first {i}\n")).collect();

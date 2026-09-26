@@ -74,7 +74,7 @@ optional drill-down over additional permanent overview panels.
 Detail View is optional drill-down from an existing panel. The first experiment uses
 whole-screen replacement to validate the interaction before introducing a split-pane
 layout; a later split-pane implementation should preserve the same target and
-interaction model. Ctrl+Enter opens the selected detail, Esc returns when detail is open,
+interaction model. Ctrl+Enter opens the selected detail, plain Enter or Esc returns when detail is open,
 and q always quits.
 Changed File Detail may surface observed change magnitude in addition to path and status.
 Change magnitude remains Activity data, not Evidence.
@@ -127,9 +127,12 @@ toggle the same visibility preference; responsive layouts may still hide Preview
 Ctrl+Up/Down scroll visible Preview one line without moving focus or selection. The scroll
 offset resets when its focused panel or selected target changes; hiding and showing the same
 target preserves it, and rendering clamps it to the current content and viewport.
-Ctrl+Enter opens Full Detail only for a selected Changed File. Full Detail keeps Up/Down
-and j/k scrolling and Esc to return; Esc on Overview retains quit behavior, and `q` quits
-in either state. Other modifier combinations do not trigger plain-letter shortcuts.
+Ctrl+Enter opens Full Detail from Overview only for a selected Changed File. Full Detail
+keeps Up/Down and j/k scrolling; plain Enter or Esc returns to Overview without changing
+focus, selection, or Preview visibility/scroll. Ctrl/Shift/Alt+Enter is a no-op within
+Full Detail. Enter on Overview remains the Preview toggle; Esc on Overview retains quit
+behavior, and `q` quits in either state. Other modifier combinations do not trigger
+plain-letter shortcuts.
 
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
 NOW: `✓` success, `!` attention or observation error, `✕` failed verification, `▶` running, `·`

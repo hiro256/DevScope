@@ -525,7 +525,10 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
             .scroll((app.detail_scroll().min(u16::MAX as usize) as u16, 0)),
         areas[1],
     );
-    frame.render_widget(Paragraph::new("j/k: Scroll  Esc: Back  q: Quit"), areas[2]);
+    frame.render_widget(
+        Paragraph::new("j/k: Scroll  Enter/Esc: Back  q: Quit"),
+        areas[2],
+    );
 }
 
 pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
@@ -2252,7 +2255,7 @@ mod tests {
         assert!(output.contains("+new"));
         assert!(output.contains("Staged"));
         assert!(output.contains("... diff truncated ..."));
-        assert!(output.contains("j/k: Scroll  Esc: Back  q: Quit"));
+        assert!(output.contains("j/k: Scroll  Enter/Esc: Back  q: Quit"));
         assert_eq!(change_summary(Default::default()), "unavailable");
         for (width, height) in [(40, 18), (20, 5), (1, 1)] {
             let _ = draw(&app, width, height);
