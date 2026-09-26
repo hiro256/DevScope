@@ -521,6 +521,7 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = preview_content(app);
     let inner = preview_inner_areas(area);
+    let lines = wrap_preview_lines(lines, inner[0].width);
     let limit = lines.len().saturating_sub(inner[0].height as usize);
     let scroll = app.preview_scroll().min(limit).min(u16::MAX as usize) as u16;
     frame.render_widget(panel_block(title, false), area);
@@ -579,10 +580,44 @@ pub fn preview_scroll_limit(app: &App, area: Rect) -> usize {
     {
         return 0;
     }
-    preview_content(app)
-        .1
+    let mut pane = overview_areas(area)[2];
+    pane.width = preview_pane_widths(area.width).1;
+    let viewport = preview_inner_areas(pane)[0];
+    wrap_preview_lines(preview_content(app).1, viewport.width)
         .len()
-        .saturating_sub(preview_inner_areas(overview_areas(area)[2])[0].height as usize)
+        .saturating_sub(viewport.height as usize)
+}
+
+fn wrap_preview_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let width = usize::from(width);
+    let mut wrapped = Vec::new();
+    for line in lines {
+        let text = line.to_string();
+        let mut row = String::new();
+        let mut used = 0;
+        // Prefer word boundaries; long paths/tokens split only between graphemes.
+        for word in text.split_inclusive(char::is_whitespace) {
+            let word_line = Line::from(word);
+            if used > 0 && used + word_line.width() > width && word_line.width() <= width {
+                wrapped.push(Line::from(std::mem::take(&mut row)));
+                used = 0;
+            }
+            for grapheme in word_line.styled_graphemes(Style::default()) {
+                let cells = Line::from(grapheme.symbol).width();
+                if used > 0 && used + cells > width {
+                    wrapped.push(Line::from(std::mem::take(&mut row)));
+                    used = 0;
+                }
+                row.push_str(grapheme.symbol);
+                used += cells;
+            }
+        }
+        wrapped.push(Line::from(row));
+    }
+    wrapped
 }
 
 fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
@@ -594,8 +629,10 @@ fn preview_content(app: &App) -> (String, Vec<Line<'static>>) {
             let title = selected_changed_file_path(app)
                 .map(|path| format!("Detail: {path}"))
                 .unwrap_or_else(|| "Detail: Changed Files".into());
-            let lines = if app.selected_changed_file().is_some() {
-                detail_inspection_lines(app.preview_inspection())
+            let lines = if let Some(path) = selected_changed_file_path(app) {
+                let mut lines = preview_field("File", &path);
+                lines.extend(detail_inspection_lines(app.preview_inspection()));
+                lines
             } else {
                 vec![Line::from("No file selected")]
             };
@@ -683,10 +720,14 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
 }
 
 fn preview_field(label: &str, value: &str) -> Vec<Line<'static>> {
-    vec![
-        Line::from(label.to_owned()),
-        Line::from(format!("  {value}")),
-    ]
+    let safe = safe_display_text(value);
+    let mut values = safe.split('\n');
+    let mut lines = vec![Line::from(format!(
+        "{label}: {}",
+        values.next().unwrap_or_default()
+    ))];
+    lines.extend(values.map(|line| Line::from(format!("  {line}"))));
+    lines
 }
 fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
     let (Some(selected), TaskState::Available(summary)) = (app.selected_task(), app.tasks()) else {
@@ -696,18 +737,13 @@ fn task_preview_lines(app: &App) -> Vec<Line<'static>> {
         return vec![Line::from("No task selected")];
     };
 
-    let mut lines = vec![
-        Line::from(task.text().to_owned()),
-        Line::from(""),
-        Line::from("Source"),
-        Line::from(format!("  {}", task.source_path().display())),
-    ];
+    let mut lines = vec![Line::from(safe_display_text(task.text())), Line::from("")];
+    lines.extend(preview_field(
+        "Source",
+        &task.source_path().display().to_string(),
+    ));
     if let Some(heading) = task.heading() {
-        lines.extend([
-            Line::from(""),
-            Line::from("Section"),
-            Line::from(format!("  {heading}")),
-        ]);
+        lines.extend(preview_field("Section", heading));
     }
     if let CurrentWorkState::Available(work) = app.current_work()
         && task_matches_current_work(task, app.current_work())
@@ -2097,12 +2133,12 @@ mod tests {
                 BuildTestFreshness::Fresh,
             ),
         );
-        let pane = Rect::new(0, 0, 60, 8);
+        let pane = Rect::new(0, 0, 60, 7);
         let limit = preview_content(&app)
             .1
             .len()
             .saturating_sub(preview_inner_areas(pane)[0].height as usize);
-        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(60, 7)).unwrap();
         terminal
             .draw(|frame| render_preview(frame, pane, &app))
             .unwrap();
@@ -2541,6 +2577,68 @@ mod tests {
         assert!(output.contains("Detail View experiment"));
         assert!(output.contains("docs/roadmap.md"));
         assert!(output.contains("TUI"));
+        assert!(output.contains("Source: docs/roadmap.md"));
+        assert!(output.contains("Section: TUI"));
+        assert!(output.contains("Context"));
+    }
+
+    #[test]
+    fn compact_evidence_keeps_outcome_and_freshness_separate() {
+        for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+            for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
+                let state = completed_state(BuildTestKind::Build, outcome, freshness);
+                let lines = evidence_preview_lines(BuildTestKind::Build, &state);
+                assert_eq!(lines.len(), 5);
+                assert!(lines[0].to_string().starts_with("Status: "));
+                assert!(lines[1].to_string().starts_with("Freshness: "));
+                assert!(lines[2].to_string().starts_with("Command: "));
+                assert_eq!(lines[3].to_string(), "Duration: 42.0s");
+                assert!(lines[4].to_string().starts_with("Result: "));
+            }
+        }
+        let multiline = preview_field("Error", "first\nsecond\x1b[2J");
+        assert_eq!(multiline[0].to_string(), "Error: first");
+        assert_eq!(multiline[1].to_string(), "  second\\u{1b}[2J");
+    }
+
+    #[test]
+    fn wrapped_preview_retains_long_values_and_scrolls_to_the_end() {
+        let original = format!(
+            "Command: {} 日本語 e\u{301} 👩‍💻 end",
+            "long/path/".repeat(20)
+        );
+        for width in [20, 41, 64] {
+            let lines = wrap_preview_lines(vec![Line::from(original.clone())], width);
+            assert_eq!(
+                lines.iter().map(ToString::to_string).collect::<String>(),
+                original
+            );
+            assert!(lines.iter().all(|line| line.width() <= width as usize));
+        }
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        app.apply_build_test_state(
+            BuildTestKind::Build,
+            BuildTestState::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::Build,
+                "fixture",
+                &original,
+                format!("{} FINAL-ERROR", "explanation ".repeat(80)),
+            )),
+        );
+        let area = Rect::new(0, 0, 80, 30);
+        let mut pane = overview_areas(area)[2];
+        pane.width = preview_pane_widths(area.width).1;
+        let viewport = preview_inner_areas(pane)[0];
+        let rows = wrap_preview_lines(preview_content(&app).1, viewport.width);
+        let limit = preview_scroll_limit(&app, area);
+        assert_eq!(limit, rows.len().saturating_sub(viewport.height as usize));
+        assert!(limit > 0);
+        app.scroll_preview(isize::MAX, limit);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("FINAL-ERROR"));
+        assert!(output.contains("Space Run"));
+        assert!(output.contains("Ctrl+↑/↓ Scroll"));
     }
     #[test]
     fn renders_global_preview_for_each_focused_panel_and_preserves_toggle_state() {

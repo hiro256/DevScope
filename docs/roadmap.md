@@ -125,7 +125,7 @@
 - [x] Implement minimal read-only project File Browser
 - [x] Refine contextual Detail actions and Evidence execution
 - [ ] Support Build verification profiles for Debug and Release
-- [ ] Refine Preview content and density across focused panels
+- [x] Refine Preview content and density across focused panels
 - [ ] Refine TUI visual alignment for side-by-side Codex use
 - [ ] Dogfood five-second project-state understanding
 
@@ -184,8 +184,12 @@ compatibility, per-profile freshness, and CLI/TUI consistency before choosing it
 behavior toolchain-neutral: Cargo Debug/Release and .NET Debug/Release command differences
 belong in configuration/resolution, not tool-specific core or UI models.
 
-Refine common Preview density after inspection, contextual actions, and Build profiles, then evaluate visual
-alignment for side-by-side Codex CLI use. The initial candidate keeps Project Progress
+Preview density refinement is complete: compact metadata fields, source-grounded Task
+context, separate Evidence outcome/freshness, and width-aware wrapping preserve detail
+and fixed contextual actions. Half-screen Windows Terminal dogfood accepted the result;
+Build profiles remain a separate pending task.
+
+Next, evaluate visual alignment for side-by-side Codex CLI use. The initial candidate keeps Project Progress
 as a clear status card while reducing always-on borders around Tasks, Evidence, Changed
 Files, and Recent Commits. Consider flatter navigation sections, restrained title or
 local marker emphasis for focus, a distinct Preview / Detail inspection area without

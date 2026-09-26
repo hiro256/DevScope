@@ -201,7 +201,16 @@ currently shows status, change counts, and diff content, with Full Detail for sc
 current useful contents, not final contracts: future observation sources and workflows may change
 them. Recent Commits remains overview-only until a concrete selection or drill-down need appears.
 
-Future Detail Pane work, if justified, may refine content density, examine a Recent Commits detail,
+Overview Preview uses compact `Label: value` fields for task metadata and Evidence,
+keeping outcome and freshness separate. Matching Current Work and source Context remain
+source-grounded sections. Changed Files includes its selected path in the scrollable body
+and reuses the existing diff/current-content inspection. Long lines wrap at the actual
+Preview width, preferring word boundaries and preserving graphemes in long tokens; scroll
+limits use these same rendered rows and exclude the fixed action row. File Browser and
+Full Detail retain their separate presentation. Half-screen Windows Terminal dogfood
+accepted the denser layout without changing the interaction model.
+
+Future Detail Pane work, if justified, may examine a Recent Commits detail,
 or consider syntax highlighting and colors. It does not imply Detail Pane focus or Full
 Detail for Tasks or Evidence.
 ## Instrumented verification experiment
