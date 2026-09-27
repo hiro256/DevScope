@@ -1137,11 +1137,30 @@ fn evidence(app: &App) -> String {
         .map(|kind| {
             format!(
                 "{} {}",
-                kind.label(),
-                evidence_selector_status(app.build_test_state(kind))
+                match kind {
+                    BuildTestKind::BuildDebug => "Debug",
+                    BuildTestKind::BuildRelease => "Release",
+                    BuildTestKind::Test => "Test",
+                },
+                evidence_summary_status(app.build_test_state(kind))
             )
         })
         .join(" | ")
+}
+
+fn evidence_summary_status(state: &BuildTestState) -> &'static str {
+    match state {
+        BuildTestState::Completed(result) => match (result.outcome(), result.freshness()) {
+            (BuildTestOutcome::Passed, BuildTestFreshness::Fresh) => "✓",
+            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "✓!",
+            (BuildTestOutcome::Failed, BuildTestFreshness::Fresh) => "✕",
+            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "✕!",
+        },
+        BuildTestState::Running(_) => "▶",
+        BuildTestState::NotRun => "·",
+        BuildTestState::Unavailable => "?",
+        BuildTestState::ExecutionError(_) => "!",
+    }
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -2657,7 +2676,7 @@ mod tests {
         assert_eq!(format_duration(Duration::from_secs(72)), "1m 12s");
     }
     #[test]
-    fn renders_evidence_unavailable_when_both_states_are_unavailable() {
+    fn renders_evidence_unavailable_when_all_targets_are_unavailable() {
         let app = app(TaskState::Unavailable, ActivityState::Unavailable);
         let output = draw(&app, 80, 30);
         assert!(output.contains("Evidence   Not available"));
@@ -2665,17 +2684,73 @@ mod tests {
     }
 
     #[test]
+    fn compact_summary_preserves_outcome_freshness_and_verbose_selector() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        for (kind, outcome, freshness, symbol) in [
+            (
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "✓",
+            ),
+            (
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Stale,
+                "✓!",
+            ),
+            (
+                BuildTestKind::BuildRelease,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Stale,
+                "✕!",
+            ),
+            (
+                BuildTestKind::BuildRelease,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+                "✕",
+            ),
+            (
+                BuildTestKind::Test,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "✓",
+            ),
+        ] {
+            let state = completed_state(kind, outcome, freshness);
+            assert_eq!(evidence_summary_status(&state), symbol);
+            app.apply_build_test_state(kind, state);
+        }
+        assert_eq!(evidence(&app), "Debug ✓! | Release ✕ | Test ✓");
+        assert!(draw(&app, 80, 30).contains("Evidence   Debug ✓! | Release ✕ | Test ✓"));
+        let rows = evidence_selector_lines(&app);
+        assert!(
+            rows.iter()
+                .any(|line| line.to_string().contains("Build Debug  ! Passed (stale)"))
+        );
+        assert!(
+            rows.iter()
+                .any(|line| line.to_string().contains("Build Release  ✕ Failed"))
+        );
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Test,
+                "cargo",
+                "cargo test",
+            )),
+        );
+        assert_eq!(evidence(&app), "Debug ✓! | Release ✕ | Test ▶");
+    }
+
+    #[test]
     fn renders_evidence_not_run_states() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert_eq!(
-            evidence(&app),
-            "Build Debug · Not run | Build Release ? Unavailable | Test · Not run"
-        );
-        assert!(draw(&app, 120, 30).contains(
-            "Evidence   Build Debug · Not run | Build Release ? Unavailable | Test · Not run"
-        ));
+        assert_eq!(evidence(&app), "Debug · | Release ? | Test ·");
+        assert!(draw(&app, 120, 30).contains("Evidence   Debug · | Release ? | Test ·"));
     }
 
     #[test]
@@ -2690,9 +2765,7 @@ mod tests {
             )),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
-        assert!(draw(&app, 120, 30).contains(
-            "Evidence   Build Debug ▶ Running | Build Release ? Unavailable | Test · Not run"
-        ));
+        assert!(draw(&app, 120, 30).contains("Evidence   Debug ▶ | Release ? | Test ·"));
     }
 
     #[test]
@@ -2714,9 +2787,7 @@ mod tests {
                 BuildTestFreshness::Fresh,
             ),
         );
-        assert!(draw(&app, 80, 30).contains(
-            "Evidence   Build Debug ✓ Passed | Build Release ? Unavailable | Test ✕ Failed"
-        ));
+        assert!(draw(&app, 80, 30).contains("Evidence   Debug ✓ | Release ? | Test ✕"));
     }
 
     #[test]
@@ -2731,9 +2802,7 @@ mod tests {
             ),
         );
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::Unavailable);
-        assert!(
-            draw(&app, 120, 30).contains("Evidence   Build Debug ! Passed (stale) | Build Release ? Unavailable | Test ? Unavailable")
-        );
+        assert!(draw(&app, 120, 30).contains("Evidence   Debug ✓! | Release ? | Test ?"));
     }
 
     #[test]
@@ -2749,9 +2818,7 @@ mod tests {
             focusable_panels(120, 30),
         );
         let output = draw(&app, 120, 30);
-        assert!(output.contains(
-            "Evidence   Build Debug ! Error | Build Release ? Unavailable | Test · Not run"
-        ));
+        assert!(output.contains("Evidence   Debug ! | Release ? | Test ·"));
         assert!(output.contains("Build Debug  ! Error"));
         assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
@@ -4191,11 +4258,9 @@ mod tests {
             assert!(output.contains("50% 1/2"));
             assert!(output.contains("Activity   1 changed file"));
             assert!(output.contains("Evidence"));
-            assert!(output.contains("Build Debug ✓ Passed"));
+            assert!(output.contains("Debug ✓"));
             if width >= 80 {
-                assert!(output.contains(
-                    "Evidence   Build Debug ✓ Passed | Build Release ? Unavailable | Test ▶ Running"
-                ));
+                assert!(output.contains("Evidence   Debug ✓ | Release ? | Test ▶"));
             }
         }
 
@@ -4203,9 +4268,7 @@ mod tests {
         let without_preview = draw(&app, 80, 30);
         assert!(without_preview.contains("50% 2/4"));
         assert!(without_preview.contains("50% 1/2"));
-        assert!(without_preview.contains(
-            "Evidence   Build Debug ✓ Passed | Build Release ? Unavailable | Test ▶ Running"
-        ));
+        assert!(without_preview.contains("Evidence   Debug ✓ | Release ? | Test ▶"));
     }
 
     #[test]
