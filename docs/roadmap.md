@@ -119,7 +119,7 @@
 
 - [x] Refine NOW presentation from explicit Current Work Active state
 - [x] Refine Project Progress visual hierarchy and progress indicators
-- [ ] Refine keyboard navigation and Preview controls
+- [x] Refine keyboard navigation and Preview controls
 - [x] Show file content when Changed File diff is unavailable
 - [x] Explore read-only project File Browser with Preview
 - [x] Implement minimal read-only project File Browser
@@ -129,11 +129,16 @@
 - [x] Refine TUI visual alignment for side-by-side Codex use
 - [x] Dogfood five-second project-state understanding
 
-The keyboard slice implements Left/Right panel navigation, Tab/Shift+Tab compatibility,
-Up/Down or j/k selection, Enter/p Preview toggle, Ctrl+Up/Down passive Preview scrolling,
-and Ctrl+Enter Full Detail. Plain Enter or Esc returns from Full Detail; Esc quits from
-Overview, and q quits. Closure is pending Windows Terminal dogfood, especially distinguishing Ctrl+Enter
-from plain Enter; no alternative shortcut is selected without that observation.
+Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
+real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k
+selection, and reliable Enter/p Preview toggle versus Ctrl+Enter Full View were confirmed.
+Ctrl+Up/Down scrolls passive Preview without moving focus/selection; target changes reset
+scroll while hiding/showing the same target preserves it. Full View returns to its originating
+Overview or Browser with Enter/Esc, without input leakage. Browser-local controls,
+Evidence Space execution gates, removed global b/t execution, and side-by-side responsive
+focus/Preview behavior passed. Unavailable-target gating was checked by the existing
+unit test, not manual dogfood; the current repository has available Build/Test commands.
+No Rust changes or alternative shortcuts were needed for this closure.
 
 Changed File inspection now prefers Git diff and explicitly labels safe current UTF-8
 file content when a diff is unavailable, including for Added files. Reads are read-only,
