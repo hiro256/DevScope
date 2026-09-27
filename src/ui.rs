@@ -592,24 +592,69 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 "{marker}{:<13}  {status:<9}  {freshness:<5}",
                 detail_kind(kind)
             );
-            let row = if Line::from(full.trim_end()).width() <= width {
-                full.trim_end().to_owned()
-            } else if Line::from(base.as_str()).width() <= width {
-                base
+            let full_visible = Line::from(full.trim_end()).width() <= width;
+            let freshness_visible = full_visible && !freshness.is_empty();
+            let target = if full_visible || Line::from(base.as_str()).width() <= width {
+                format!("{:<13}  ", detail_kind(kind))
             } else {
-                format!("{marker}{} {status}", detail_kind(kind))
+                format!("{} ", detail_kind(kind))
             };
-            let modifiers = match app.evidence_change_phase(kind) {
-                EvidenceChangePhase::Hot => Modifier::BOLD,
-                EvidenceChangePhase::Cooling | EvidenceChangePhase::None => Modifier::empty(),
+            let (symbol, status_name) =
+                status.split_once(' ').expect("process status has a symbol");
+            let columns = [
+                target,
+                format!("{symbol} "),
+                if freshness_visible {
+                    format!("{status_name:<7}  ")
+                } else {
+                    status_name.to_owned()
+                },
+                if freshness_visible {
+                    freshness.to_owned()
+                } else {
+                    String::new()
+                },
+            ];
+            let phase = app.evidence_change_phase(kind);
+            let bold = match phase {
+                EvidenceChangePhase::Hot => [true; 4],
+                EvidenceChangePhase::Warm => [false, true, true, true],
+                EvidenceChangePhase::Settling => [false, false, true, true],
+                EvidenceChangePhase::Cooling => {
+                    [false, false, !freshness_visible, freshness_visible]
+                }
+                EvidenceChangePhase::None => [false; 4],
             };
-            Line::from(vec![
-                Span::raw(marker.chars().take(width.min(2)).collect::<String>()),
-                Span::styled(
-                    truncate_text(&row[2..], width.saturating_sub(2)),
-                    Style::default().add_modifier(modifiers),
-                ),
-            ])
+            let content = columns.concat();
+            let clipped = truncate_text(&content, width.saturating_sub(2));
+            let truncated = clipped != content;
+            // Split only at logical column boundaries, after the existing safe truncation.
+            let mut visible = if truncated {
+                clipped.strip_suffix('…').unwrap_or(&clipped)
+            } else {
+                &clipped
+            };
+            let mut spans = vec![Span::raw(
+                marker.chars().take(width.min(2)).collect::<String>(),
+            )];
+            for (column, bold) in columns.iter().zip(bold) {
+                let length = column.len().min(visible.len());
+                let mut text = visible[..length].to_owned();
+                visible = &visible[length..];
+                if visible.is_empty() && truncated && clipped.ends_with('…') {
+                    text.push('…');
+                }
+                let style = if bold {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(text, style));
+                if visible.is_empty() {
+                    break;
+                }
+            }
+            Line::from(spans)
         })
         .collect::<Vec<_>>();
     if let Some(artifact) = app.artifact() {
@@ -2407,6 +2452,8 @@ mod tests {
             let preview = evidence_preview(&app);
             for (phase, modifiers) in [
                 (EvidenceChangePhase::Hot, Modifier::BOLD),
+                (EvidenceChangePhase::Warm, Modifier::empty()),
+                (EvidenceChangePhase::Settling, Modifier::empty()),
                 (EvidenceChangePhase::Cooling, Modifier::empty()),
                 (EvidenceChangePhase::None, Modifier::empty()),
             ] {
@@ -2421,6 +2468,55 @@ mod tests {
                 assert!(row.spans[1].style.bg.is_none());
                 assert_eq!(evidence(&app), summary);
                 assert_eq!(evidence_preview(&app), preview);
+            }
+        }
+    }
+
+    #[test]
+    fn evidence_emphasis_shrinks_to_visible_state_columns() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let kind = BuildTestKind::BuildDebug;
+        for state in [
+            completed_state(kind, BuildTestOutcome::Passed, BuildTestFreshness::Fresh),
+            completed_state(kind, BuildTestOutcome::Failed, BuildTestFreshness::Stale),
+            BuildTestState::Running(BuildTestRun::new(kind, "cargo", "cargo check")),
+            BuildTestState::NotRun,
+            BuildTestState::Unavailable,
+            execution_error_state(kind),
+        ] {
+            let completed = matches!(state, BuildTestState::Completed(_));
+            app.apply_build_test_state(kind, state);
+            for width in [32, 45] {
+                let freshness_visible = completed && width == 45;
+                let text = evidence_selector_lines(&app, width)[0].to_string();
+                for (phase, expected) in [
+                    (EvidenceChangePhase::Hot, [true; 4]),
+                    (EvidenceChangePhase::Warm, [false, true, true, true]),
+                    (EvidenceChangePhase::Settling, [false, false, true, true]),
+                    (
+                        EvidenceChangePhase::Cooling,
+                        [false, false, !freshness_visible, freshness_visible],
+                    ),
+                    (EvidenceChangePhase::None, [false; 4]),
+                ] {
+                    app.set_evidence_change_phase(kind, phase);
+                    let row = &evidence_selector_lines(&app, width)[0];
+                    assert_eq!(row.to_string(), text);
+                    assert_eq!(row.spans.len(), if freshness_visible { 5 } else { 4 });
+                    assert_eq!(row.spans[0].style, Style::default());
+                    for (span, bold) in row.spans.iter().skip(1).zip(expected) {
+                        assert_eq!(
+                            span.style,
+                            if bold {
+                                Style::default().add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            }
+                        );
+                    }
+                    assert!(!row.to_string().contains('*'));
+                    assert!(row.width() <= width);
+                }
             }
         }
     }

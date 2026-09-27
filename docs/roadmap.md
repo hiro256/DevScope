@@ -130,9 +130,9 @@
 - [x] Dogfood five-second project-state understanding
 - [x] Experiment with aligned Evidence columns and transient process-state cues
 
-The follow-up replaces the transient symbol with width-free text emphasis that returns
-from two seconds of bold to normal. Windows Terminal dogfood accepted the bold-only
-version; underlining was dropped following feedback.
+The follow-up narrows width-free bold emphasis from full content to state columns,
+state text without its symbol, freshness (or visible status text), then normal over three seconds.
+Windows Terminal dogfood accepted this five-phase refinement, including the return to normal.
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

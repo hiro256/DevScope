@@ -17,7 +17,9 @@ use std::{
 };
 
 const EVIDENCE_CHANGE_TTL: Duration = Duration::from_secs(3);
-const EVIDENCE_HOT_DURATION: Duration = Duration::from_secs(2);
+const EVIDENCE_HOT_DURATION: Duration = Duration::from_millis(750);
+const EVIDENCE_WARM_END: Duration = Duration::from_millis(1500);
+const EVIDENCE_SETTLING_END: Duration = Duration::from_millis(2250);
 
 #[derive(Default)]
 pub(super) struct BuildTestRuntime {
@@ -58,6 +60,10 @@ impl BuildTestRuntime {
             let elapsed = now.saturating_duration_since(started);
             let phase = if elapsed < EVIDENCE_HOT_DURATION {
                 EvidenceChangePhase::Hot
+            } else if elapsed < EVIDENCE_WARM_END {
+                EvidenceChangePhase::Warm
+            } else if elapsed < EVIDENCE_SETTLING_END {
+                EvidenceChangePhase::Settling
             } else if elapsed < EVIDENCE_CHANGE_TTL {
                 EvidenceChangePhase::Cooling
             } else {
@@ -421,9 +427,11 @@ mod tests {
         for (millis, phase, redraw) in [
             (0, EvidenceChangePhase::Hot, false),
             (749, EvidenceChangePhase::Hot, false),
-            (750, EvidenceChangePhase::Hot, false),
-            (1999, EvidenceChangePhase::Hot, false),
-            (2000, EvidenceChangePhase::Cooling, true),
+            (750, EvidenceChangePhase::Warm, true),
+            (1499, EvidenceChangePhase::Warm, false),
+            (1500, EvidenceChangePhase::Settling, true),
+            (2249, EvidenceChangePhase::Settling, false),
+            (2250, EvidenceChangePhase::Cooling, true),
             (2999, EvidenceChangePhase::Cooling, false),
             (3000, EvidenceChangePhase::None, true),
             (3250, EvidenceChangePhase::None, false),
@@ -442,19 +450,19 @@ mod tests {
         runtime.mark_changed(&mut app, kind, now);
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(1));
         runtime.mark_changed(&mut app, BuildTestKind::Test, now + Duration::from_secs(1));
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Warm);
         runtime.mark_changed(&mut app, kind, now + Duration::from_secs(2));
         assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(3));
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Warm);
         assert_eq!(
             app.evidence_change_phase(BuildTestKind::Test),
-            EvidenceChangePhase::Cooling
+            EvidenceChangePhase::Settling
         );
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(4));
         assert_eq!(
             app.evidence_change_phase(kind),
-            EvidenceChangePhase::Cooling
+            EvidenceChangePhase::Settling
         );
         assert_eq!(
             app.evidence_change_phase(BuildTestKind::Test),
@@ -464,6 +472,37 @@ mod tests {
             app.evidence_change_phase(BuildTestKind::BuildRelease),
             EvidenceChangePhase::None
         );
+    }
+
+    #[test]
+    fn changes_restart_hot_from_every_active_phase_without_touching_other_targets() {
+        let now = Instant::now();
+        for (millis, phase) in [
+            (100, EvidenceChangePhase::Hot),
+            (1000, EvidenceChangePhase::Warm),
+            (2000, EvidenceChangePhase::Settling),
+            (2500, EvidenceChangePhase::Cooling),
+        ] {
+            let mut app = App::new(ProjectSnapshot::unavailable());
+            let mut runtime = BuildTestRuntime::default();
+            runtime.mark_changed(&mut app, BuildTestKind::BuildDebug, now);
+            runtime.mark_changed(&mut app, BuildTestKind::Test, now);
+            let changed = now + Duration::from_millis(millis);
+            runtime.advance_emphasis(&mut app, changed);
+            assert_eq!(app.evidence_change_phase(BuildTestKind::BuildDebug), phase);
+            runtime.mark_changed(&mut app, BuildTestKind::BuildDebug, changed);
+            assert_eq!(runtime.changed_at[0], Some(changed));
+            assert_eq!(runtime.changed_at[2], Some(now));
+            assert_eq!(
+                app.evidence_change_phase(BuildTestKind::BuildDebug),
+                EvidenceChangePhase::Hot
+            );
+            assert_eq!(app.evidence_change_phase(BuildTestKind::Test), phase);
+            assert_eq!(
+                app.evidence_change_phase(BuildTestKind::BuildRelease),
+                EvidenceChangePhase::None
+            );
+        }
     }
 
     #[test]

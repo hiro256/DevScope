@@ -109,6 +109,8 @@ enum AppView {
 pub enum EvidenceChangePhase {
     None,
     Hot,
+    Warm,
+    Settling,
     Cooling,
 }
 

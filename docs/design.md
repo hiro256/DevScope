@@ -96,16 +96,20 @@ both tall full listings and shorter layouts with accurate overflow counts.
 The Overview Evidence selector aligns process targets, Outcome, and Freshness in
 separate columns. Completed results retain Passed/Failed independently of Fresh/Stale;
 non-completed states and Artifact have no freshness value. Runtime process-state changes
-use session-local text emphasis, independently per target: bold for two seconds,
-then normal styling until expiry at three seconds. Underlining is not used. A new change
-restarts the emphasis. The selection prefix is unstyled; row text and cell width never
+use session-local bold emphasis, independently per target: full content for 750 ms,
+state columns until 1.5 seconds, state text (without its symbol) and freshness until
+2.25 seconds, then visible freshness until expiry at three seconds. Including normal
+text after expiry, this gives five display phases without changing row content.
+When freshness is absent or omitted at narrow widths, the last phase emphasizes the
+visible primary status text without its symbol instead. A new change restarts the full-content emphasis.
+Underlining is not used. The selection prefix is unstyled; row text and cell width never
 change. There is no extra symbol, color, or animation framework.
 Verification runtime owns time and advances App's display phase only at phase boundaries;
 rendering only reads it. Initial restoration and availability setup remain quiet.
 The cue is not Evidence state, persistence, or history. Narrow rows drop freshness text
 before truncating target and primary status. Artifact, Project Progress's compact summary,
-and Evidence Preview remain unchanged. Windows Terminal dogfood accepted the column
-alignment and the replacement bold-only emphasis; underlining was dropped following feedback.
+and Evidence Preview remain unchanged. Windows Terminal dogfood accepted the five-phase
+shrinking bold emphasis, including the return to normal, without extra symbols or width.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
