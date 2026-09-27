@@ -241,7 +241,7 @@ requires project knowledge or diff inspection, not a five-second Overview summar
 ### Product clarity and onboarding
 
 - [x] Align public documentation and first-use onboarding with current implementation
-- [ ] Reassess UI and event-loop module boundaries after TUI refinement
+- [x] Reassess UI and event-loop module boundaries after TUI refinement
 - [ ] Explore package-manager distribution after onboarding refinement
 
 The completed documentation slice covers current controls, implementation status, the Windows binary

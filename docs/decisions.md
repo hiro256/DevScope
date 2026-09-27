@@ -129,3 +129,21 @@
 - **Reason:** Proposal-local checklists were observed in Plan totals. Opt-in source
   selection corrects that ambiguity without changing existing projects or adding
   per-task classification.
+
+## 2026-09-27 — Private TUI verification lifecycle boundary
+
+- **Decision:** Extract only Build/Test runtime ownership into the private
+  `event_loop::verification` child module. It owns the single active process,
+  per-target freshness baselines, and startup Config snapshot, and applies results
+  through existing App operations. Keep its fields private and expose only
+  parent-module lifecycle operations. Move its directly owned tests with it;
+  retain routing and refresh integration tests in the event loop.
+- **Reason:** This is a cohesive lifecycle boundary with no keyboard or layout
+  dependency, not a split justified by file length. App still owns Evidence state;
+  the parent retains Space eligibility, view routing, refresh orchestration, and
+  poll timing. Core runner, command resolution, and persistence are unchanged.
+- **Scope:** Leave UI rendering together: Browser and Full View rendering share
+  inspection content, safe display, wrapping, and viewport helpers, so extracting
+  either now would introduce additional cross-module plumbing without a comparably
+  clear ownership benefit. Stop after the verification extraction; do not also
+  split Git worker/polling or introduce a generic action/view framework.

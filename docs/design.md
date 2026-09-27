@@ -38,6 +38,12 @@ The TUI and Progress Core must remain separate. The core should own project anal
 and produce UI-independent data, allowing future consumers such as a TUI, VS Code
 extension, Web UI, or JSON/API to use the same progress model.
 
+Within the TUI, the private `event_loop::verification` module owns the active
+Build/Test process, startup verification Config snapshot, and freshness baselines.
+App retains Evidence state. The event loop retains contextual execution eligibility,
+key routing, and polling order; core command resolution, execution, and persistence
+remain independent of this TUI lifecycle module.
+
 Git worktree change detection is a heuristic for deciding whether Git Activity may need recollection, not a generic filesystem watcher. It remains separate from Markdown, Config, Current Work, Build/Test Freshness, Artifact, and Git metadata observation. Its future candidate set should use Git ignore semantics rather than language-specific output-directory names.
 
 Agent integrations are adapters. They may enrich the observed state, but must not
