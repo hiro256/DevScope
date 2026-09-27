@@ -22,6 +22,8 @@ behind it; consult the package's release notes for its features and controls.
 
 ## Current capabilities
 
+v0.5.0 is a refinement release focused on faster project-state understanding and inspection.
+
 - Current Work with explicit Active state, NOW presentation, and compact history
 - Focused-panel Preview and Task Detail support for source-grounded context
 - Independent Build Debug / Build Release / Test commands, results, and freshness
@@ -29,7 +31,9 @@ behind it; consult the package's release notes for its features and controls.
 - Background Git worktree observation with safe Activity exclusion proposals and an approval-gated workflow
 - Changed File Full View with Git diff or explicitly labeled safe current text
 - Read-only File Browser with passive Preview and cached-file Full View
-- Responsive layouts, wrapped inspection content, and contextual action hints
+- Refined Overview/Preview navigation, side-by-side terminal layouts, wrapped content, and contextual action hints
+- Transient visual cues for Evidence, Changed Files, newly added Tasks, and Recent Commits without persistent notification UI
+- Compact Project Progress Evidence summary and explicit `! Stale` warnings in the detailed Evidence selector
 
 ## Quick start: Windows binary
 
@@ -208,7 +212,7 @@ operations.
 - Git must be available on `PATH` for Git Activity collection.
 - A Rust toolchain is required to build from source.
 - Build/Test Evidence needs either project-configured executable commands or, for a Cargo root, Cargo on `PATH`.
-- Windows is the primary verified platform for v0.4.0.
+- Windows is the primary verified platform for v0.5.0.
 
 ## Build from source
 
@@ -231,9 +235,9 @@ cargo build --release
 
 ## Windows x64 binary
 
-The v0.4.0 package target is Windows x64; consult [GitHub Releases](https://github.com/hiro256/DevScope/releases)
+The v0.5.0 package target is Windows x64; consult [GitHub Releases](https://github.com/hiro256/DevScope/releases)
 for actual asset availability and release-specific features. When provided, download the
-`devscope-v0.4.0-windows-x64.zip` archive, extract it to a directory of your choice, then run
+`devscope-v0.5.0-windows-x64.zip` archive, extract it to a directory of your choice, then run
 `devscope.exe` from a project root. Add that directory to `PATH` for commands such as `devscope
 context`, or invoke the executable by its absolute path. Run `devscope` with no arguments to start
 the TUI.
