@@ -582,7 +582,7 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             let freshness = match state {
                 BuildTestState::Completed(result) => match result.freshness() {
                     BuildTestFreshness::Fresh => "Fresh",
-                    BuildTestFreshness::Stale => "Stale",
+                    BuildTestFreshness::Stale => "! Stale",
                 },
                 _ => "",
             };
@@ -2560,7 +2560,9 @@ mod tests {
         let stale = draw(&app, 80, 30);
         assert!(stale.contains("Passed"));
         assert!(stale.contains("Stale"));
-        assert!(stale.contains("> Build Debug    ✓ Passed   Stale"));
+        assert!(stale.contains("> Build Debug    ✓ Passed"));
+        assert!(!stale.contains("> Build Debug    ✓ Passed   ! Stale"));
+        assert!(draw(&app, 100, 30).contains("> Build Debug    ✓ Passed   ! Stale"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -2588,7 +2590,8 @@ mod tests {
         assert!(failed.contains("Detail: Test"));
         assert!(failed.contains("Failed"));
         assert!(failed.contains("1 failed"));
-        assert!(failed.contains("  Build Debug    ✓ Passed   Stale"));
+        assert!(failed.contains("  Build Debug    ✓ Passed"));
+        assert!(draw(&app, 100, 30).contains("  Build Debug    ✓ Passed   ! Stale"));
         assert!(failed.contains("> Test           ✕ Failed"));
 
         app.apply_build_test_state(
@@ -2688,6 +2691,54 @@ mod tests {
     }
 
     #[test]
+    fn stale_warning_belongs_to_freshness_column_including_cooling() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        let kind = BuildTestKind::BuildDebug;
+        for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+            for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
+                app.apply_build_test_state(kind, completed_state(kind, outcome, freshness));
+                app.set_evidence_change_phase(kind, TransientEmphasisPhase::Cooling);
+                let rows = evidence_selector_lines(&app, 45);
+                let row = &rows[0];
+                let expected = if freshness == BuildTestFreshness::Stale {
+                    "! Stale"
+                } else {
+                    "Fresh"
+                };
+                assert_eq!(row.spans.len(), 5);
+                assert_eq!(row.spans[4].content, expected);
+                assert!(row.spans[4].style.add_modifier.contains(Modifier::BOLD));
+                assert!(
+                    row.spans[..4]
+                        .iter()
+                        .all(|span| !span.style.add_modifier.contains(Modifier::BOLD))
+                );
+                let outcome_text = if outcome == BuildTestOutcome::Passed {
+                    "✓ Passed"
+                } else {
+                    "✕ Failed"
+                };
+                assert!(row.to_string().contains(outcome_text));
+                let threshold = if freshness == BuildTestFreshness::Stale {
+                    35
+                } else {
+                    33
+                };
+                assert!(
+                    evidence_selector_lines(&app, threshold)[0]
+                        .to_string()
+                        .ends_with(expected)
+                );
+                let narrow = &evidence_selector_lines(&app, threshold - 1)[0];
+                assert_eq!(narrow.spans.len(), 4);
+                assert!(narrow.to_string().ends_with(outcome_text));
+                assert!(!narrow.to_string().contains('!'));
+                assert!(narrow.width() < threshold);
+            }
+        }
+    }
+
+    #[test]
     fn evidence_emphasis_reaches_rendered_cells_without_styling_selection() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
@@ -2727,7 +2778,7 @@ mod tests {
                 let freshness_text = if freshness == BuildTestFreshness::Fresh {
                     "Fresh"
                 } else {
-                    "Stale"
+                    "! Stale"
                 };
                 for row in rows {
                     let row = row.to_string();
@@ -2746,12 +2797,13 @@ mod tests {
         assert_eq!(evidence(&app), summary);
         app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
         let full = evidence_selector_lines(&app, 36)[0].to_string();
-        assert!(full.ends_with("Stale"));
-        let no_marker = evidence_selector_lines(&app, 33)[0].to_string();
-        assert!(no_marker.ends_with("Stale"));
-        let no_freshness = evidence_selector_lines(&app, 32)[0].to_string();
+        assert!(full.ends_with("! Stale"));
+        let exact_fit = evidence_selector_lines(&app, 35)[0].to_string();
+        assert!(exact_fit.ends_with("! Stale"));
+        let no_freshness = evidence_selector_lines(&app, 34)[0].to_string();
         assert!(no_freshness.ends_with("✕ Failed"));
         assert!(!no_freshness.contains("Stale"));
+        assert!(!no_freshness.contains('!'));
         for width in 2..=80 {
             let row = &evidence_selector_lines(&app, width)[0];
             assert!(row.width() <= width);
@@ -3070,7 +3122,7 @@ mod tests {
                 BuildTestFreshness::Stale,
             ),
         );
-        assert!(draw(&app, 120, 30).contains("Test           ✕ Failed   Stale"));
+        assert!(draw(&app, 120, 30).contains("Test           ✕ Failed   ! Stale"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             execution_error_state(BuildTestKind::Test),
@@ -3135,10 +3187,10 @@ mod tests {
         assert_eq!(evidence(&app), "Debug ✓! | Release ✕ | Test ✓");
         assert!(draw(&app, 80, 30).contains("Evidence   Debug ✓! | Release ✕ | Test ✓"));
         let rows = evidence_selector_lines(&app, usize::MAX);
-        assert!(
-            rows.iter()
-                .any(|line| line.to_string().contains("Build Debug    ✓ Passed   Stale"))
-        );
+        assert!(rows.iter().any(|line| {
+            line.to_string()
+                .contains("Build Debug    ✓ Passed   ! Stale")
+        }));
         assert!(
             rows.iter()
                 .any(|line| line.to_string().contains("Build Release  ✕ Failed"))
@@ -4676,7 +4728,7 @@ mod tests {
         for text in [
             "> M  src/日本語のとても長いファイル名.rs",
             "abcdef0 Very long commit message to inspect",
-            "> Build Debug    ✓ Passed   Stale",
+            "> Build Debug    ✓ Passed   ! Stale",
         ] {
             let row = fit_navigation_lines(vec![Line::from(text)], 18).remove(0);
             assert!(row.width() <= 18);
