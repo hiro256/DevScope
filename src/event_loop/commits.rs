@@ -5,15 +5,34 @@ use std::{
     time::{Duration, Instant},
 };
 
+enum CommitBaseline {
+    Unavailable,
+    Available { head: Option<String> },
+}
+
+impl CommitBaseline {
+    fn from_activity(activity: &ActivityState) -> Self {
+        match activity {
+            ActivityState::Available(summary) => Self::Available {
+                head: summary
+                    .recent_commits()
+                    .first()
+                    .map(|commit| commit.id.clone()),
+            },
+            ActivityState::Unavailable | ActivityState::NotRepository => Self::Unavailable,
+        }
+    }
+}
+
 pub(super) struct CommitsRuntime {
-    previous_head: Option<String>,
+    baseline: CommitBaseline,
     added_at: BTreeMap<String, Instant>,
 }
 
 impl CommitsRuntime {
     pub(super) fn new(activity: &ActivityState) -> Self {
         Self {
-            previous_head: Self::ids(activity).first().cloned(),
+            baseline: CommitBaseline::from_activity(activity),
             added_at: BTreeMap::new(),
         }
     }
@@ -29,9 +48,16 @@ impl CommitsRuntime {
     }
     pub(super) fn observe(&mut self, app: &mut App, now: Instant) -> bool {
         let ids = Self::ids(app.activity());
-        let prefix = match &self.previous_head {
-            Some(head) => ids.iter().position(|id| id == head),
-            None => Some(ids.len()),
+        let current_baseline = CommitBaseline::from_activity(app.activity());
+        let prefix = match (&self.baseline, &current_baseline) {
+            (CommitBaseline::Available { head: Some(head) }, CommitBaseline::Available { .. }) => {
+                ids.iter().position(|id| id == head)
+            }
+            (CommitBaseline::Available { head: None }, CommitBaseline::Available { .. }) => {
+                Some(ids.len())
+            }
+            // A recovered observation is not evidence that these commits are new.
+            _ => None,
         };
         let mut redraw = false;
         self.added_at.retain(|id, _| {
@@ -49,7 +75,7 @@ impl CommitsRuntime {
                 redraw = true;
             }
         }
-        self.previous_head = ids.first().cloned();
+        self.baseline = current_baseline;
         redraw
     }
     pub(super) fn advance(&mut self, app: &mut App, now: Instant) -> bool {
@@ -113,6 +139,58 @@ mod tests {
         ));
         let runtime = CommitsRuntime::new(app.activity());
         (app, runtime, Instant::now())
+    }
+    #[test]
+    fn available_history_recovers_from_unavailable_quietly() {
+        let (mut app, mut runtime, now) = setup(&["C", "B", "A"]);
+        app.apply_activity_state(ActivityState::Unavailable);
+        runtime.observe(&mut app, now);
+        app.apply_activity_state(state(&["C", "B", "A"]));
+        assert!(!runtime.observe(&mut app, now));
+        assert!(runtime.added_at.is_empty());
+        for id in ["C", "B", "A"] {
+            assert_eq!(app.commit_emphasis(id), CommitEmphasisPhase::None);
+        }
+    }
+    #[test]
+    fn available_history_recovers_from_not_repository_quietly() {
+        let (mut app, mut runtime, now) = setup(&["C", "B", "A"]);
+        app.apply_activity_state(state(&["D", "C", "B", "A"]));
+        runtime.observe(&mut app, now);
+        app.apply_activity_state(ActivityState::NotRepository);
+        runtime.observe(&mut app, now);
+        assert!(runtime.added_at.is_empty());
+        assert_eq!(app.commit_emphasis("D"), CommitEmphasisPhase::None);
+        app.apply_activity_state(state(&["X", "Y", "Z"]));
+        assert!(!runtime.observe(&mut app, now));
+        assert!(runtime.added_at.is_empty());
+        app.apply_activity_state(state(&["N", "X", "Y", "Z"]));
+        assert!(runtime.observe(&mut app, now));
+        assert_eq!(app.commit_emphasis("N"), CommitEmphasisPhase::Hot);
+        for id in ["X", "Y", "Z"] {
+            assert_eq!(app.commit_emphasis(id), CommitEmphasisPhase::None);
+        }
+    }
+    #[test]
+    fn empty_available_history_still_detects_first_commit() {
+        let (mut app, mut runtime, now) = setup(&[]);
+        app.apply_activity_state(state(&["A"]));
+        assert!(runtime.observe(&mut app, now));
+        assert_eq!(app.commit_emphasis("A"), CommitEmphasisPhase::Hot);
+    }
+    #[test]
+    fn initially_unavailable_observation_establishes_quiet_baseline() {
+        for unavailable in [ActivityState::Unavailable, ActivityState::NotRepository] {
+            let mut app = App::new(ProjectSnapshot::new(
+                PlanState::Unavailable,
+                unavailable,
+                TaskState::Unavailable,
+            ));
+            let mut runtime = CommitsRuntime::new(app.activity());
+            app.apply_activity_state(state(&["C", "B", "A"]));
+            assert!(!runtime.observe(&mut app, Instant::now()));
+            assert!(runtime.added_at.is_empty());
+        }
     }
     #[test]
     fn quiet_baseline_single_and_multiple_prepends() {

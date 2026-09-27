@@ -128,7 +128,7 @@
 - [x] Refine Preview content and density across focused panels
 - [x] Refine TUI visual alignment for side-by-side Codex use
 - [x] Dogfood five-second project-state understanding
-- [ ] Experiment with aligned Evidence columns and transient process-state cues
+- [x] Experiment with aligned Evidence columns and transient process-state cues
 
 The follow-up narrows width-free bold emphasis from full content to state columns,
 state text without its symbol, freshness (or visible status text), then normal over three seconds.
@@ -142,8 +142,11 @@ emphasis and no emphasis on remaining rows after completion. The user confirmed 
 Follow-up: emphasize newly prepended Recent Commits by ID, quietly resetting the baseline
 when the previous head is absent. Windows Terminal checks confirmed new-commit emphasis
 and expiry, quiet unchanged reload/history switch, and emphasis for a new commit after
-that switch. Multiple-addition/independent-timing checks passed automatically; separate
-manual confirmation remains pending.
+that switch. The user confirmed Recent Commits visual acceptance. The recovery fix keeps
+Unavailable/NotRepository distinct from available empty history, restoring a quiet baseline
+without suppressing a genuinely first commit. Recovery, multiple-addition, and independent-timing
+checks passed automatically; no separate manual coverage of these cases is claimed.
+The transient-emphasis experiment is complete.
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

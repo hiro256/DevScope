@@ -137,7 +137,9 @@ not claim separate manual coverage of all startup, timing, and Unicode truncatio
 Recent Commits uses commit IDs for session-local transient emphasis, with a quiet startup
 baseline. If the previous observed head remains in the bounded list, only commits prepended
 before it emphasize; multiple additions can emphasize together. The first commit after an
-empty history also emphasizes. If the previous head is absent, the baseline resets quietly
+available empty history also emphasizes. Unavailable/NotRepository observations clear cues;
+recovery establishes a quiet baseline, distinct from an available empty history.
+If the previous head is absent, the baseline resets quietly
 and active cues clear, rather than announcing a history switch. Removed IDs have no exit
 animation. Hot bolds ID and summary for 750 ms; Warm/Settling/Cooling bold only summary
 until expiry at three seconds. The private event-loop runtime owns timing; App stores
@@ -146,7 +148,8 @@ Recent Commits stays passive; Activity and Project Progress are unchanged. The u
 in Windows Terminal: a new top commit emphasizes then returns to normal, unchanged reload
 stays quiet, a disconnected history switch stays quiet, and a new commit on that history
 emphasizes alone. Multiple additions and independent timing are covered by automated tests;
-their manual dogfood has not been separately confirmed.
+their manual dogfood has not been separately confirmed. The user confirmed visual acceptance
+of Recent Commits; unavailable-observation recovery is covered by regression tests.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
