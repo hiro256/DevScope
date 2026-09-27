@@ -1,7 +1,7 @@
 //! TUI process verification lifecycle, independent of keyboard and layout routing.
 //! App retains Evidence state; this private child owns execution and freshness baselines.
 
-use crate::app::App;
+use crate::app::{App, EvidenceChangePhase};
 use devscope::{
     config::ProjectConfig,
     progress::{
@@ -17,6 +17,7 @@ use std::{
 };
 
 const EVIDENCE_CHANGE_TTL: Duration = Duration::from_secs(3);
+const EVIDENCE_HOT_DURATION: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(super) struct BuildTestRuntime {
@@ -27,7 +28,7 @@ pub(super) struct BuildTestRuntime {
     active_baseline: Option<BuildTestFreshnessBaseline>,
     active_inputs_changed: bool,
     config: ProjectConfig,
-    marker_expiry: [Option<Instant>; 3],
+    changed_at: [Option<Instant>; 3],
 }
 
 impl BuildTestRuntime {
@@ -37,8 +38,8 @@ impl BuildTestRuntime {
             BuildTestKind::BuildRelease => 1,
             BuildTestKind::Test => 2,
         };
-        self.marker_expiry[index] = Some(now + EVIDENCE_CHANGE_TTL);
-        app.set_evidence_changed(kind, true);
+        self.changed_at[index] = Some(now);
+        app.set_evidence_change_phase(kind, EvidenceChangePhase::Hot);
     }
 
     fn apply_state(&mut self, app: &mut App, kind: BuildTestKind, state: BuildTestState) {
@@ -48,12 +49,23 @@ impl BuildTestRuntime {
         }
     }
 
-    pub(super) fn expire_markers(&mut self, app: &mut App, now: Instant) -> bool {
+    pub(super) fn advance_emphasis(&mut self, app: &mut App, now: Instant) -> bool {
         let mut changed = false;
         for (index, kind) in BuildTestKind::ALL.into_iter().enumerate() {
-            if self.marker_expiry[index].is_some_and(|expiry| now >= expiry) {
-                self.marker_expiry[index] = None;
-                app.set_evidence_changed(kind, false);
+            let Some(started) = self.changed_at[index] else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(started);
+            let phase = if elapsed < EVIDENCE_HOT_DURATION {
+                EvidenceChangePhase::Hot
+            } else if elapsed < EVIDENCE_CHANGE_TTL {
+                EvidenceChangePhase::Cooling
+            } else {
+                self.changed_at[index] = None;
+                EvidenceChangePhase::None
+            };
+            if app.evidence_change_phase(kind) != phase {
+                app.set_evidence_change_phase(kind, phase);
                 changed = true;
             }
         }
@@ -398,33 +410,59 @@ mod tests {
     }
 
     #[test]
-    fn marker_timers_are_independent_restartable_and_expire_without_refresh() {
+    fn emphasis_phases_only_redraw_at_boundaries_and_restart_independently() {
         let mut app = App::new(ProjectSnapshot::unavailable());
         let mut runtime = BuildTestRuntime::default();
         let now = Instant::now();
-        assert!(
-            BuildTestKind::ALL
-                .into_iter()
-                .all(|kind| !app.evidence_changed(kind))
-        );
-        runtime.mark_changed(&mut app, BuildTestKind::BuildDebug, now);
+        let kind = BuildTestKind::BuildDebug;
+        assert!(!runtime.advance_emphasis(&mut app, now));
+        runtime.mark_changed(&mut app, kind, now);
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        for (millis, phase, redraw) in [
+            (0, EvidenceChangePhase::Hot, false),
+            (749, EvidenceChangePhase::Hot, false),
+            (750, EvidenceChangePhase::Hot, false),
+            (1999, EvidenceChangePhase::Hot, false),
+            (2000, EvidenceChangePhase::Cooling, true),
+            (2999, EvidenceChangePhase::Cooling, false),
+            (3000, EvidenceChangePhase::None, true),
+            (3250, EvidenceChangePhase::None, false),
+        ] {
+            assert_eq!(
+                runtime.advance_emphasis(&mut app, now + Duration::from_millis(millis)),
+                redraw
+            );
+            assert_eq!(app.evidence_change_phase(kind), phase);
+            assert_eq!(
+                app.evidence_change_phase(BuildTestKind::Test),
+                EvidenceChangePhase::None
+            );
+        }
+        assert_eq!(runtime.changed_at, [None; 3]);
+        runtime.mark_changed(&mut app, kind, now);
+        runtime.advance_emphasis(&mut app, now + Duration::from_secs(1));
         runtime.mark_changed(&mut app, BuildTestKind::Test, now + Duration::from_secs(1));
-        runtime.mark_changed(
-            &mut app,
-            BuildTestKind::BuildDebug,
-            now + Duration::from_secs(2),
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        runtime.mark_changed(&mut app, kind, now + Duration::from_secs(2));
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        runtime.advance_emphasis(&mut app, now + Duration::from_secs(3));
+        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        assert_eq!(
+            app.evidence_change_phase(BuildTestKind::Test),
+            EvidenceChangePhase::Cooling
         );
-        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
-        assert!(!runtime.expire_markers(&mut app, now + Duration::from_secs(3)));
-        assert!(runtime.expire_markers(&mut app, now + Duration::from_secs(4)));
-        assert!(!app.evidence_changed(BuildTestKind::Test));
-        assert!(app.evidence_changed(BuildTestKind::BuildDebug));
-        assert!(runtime.expire_markers(&mut app, now + Duration::from_secs(5)));
-        assert!(!runtime.expire_markers(&mut app, now + Duration::from_secs(6)));
-        assert!(
-            BuildTestKind::ALL
-                .into_iter()
-                .all(|kind| !app.evidence_changed(kind))
+        runtime.advance_emphasis(&mut app, now + Duration::from_secs(4));
+        assert_eq!(
+            app.evidence_change_phase(kind),
+            EvidenceChangePhase::Cooling
+        );
+        assert_eq!(
+            app.evidence_change_phase(BuildTestKind::Test),
+            EvidenceChangePhase::None
+        );
+        assert_eq!(
+            app.evidence_change_phase(BuildTestKind::BuildRelease),
+            EvidenceChangePhase::None
         );
     }
 
@@ -438,7 +476,7 @@ mod tests {
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| !app.evidence_changed(kind))
+                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
         );
         let kind = BuildTestKind::BuildDebug;
         let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
@@ -455,7 +493,7 @@ mod tests {
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| !app.evidence_changed(kind))
+                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
         );
         runtime.apply_state(
             &mut app,
@@ -466,9 +504,9 @@ mod tests {
                 "cargo check",
             )),
         );
-        assert!(app.evidence_changed(kind));
-        runtime.marker_expiry[0] = Some(Instant::now());
-        let old_expiry = runtime.marker_expiry[0];
+        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        runtime.changed_at[0] = Some(Instant::now());
+        let old_expiry = runtime.changed_at[0];
         apply_build_test_completion(
             Some(&root),
             &mut app,
@@ -477,24 +515,26 @@ mod tests {
             false,
             Some(baseline),
         );
-        assert!(runtime.marker_expiry[0] > old_expiry);
-        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        assert!(runtime.changed_at[0] > old_expiry);
+        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
         fs::write(root.join("source.rs"), "changed").unwrap();
         assert!(check_build_test_freshness(
             Some(&root),
             &mut app,
             &mut runtime
         ));
-        assert!(app.evidence_changed(kind));
-        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
-        let expiry = runtime.marker_expiry;
+        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        assert!(
+            app.evidence_change_phase(BuildTestKind::BuildRelease) == EvidenceChangePhase::None
+        );
+        let expiry = runtime.changed_at;
         assert!(!check_build_test_freshness(
             Some(&root),
             &mut app,
             &mut runtime
         ));
-        assert_eq!(runtime.marker_expiry, expiry);
-        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        assert_eq!(runtime.changed_at, expiry);
+        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
         apply_build_test_completion(
             Some(&root),
             &mut app,
@@ -508,11 +548,11 @@ mod tests {
             false,
             None,
         );
-        assert!(app.evidence_changed(kind));
-        let expiry = runtime.marker_expiry;
+        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        let expiry = runtime.changed_at;
         let same_state = app.build_test_state(kind).clone();
         runtime.apply_state(&mut app, kind, same_state);
-        assert_eq!(runtime.marker_expiry, expiry);
+        assert_eq!(runtime.changed_at, expiry);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -626,9 +666,11 @@ mod tests {
         };
         assert_eq!(run.source_label(), "configured-build");
         assert_eq!(run.command_label(), "configured-build --focused");
-        assert!(app.evidence_changed(BuildTestKind::BuildDebug));
-        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
-        assert!(!app.evidence_changed(BuildTestKind::Test));
+        assert!(app.evidence_change_phase(BuildTestKind::BuildDebug) == EvidenceChangePhase::Hot);
+        assert!(
+            app.evidence_change_phase(BuildTestKind::BuildRelease) == EvidenceChangePhase::None
+        );
+        assert!(app.evidence_change_phase(BuildTestKind::Test) == EvidenceChangePhase::None);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -795,11 +837,11 @@ mod tests {
                 Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
             );
         }
-        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| !app.evidence_changed(kind))
+                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
         );
         fs::write(root.join("source.rs"), "after").unwrap();
         assert!(check_build_test_freshness(
@@ -816,7 +858,7 @@ mod tests {
             assert!(
                 matches!(app.build_test_state(kind), BuildTestState::Completed(result) if result.kind() == kind && result.freshness() == BuildTestFreshness::Stale)
             );
-            assert!(app.evidence_changed(kind));
+            assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
         }
         apply_build_test_completion(
             Some(&root),

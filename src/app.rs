@@ -105,6 +105,13 @@ enum AppView {
     FileBrowser,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvidenceChangePhase {
+    None,
+    Hot,
+    Cooling,
+}
+
 pub struct App {
     project_name: String,
     view: AppView,
@@ -116,7 +123,7 @@ pub struct App {
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
     build_test_test: BuildTestState,
-    evidence_changed: [bool; 3],
+    evidence_change_phase: [EvidenceChangePhase; 3],
     evidence_selection: EvidenceSelection,
     artifact: Option<ArtifactObservation>,
     focused_panel: FocusedPanel,
@@ -146,7 +153,7 @@ impl App {
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
-            evidence_changed: [false; 3],
+            evidence_change_phase: [EvidenceChangePhase::None; 3],
             evidence_selection: EvidenceSelection::BuildDebug,
             artifact: None,
             focused_panel: FocusedPanel::Tasks,
@@ -336,20 +343,20 @@ impl App {
         }
     }
 
-    pub fn evidence_changed(&self, kind: BuildTestKind) -> bool {
-        self.evidence_changed[match kind {
+    pub fn evidence_change_phase(&self, kind: BuildTestKind) -> EvidenceChangePhase {
+        self.evidence_change_phase[match kind {
             BuildTestKind::BuildDebug => 0,
             BuildTestKind::BuildRelease => 1,
             BuildTestKind::Test => 2,
         }]
     }
 
-    pub fn set_evidence_changed(&mut self, kind: BuildTestKind, visible: bool) {
-        self.evidence_changed[match kind {
+    pub fn set_evidence_change_phase(&mut self, kind: BuildTestKind, phase: EvidenceChangePhase) {
+        self.evidence_change_phase[match kind {
             BuildTestKind::BuildDebug => 0,
             BuildTestKind::BuildRelease => 1,
             BuildTestKind::Test => 2,
-        }] = visible;
+        }] = phase;
     }
 
     pub const fn evidence_detail_kind(&self) -> Option<BuildTestKind> {

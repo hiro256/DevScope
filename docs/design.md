@@ -95,14 +95,17 @@ both tall full listings and shorter layouts with accurate overflow counts.
 
 The Overview Evidence selector aligns process targets, Outcome, and Freshness in
 separate columns. Completed results retain Passed/Failed independently of Fresh/Stale;
-non-completed states and Artifact have no freshness value. A session-local `*` marks
-a runtime process-state change for approximately three seconds, independently per target.
-Verification runtime owns expiry; App holds visibility and rendering only reads it.
-Initial restoration and availability setup remain quiet. The cue is not Evidence state,
-persistence, or history and uses no color or animation. Narrow rows drop the cue before
-freshness text, prioritizing target and primary status. Project Progress's compact summary
-and Evidence Preview remain separate and unchanged. Windows Terminal dogfood accepted
-the column alignment and transient cue.
+non-completed states and Artifact have no freshness value. Runtime process-state changes
+use session-local text emphasis, independently per target: bold for two seconds,
+then normal styling until expiry at three seconds. Underlining is not used. A new change
+restarts the emphasis. The selection prefix is unstyled; row text and cell width never
+change. There is no extra symbol, color, or animation framework.
+Verification runtime owns time and advances App's display phase only at phase boundaries;
+rendering only reads it. Initial restoration and availability setup remain quiet.
+The cue is not Evidence state, persistence, or history. Narrow rows drop freshness text
+before truncating target and primary status. Artifact, Project Progress's compact summary,
+and Evidence Preview remain unchanged. Windows Terminal dogfood accepted the column
+alignment and the replacement bold-only emphasis; underlining was dropped following feedback.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::app::{
-    ActivityState, App, CurrentWorkState, DetailTarget, EvidenceSelection, FocusedPanel, PlanState,
-    RefreshSource, TaskState,
+    ActivityState, App, CurrentWorkState, DetailTarget, EvidenceChangePhase, EvidenceSelection,
+    FocusedPanel, PlanState, RefreshSource, TaskState,
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, GitChangeCounts,
@@ -12,7 +12,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
 
@@ -556,11 +556,7 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(fit_navigation_lines(
-            evidence_selector_lines(app, inner_width(area)),
-            inner_width(area),
-        ))
-        .block(navigation_block(
+        Paragraph::new(evidence_selector_lines(app, inner_width(area))).block(navigation_block(
             "Evidence",
             app.focused_panel() == FocusedPanel::Evidence,
         )),
@@ -596,18 +592,24 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 "{marker}{:<13}  {status:<9}  {freshness:<5}",
                 detail_kind(kind)
             );
-            let marked = format!("{full}  *");
-            let row = if app.evidence_changed(kind) && Line::from(marked.as_str()).width() <= width
-            {
-                marked
-            } else if Line::from(full.trim_end()).width() <= width {
+            let row = if Line::from(full.trim_end()).width() <= width {
                 full.trim_end().to_owned()
             } else if Line::from(base.as_str()).width() <= width {
                 base
             } else {
                 format!("{marker}{} {status}", detail_kind(kind))
             };
-            Line::from(truncate_text(&row, width))
+            let modifiers = match app.evidence_change_phase(kind) {
+                EvidenceChangePhase::Hot => Modifier::BOLD,
+                EvidenceChangePhase::Cooling | EvidenceChangePhase::None => Modifier::empty(),
+            };
+            Line::from(vec![
+                Span::raw(marker.chars().take(width.min(2)).collect::<String>()),
+                Span::styled(
+                    truncate_text(&row[2..], width.saturating_sub(2)),
+                    Style::default().add_modifier(modifiers),
+                ),
+            ])
         })
         .collect::<Vec<_>>();
     if let Some(artifact) = app.artifact() {
@@ -617,7 +619,10 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             "  "
         };
         let status = artifact_selector_status(artifact.status());
-        lines.push(Line::from(format!("{marker}{:<13}  {status}", "Artifact")));
+        lines.push(Line::from(truncate_text(
+            &format!("{marker}{:<13}  {status}", "Artifact"),
+            width,
+        )));
     }
     lines
 }
@@ -2385,13 +2390,71 @@ mod tests {
     }
 
     #[test]
+    fn evidence_emphasis_preserves_text_width_and_selection_prefix() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_build_test_state(
+            BuildTestKind::BuildDebug,
+            completed_state(
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+            ),
+        );
+        for width in 0..=80 {
+            app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::None);
+            let normal = evidence_selector_lines(&app, width)[0].clone();
+            let summary = evidence(&app);
+            let preview = evidence_preview(&app);
+            for (phase, modifiers) in [
+                (EvidenceChangePhase::Hot, Modifier::BOLD),
+                (EvidenceChangePhase::Cooling, Modifier::empty()),
+                (EvidenceChangePhase::None, Modifier::empty()),
+            ] {
+                app.set_evidence_change_phase(BuildTestKind::BuildDebug, phase);
+                let row = evidence_selector_lines(&app, width)[0].clone();
+                assert_eq!(row.to_string(), normal.to_string());
+                assert_eq!(row.width(), normal.width());
+                assert!(row.width() <= width);
+                assert_eq!(row.spans[0].style, Style::default());
+                assert_eq!(row.spans[1].style.add_modifier, modifiers);
+                assert!(row.spans[1].style.fg.is_none());
+                assert!(row.spans[1].style.bg.is_none());
+                assert_eq!(evidence(&app), summary);
+                assert_eq!(evidence_preview(&app), preview);
+            }
+        }
+    }
+
+    #[test]
+    fn evidence_emphasis_reaches_rendered_cells_without_styling_selection() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::Hot);
+        let mut terminal = Terminal::new(TestBackend::new(50, 8)).unwrap();
+        terminal
+            .draw(|frame| render_evidence(frame, frame.area(), &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let selected = buffer
+            .content()
+            .iter()
+            .position(|cell| cell.symbol() == ">")
+            .unwrap();
+        assert!(!buffer.content()[selected].modifier.contains(Modifier::BOLD));
+        assert!(
+            buffer.content()[selected + 2]
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
     fn evidence_columns_and_optional_cues_fit_the_navigation_width() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
             for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
                 for kind in BuildTestKind::ALL {
                     app.apply_build_test_state(kind, completed_state(kind, outcome, freshness));
-                    app.set_evidence_changed(kind, true);
+                    app.set_evidence_change_phase(kind, EvidenceChangePhase::Hot);
                 }
                 let rows = evidence_selector_lines(&app, 45);
                 let outcome_text = if outcome == BuildTestOutcome::Passed {
@@ -2410,18 +2473,18 @@ mod tests {
                     assert_eq!(Line::from(prefix).width(), 17);
                     let prefix = row.split(freshness_text).next().unwrap();
                     assert_eq!(Line::from(prefix).width(), 28);
-                    assert!(row.ends_with('*'));
+                    assert!(!row.contains('*'));
                 }
             }
         }
         let summary = evidence(&app);
         for kind in BuildTestKind::ALL {
-            app.set_evidence_changed(kind, false);
+            app.set_evidence_change_phase(kind, EvidenceChangePhase::None);
         }
         assert_eq!(evidence(&app), summary);
-        app.set_evidence_changed(BuildTestKind::BuildDebug, true);
+        app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::Hot);
         let full = evidence_selector_lines(&app, 36)[0].to_string();
-        assert!(full.ends_with('*'));
+        assert!(full.ends_with("Stale"));
         let no_marker = evidence_selector_lines(&app, 33)[0].to_string();
         assert!(no_marker.ends_with("Stale"));
         let no_freshness = evidence_selector_lines(&app, 32)[0].to_string();

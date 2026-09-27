@@ -666,7 +666,7 @@ pub fn run(
         }
 
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
-        needs_render |= build_test_runtime.expire_markers(app, Instant::now());
+        needs_render |= build_test_runtime.advance_emphasis(app, Instant::now());
 
         if scheduler.is_due(Instant::now()) {
             observe_active_build_test_inputs(project_root, &mut build_test_runtime);
