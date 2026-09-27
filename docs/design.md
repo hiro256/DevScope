@@ -120,7 +120,7 @@ Reordering and unchanged observations do not restart it; removed paths and unava
 Activity clear it. A private event-loop runtime owns timing, App holds only display phases,
 and rendering preserves row text, Unicode cell width, and truncation. This is a presentation
 cue, not Activity history or Evidence; Preview and Full View are unchanged.
-User-confirmed Windows Terminal dogfood accepted the Changed Files emphasis.
+Windows Terminal dogfood completed for the Changed Files emphasis; user acceptance remains pending.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
