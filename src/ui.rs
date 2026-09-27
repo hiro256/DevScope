@@ -1,10 +1,9 @@
-use crate::app::CommitEmphasisPhase;
-use crate::app::{TaskEmphasisPhase, TaskPresentationKey};
+use crate::app::TaskPresentationKey;
 use std::time::Duration;
 
 use crate::app::{
-    ActivityState, App, ChangedFileEmphasisPhase, CurrentWorkState, DetailTarget,
-    EvidenceChangePhase, EvidenceSelection, FocusedPanel, PlanState, RefreshSource, TaskState,
+    ActivityState, App, CurrentWorkState, DetailTarget, EvidenceSelection, FocusedPanel, PlanState,
+    RefreshSource, TaskState, TransientEmphasisPhase,
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, GitChangeCounts,
@@ -617,13 +616,13 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             ];
             let phase = app.evidence_change_phase(kind);
             let bold = match phase {
-                EvidenceChangePhase::Hot => [true; 4],
-                EvidenceChangePhase::Warm => [false, true, true, true],
-                EvidenceChangePhase::Settling => [false, false, true, true],
-                EvidenceChangePhase::Cooling => {
+                TransientEmphasisPhase::Hot => [true; 4],
+                TransientEmphasisPhase::Warm => [false, true, true, true],
+                TransientEmphasisPhase::Settling => [false, false, true, true],
+                TransientEmphasisPhase::Cooling => {
                     [false, false, !freshness_visible, freshness_visible]
                 }
-                EvidenceChangePhase::None => [false; 4],
+                TransientEmphasisPhase::None => [false; 4],
             };
             let content = columns.concat();
             let clipped = truncate_text(&content, width.saturating_sub(2));
@@ -1374,7 +1373,7 @@ fn tasks(
     rows: usize,
     width: usize,
     current_work: &CurrentWorkState,
-    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TaskEmphasisPhase,
+    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TransientEmphasisPhase,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -1400,7 +1399,7 @@ fn task_lines(
     rows: usize,
     width: usize,
     current_work: &CurrentWorkState,
-    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TaskEmphasisPhase,
+    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TransientEmphasisPhase,
 ) -> Vec<Line<'static>> {
     let total = summary.remaining();
     let selected = selected.unwrap_or(0).min(total - 1);
@@ -1442,7 +1441,7 @@ fn task_line(
     selected: bool,
     width: usize,
     has_current_work: bool,
-    phase: TaskEmphasisPhase,
+    phase: TransientEmphasisPhase,
 ) -> Line<'static> {
     let prefix = format!("{} □ ", if selected { ">" } else { " " });
     const INDICATOR: &str = "  [Work parent]";
@@ -1462,15 +1461,18 @@ fn task_line(
             },
             false,
         ),
-        ("□ ".to_owned(), phase == TaskEmphasisPhase::Hot),
-        (text, phase != TaskEmphasisPhase::None),
+        ("□ ".to_owned(), phase == TransientEmphasisPhase::Hot),
+        (text, phase != TransientEmphasisPhase::None),
         (
             if show_work {
                 INDICATOR.to_owned()
             } else {
                 String::new()
             },
-            matches!(phase, TaskEmphasisPhase::Hot | TaskEmphasisPhase::Warm),
+            matches!(
+                phase,
+                TransientEmphasisPhase::Hot | TransientEmphasisPhase::Warm
+            ),
         ),
     ];
     let content: String = columns.iter().map(|(text, _)| text.as_str()).collect();
@@ -1537,7 +1539,7 @@ fn changed_files(
     selected: Option<usize>,
     rows: usize,
     width: usize,
-    phase_for: impl Fn(&std::path::Path) -> ChangedFileEmphasisPhase,
+    phase_for: impl Fn(&std::path::Path) -> TransientEmphasisPhase,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -1607,7 +1609,7 @@ fn changed_file_line(
     selected: bool,
     width: usize,
     counts_column: usize,
-    phase: ChangedFileEmphasisPhase,
+    phase: TransientEmphasisPhase,
 ) -> Line<'static> {
     let path = changed_file_prefix(file, selected);
     let path_width = Line::from(path.clone()).width();
@@ -1631,20 +1633,20 @@ fn changed_file_line(
         ),
         (
             format!("{}  ", git_file_status(&file.status)),
-            phase == ChangedFileEmphasisPhase::Hot,
+            phase == TransientEmphasisPhase::Hot,
         ),
         (
             visible_path,
             matches!(
                 phase,
-                ChangedFileEmphasisPhase::Hot
-                    | ChangedFileEmphasisPhase::Warm
-                    | ChangedFileEmphasisPhase::Settling
-            ) || (phase == ChangedFileEmphasisPhase::Cooling && !has_counts),
+                TransientEmphasisPhase::Hot
+                    | TransientEmphasisPhase::Warm
+                    | TransientEmphasisPhase::Settling
+            ) || (phase == TransientEmphasisPhase::Cooling && !has_counts),
         ),
         (
             counts.unwrap_or_default(),
-            phase != ChangedFileEmphasisPhase::None,
+            phase != TransientEmphasisPhase::None,
         ),
     ];
     let content: String = columns.iter().map(|(text, _)| text.as_str()).collect();
@@ -1719,7 +1721,7 @@ fn commits(
     activity: &ActivityState,
     rows: usize,
     width: usize,
-    phase_for: impl Fn(&str) -> CommitEmphasisPhase,
+    phase_for: impl Fn(&str) -> TransientEmphasisPhase,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -1742,7 +1744,7 @@ fn commits(
 fn commit_line(
     commit: &devscope::progress::GitCommit,
     width: usize,
-    phase: CommitEmphasisPhase,
+    phase: TransientEmphasisPhase,
 ) -> Line<'static> {
     let content = format!("{}  {}", commit.id, commit.summary);
     let clipped = truncate_text(&content, width);
@@ -1755,9 +1757,12 @@ fn commit_line(
     let mut remaining = prefix.chars().count();
     let mut spans = Vec::new();
     for (column, bold) in [
-        (commit.id.as_str(), phase == CommitEmphasisPhase::Hot),
+        (commit.id.as_str(), phase == TransientEmphasisPhase::Hot),
         ("  ", false),
-        (commit.summary.as_str(), phase != CommitEmphasisPhase::None),
+        (
+            commit.summary.as_str(),
+            phase != TransientEmphasisPhase::None,
+        ),
     ] {
         let mut text: String = column.chars().take(remaining).collect();
         remaining = remaining.saturating_sub(column.chars().count());
@@ -2607,16 +2612,16 @@ mod tests {
             ),
         );
         for width in 0..=80 {
-            app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::None);
+            app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::None);
             let normal = evidence_selector_lines(&app, width)[0].clone();
             let summary = evidence(&app);
             let preview = evidence_preview(&app);
             for (phase, modifiers) in [
-                (EvidenceChangePhase::Hot, Modifier::BOLD),
-                (EvidenceChangePhase::Warm, Modifier::empty()),
-                (EvidenceChangePhase::Settling, Modifier::empty()),
-                (EvidenceChangePhase::Cooling, Modifier::empty()),
-                (EvidenceChangePhase::None, Modifier::empty()),
+                (TransientEmphasisPhase::Hot, Modifier::BOLD),
+                (TransientEmphasisPhase::Warm, Modifier::empty()),
+                (TransientEmphasisPhase::Settling, Modifier::empty()),
+                (TransientEmphasisPhase::Cooling, Modifier::empty()),
+                (TransientEmphasisPhase::None, Modifier::empty()),
             ] {
                 app.set_evidence_change_phase(BuildTestKind::BuildDebug, phase);
                 let row = evidence_selector_lines(&app, width)[0].clone();
@@ -2651,14 +2656,14 @@ mod tests {
                 let freshness_visible = completed && width == 45;
                 let text = evidence_selector_lines(&app, width)[0].to_string();
                 for (phase, expected) in [
-                    (EvidenceChangePhase::Hot, [true; 4]),
-                    (EvidenceChangePhase::Warm, [false, true, true, true]),
-                    (EvidenceChangePhase::Settling, [false, false, true, true]),
+                    (TransientEmphasisPhase::Hot, [true; 4]),
+                    (TransientEmphasisPhase::Warm, [false, true, true, true]),
+                    (TransientEmphasisPhase::Settling, [false, false, true, true]),
                     (
-                        EvidenceChangePhase::Cooling,
+                        TransientEmphasisPhase::Cooling,
                         [false, false, !freshness_visible, freshness_visible],
                     ),
-                    (EvidenceChangePhase::None, [false; 4]),
+                    (TransientEmphasisPhase::None, [false; 4]),
                 ] {
                     app.set_evidence_change_phase(kind, phase);
                     let row = &evidence_selector_lines(&app, width)[0];
@@ -2685,7 +2690,7 @@ mod tests {
     #[test]
     fn evidence_emphasis_reaches_rendered_cells_without_styling_selection() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
-        app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::Hot);
+        app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
         let mut terminal = Terminal::new(TestBackend::new(50, 8)).unwrap();
         terminal
             .draw(|frame| render_evidence(frame, frame.area(), &app))
@@ -2711,7 +2716,7 @@ mod tests {
             for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
                 for kind in BuildTestKind::ALL {
                     app.apply_build_test_state(kind, completed_state(kind, outcome, freshness));
-                    app.set_evidence_change_phase(kind, EvidenceChangePhase::Hot);
+                    app.set_evidence_change_phase(kind, TransientEmphasisPhase::Hot);
                 }
                 let rows = evidence_selector_lines(&app, 45);
                 let outcome_text = if outcome == BuildTestOutcome::Passed {
@@ -2736,10 +2741,10 @@ mod tests {
         }
         let summary = evidence(&app);
         for kind in BuildTestKind::ALL {
-            app.set_evidence_change_phase(kind, EvidenceChangePhase::None);
+            app.set_evidence_change_phase(kind, TransientEmphasisPhase::None);
         }
         assert_eq!(evidence(&app), summary);
-        app.set_evidence_change_phase(BuildTestKind::BuildDebug, EvidenceChangePhase::Hot);
+        app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
         let full = evidence_selector_lines(&app, 36)[0].to_string();
         assert!(full.ends_with("Stale"));
         let no_marker = evidence_selector_lines(&app, 33)[0].to_string();
@@ -3588,7 +3593,7 @@ mod tests {
     }
     #[test]
     fn task_emphasis_preserves_text_work_suffix_and_unicode_width() {
-        use TaskEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let task = TaskSummaryItem::new(
             "plan.md".into(),
             1,
@@ -3642,7 +3647,7 @@ mod tests {
             TaskState::Available(TaskSummary::new(1, vec![task])),
             ActivityState::Unavailable,
         );
-        app.set_task_emphasis(key, TaskEmphasisPhase::Hot);
+        app.set_task_emphasis(key, TransientEmphasisPhase::Hot);
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         terminal
             .draw(|frame| render_tasks(frame, frame.area(), &app))
@@ -3655,7 +3660,7 @@ mod tests {
 
     #[test]
     fn commit_emphasis_preserves_unicode_text_width_and_styles() {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let commit = GitCommit {
             id: "abc1234".into(),
             summary: "日本語の新しいコミット subject".into(),
@@ -3686,7 +3691,7 @@ mod tests {
     #[test]
     fn commits_render_preserves_styled_spans_and_bounded_rows() {
         let mut app = app(TaskState::Unavailable, activity_with_files(vec![]));
-        app.set_commit_emphasis("abc".into(), CommitEmphasisPhase::Hot);
+        app.set_commit_emphasis("abc".into(), TransientEmphasisPhase::Hot);
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         terminal
             .draw(|frame| render_commits(frame, frame.area(), &app))
@@ -3694,9 +3699,9 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
         assert!(buffer[(6, 1)].modifier.contains(Modifier::BOLD));
-        assert!(commits(app.activity(), 0, 80, |_| CommitEmphasisPhase::Hot).is_empty());
+        assert!(commits(app.activity(), 0, 80, |_| TransientEmphasisPhase::Hot).is_empty());
         assert_eq!(
-            commits(app.activity(), 1, 80, |_| CommitEmphasisPhase::Hot).len(),
+            commits(app.activity(), 1, 80, |_| TransientEmphasisPhase::Hot).len(),
             1
         );
     }
@@ -3713,7 +3718,7 @@ mod tests {
 
     #[test]
     fn changed_file_emphasis_preserves_unicode_text_and_cell_width() {
-        use ChangedFileEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let file = GitChangedFile {
             path: "src/日本語.rs".into(),
             status: GitFileStatus::Modified,
@@ -3777,7 +3782,7 @@ mod tests {
             TaskState::Unavailable,
             activity_with_files(vec![file.clone()]),
         );
-        app.set_changed_file_emphasis(file.path, ChangedFileEmphasisPhase::Hot);
+        app.set_changed_file_emphasis(file.path, TransientEmphasisPhase::Hot);
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         terminal
             .draw(|frame| render_changed_files_list(frame, frame.area(), &app))
@@ -3882,14 +3887,14 @@ mod tests {
         let current_work = matching_work_state("docs\\roadmap.md", parent_task, "- [ ] Work item");
 
         let lines = task_lines(&summary, Some(0), 3, 100, &current_work, |_| {
-            TaskEmphasisPhase::None
+            TransientEmphasisPhase::None
         });
         assert!(!line_text(&lines[0]).contains("[Work parent]"));
         assert!(line_text(&lines[1]).contains("[Work parent]"));
         assert!(!line_text(&lines[2]).contains("[Work parent]"));
 
         let lines = task_lines(&summary, Some(2), 3, 100, &current_work, |_| {
-            TaskEmphasisPhase::None
+            TransientEmphasisPhase::None
         });
         assert!(line_text(&lines[1]).contains("[Work parent]"));
     }
@@ -3905,7 +3910,7 @@ mod tests {
 
         let line = line_text(
             &task_lines(&summary, Some(0), 1, 30, &current_work, |_| {
-                TaskEmphasisPhase::None
+                TransientEmphasisPhase::None
             })[0],
         );
         assert!(line.contains("[Work parent]"));
@@ -4384,9 +4389,7 @@ mod tests {
             file("unknown.bin", None, None),
         ];
         let activity = activity_with_files(files.clone());
-        let wide = changed_files(&activity, Some(1), 3, 80, |_| {
-            ChangedFileEmphasisPhase::None
-        });
+        let wide = changed_files(&activity, Some(1), 3, 80, |_| TransientEmphasisPhase::None);
         let first_counts = wide[0].to_string().find("+1 -1").unwrap();
         let second_counts = wide[1].to_string().find("+2 -3").unwrap();
         assert_eq!(first_counts, second_counts);
@@ -4401,9 +4404,7 @@ mod tests {
             unicode_prefix + CHANGE_COUNTS_GAP
         );
 
-        let narrow = changed_files(&activity, Some(1), 3, 18, |_| {
-            ChangedFileEmphasisPhase::None
-        });
+        let narrow = changed_files(&activity, Some(1), 3, 18, |_| TransientEmphasisPhase::None);
         assert!(narrow[0].to_string().contains("M  short.rs"));
         assert!(!narrow[0].to_string().contains("+1 -1"));
         assert!(narrow[1].to_string().starts_with("> M  longer.rs"));
@@ -4427,7 +4428,7 @@ mod tests {
         ));
         all_files.push(file("another-offscreen-path.rs"));
         let visible_lines = changed_files(&activity_with_files(all_files), Some(0), 4, 80, |_| {
-            ChangedFileEmphasisPhase::None
+            TransientEmphasisPhase::None
         });
         let expected_column =
             Line::from(changed_file_prefix(&visible[1], false)).width() + CHANGE_COUNTS_GAP;
@@ -4440,7 +4441,7 @@ mod tests {
         let capped = vec![file("short.rs"), file(&"very-long-path-".repeat(8))];
         let capped_lines =
             changed_files(&activity_with_files(capped.clone()), Some(0), 2, 80, |_| {
-                ChangedFileEmphasisPhase::None
+                TransientEmphasisPhase::None
             });
         assert_eq!(change_counts_column(&capped, 80), MAX_CHANGE_COUNTS_COLUMN);
         assert_eq!(
@@ -4650,7 +4651,13 @@ mod tests {
         for width in 0..=80 {
             for work in [false, true] {
                 let row = fit_navigation_lines(
-                    vec![task_line(&task, true, width, work, TaskEmphasisPhase::None)],
+                    vec![task_line(
+                        &task,
+                        true,
+                        width,
+                        work,
+                        TransientEmphasisPhase::None,
+                    )],
                     width,
                 )
                 .remove(0);

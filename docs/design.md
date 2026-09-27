@@ -94,7 +94,10 @@ Small priorities and Preview geometry are unchanged. Windows Terminal dogfood ac
 both tall full listings and shorter layouts with accurate overflow counts.
 
 The Overview Evidence selector aligns process targets, Outcome, and Freshness in
-separate columns. Completed results retain Passed/Failed independently of Fresh/Stale;
+separate columns. Evidence, Changed Files, Tasks, and Recent Commits share one five-phase
+type and pure elapsed-time calculation; detection, identity, baselines, cleanup, redraw,
+and rendering remain independent for each cue.
+Completed results retain Passed/Failed independently of Fresh/Stale;
 non-completed states and Artifact have no freshness value. Runtime process-state changes
 use session-local bold emphasis, independently per target: full content for 750 ms,
 state columns until 1.5 seconds, state text (without its symbol) and freshness until

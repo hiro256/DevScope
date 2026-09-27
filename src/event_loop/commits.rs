@@ -1,9 +1,7 @@
 //! Session-local cues for a newly prepended prefix, not history-change notifications.
-use crate::app::{ActivityState, App, CommitEmphasisPhase};
-use std::{
-    collections::BTreeMap,
-    time::{Duration, Instant},
-};
+use super::transient::transient_emphasis_phase;
+use crate::app::{ActivityState, App, TransientEmphasisPhase};
+use std::{collections::BTreeMap, time::Instant};
 
 enum CommitBaseline {
     Unavailable,
@@ -64,14 +62,14 @@ impl CommitsRuntime {
             if prefix.is_some() && ids.contains(id) {
                 return true;
             }
-            app.set_commit_emphasis(id.clone(), CommitEmphasisPhase::None);
+            app.set_commit_emphasis(id.clone(), TransientEmphasisPhase::None);
             redraw = true;
             false
         });
         if let Some(prefix) = prefix {
             for id in ids.iter().take(prefix) {
                 self.added_at.insert(id.clone(), now);
-                app.set_commit_emphasis(id.clone(), CommitEmphasisPhase::Hot);
+                app.set_commit_emphasis(id.clone(), TransientEmphasisPhase::Hot);
                 redraw = true;
             }
         }
@@ -79,21 +77,11 @@ impl CommitsRuntime {
         redraw
     }
     pub(super) fn advance(&mut self, app: &mut App, now: Instant) -> bool {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let mut redraw = false;
         self.added_at.retain(|id, start| {
             let elapsed = now.saturating_duration_since(*start);
-            let phase = if elapsed < Duration::from_millis(750) {
-                Hot
-            } else if elapsed < Duration::from_millis(1500) {
-                Warm
-            } else if elapsed < Duration::from_millis(2250) {
-                Settling
-            } else if elapsed < Duration::from_millis(3000) {
-                Cooling
-            } else {
-                None
-            };
+            let phase = transient_emphasis_phase(elapsed);
             let previous = app.commit_emphasis(id);
             if previous != phase {
                 app.set_commit_emphasis(id.clone(), phase);
@@ -118,6 +106,7 @@ mod tests {
         progress::{ActivitySummary, GitActivity, GitCommit},
         project::ProjectSnapshot,
     };
+    use std::time::Duration;
 
     fn state(ids: &[&str]) -> ActivityState {
         ActivityState::Available(ActivitySummary::from(&GitActivity {
@@ -149,7 +138,7 @@ mod tests {
         assert!(!runtime.observe(&mut app, now));
         assert!(runtime.added_at.is_empty());
         for id in ["C", "B", "A"] {
-            assert_eq!(app.commit_emphasis(id), CommitEmphasisPhase::None);
+            assert_eq!(app.commit_emphasis(id), TransientEmphasisPhase::None);
         }
     }
     #[test]
@@ -160,15 +149,15 @@ mod tests {
         app.apply_activity_state(ActivityState::NotRepository);
         runtime.observe(&mut app, now);
         assert!(runtime.added_at.is_empty());
-        assert_eq!(app.commit_emphasis("D"), CommitEmphasisPhase::None);
+        assert_eq!(app.commit_emphasis("D"), TransientEmphasisPhase::None);
         app.apply_activity_state(state(&["X", "Y", "Z"]));
         assert!(!runtime.observe(&mut app, now));
         assert!(runtime.added_at.is_empty());
         app.apply_activity_state(state(&["N", "X", "Y", "Z"]));
         assert!(runtime.observe(&mut app, now));
-        assert_eq!(app.commit_emphasis("N"), CommitEmphasisPhase::Hot);
+        assert_eq!(app.commit_emphasis("N"), TransientEmphasisPhase::Hot);
         for id in ["X", "Y", "Z"] {
-            assert_eq!(app.commit_emphasis(id), CommitEmphasisPhase::None);
+            assert_eq!(app.commit_emphasis(id), TransientEmphasisPhase::None);
         }
     }
     #[test]
@@ -176,7 +165,7 @@ mod tests {
         let (mut app, mut runtime, now) = setup(&[]);
         app.apply_activity_state(state(&["A"]));
         assert!(runtime.observe(&mut app, now));
-        assert_eq!(app.commit_emphasis("A"), CommitEmphasisPhase::Hot);
+        assert_eq!(app.commit_emphasis("A"), TransientEmphasisPhase::Hot);
     }
     #[test]
     fn initially_unavailable_observation_establishes_quiet_baseline() {
@@ -194,7 +183,7 @@ mod tests {
     }
     #[test]
     fn quiet_baseline_single_and_multiple_prepends() {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup(&["C", "B", "A"]);
         assert!(!runtime.observe(&mut app, now));
         assert_eq!(app.commit_emphasis("C"), None);
@@ -214,7 +203,7 @@ mod tests {
     }
     #[test]
     fn discontinuity_clears_active_cues_then_accepts_next_prepend() {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup(&["C", "B", "A"]);
         app.apply_activity_state(state(&["D", "C", "B"]));
         runtime.observe(&mut app, now);
@@ -234,7 +223,7 @@ mod tests {
     }
     #[test]
     fn first_commit_boundaries_and_unchanged_refresh() {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup(&[]);
         app.apply_activity_state(state(&["A"]));
         runtime.observe(&mut app, now);
@@ -260,7 +249,7 @@ mod tests {
     }
     #[test]
     fn timers_are_independent_and_removed_ids_are_pruned() {
-        use CommitEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup(&["C"]);
         app.apply_activity_state(state(&["D", "C"]));
         runtime.observe(&mut app, now);

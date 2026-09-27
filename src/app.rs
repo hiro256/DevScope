@@ -107,16 +107,7 @@ enum AppView {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EvidenceChangePhase {
-    None,
-    Hot,
-    Warm,
-    Settling,
-    Cooling,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChangedFileEmphasisPhase {
+pub enum TransientEmphasisPhase {
     None,
     Hot,
     Warm,
@@ -133,24 +124,6 @@ impl TaskPresentationKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TaskEmphasisPhase {
-    None,
-    Hot,
-    Warm,
-    Settling,
-    Cooling,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CommitEmphasisPhase {
-    None,
-    Hot,
-    Warm,
-    Settling,
-    Cooling,
-}
-
 pub struct App {
     project_name: String,
     view: AppView,
@@ -158,14 +131,14 @@ pub struct App {
     running: bool,
     plan: PlanState,
     activity: ActivityState,
-    changed_file_emphasis: BTreeMap<PathBuf, ChangedFileEmphasisPhase>,
-    task_emphasis: BTreeMap<TaskPresentationKey, TaskEmphasisPhase>,
-    commit_emphasis: BTreeMap<String, CommitEmphasisPhase>,
+    changed_file_emphasis: BTreeMap<PathBuf, TransientEmphasisPhase>,
+    task_emphasis: BTreeMap<TaskPresentationKey, TransientEmphasisPhase>,
+    commit_emphasis: BTreeMap<String, TransientEmphasisPhase>,
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
     build_test_test: BuildTestState,
-    evidence_change_phase: [EvidenceChangePhase; 3],
+    evidence_change_phase: [TransientEmphasisPhase; 3],
     evidence_selection: EvidenceSelection,
     artifact: Option<ArtifactObservation>,
     focused_panel: FocusedPanel,
@@ -198,7 +171,7 @@ impl App {
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
-            evidence_change_phase: [EvidenceChangePhase::None; 3],
+            evidence_change_phase: [TransientEmphasisPhase::None; 3],
             evidence_selection: EvidenceSelection::BuildDebug,
             artifact: None,
             focused_panel: FocusedPanel::Tasks,
@@ -361,15 +334,15 @@ impl App {
         self.plan
     }
 
-    pub fn changed_file_emphasis(&self, path: &Path) -> ChangedFileEmphasisPhase {
+    pub fn changed_file_emphasis(&self, path: &Path) -> TransientEmphasisPhase {
         self.changed_file_emphasis
             .get(path)
             .copied()
-            .unwrap_or(ChangedFileEmphasisPhase::None)
+            .unwrap_or(TransientEmphasisPhase::None)
     }
 
-    pub fn set_changed_file_emphasis(&mut self, path: PathBuf, phase: ChangedFileEmphasisPhase) {
-        if phase == ChangedFileEmphasisPhase::None {
+    pub fn set_changed_file_emphasis(&mut self, path: PathBuf, phase: TransientEmphasisPhase) {
+        if phase == TransientEmphasisPhase::None {
             self.changed_file_emphasis.remove(&path);
         } else {
             self.changed_file_emphasis.insert(path, phase);
@@ -380,15 +353,15 @@ impl App {
         &self.activity
     }
 
-    pub fn commit_emphasis(&self, id: &str) -> CommitEmphasisPhase {
+    pub fn commit_emphasis(&self, id: &str) -> TransientEmphasisPhase {
         self.commit_emphasis
             .get(id)
             .copied()
-            .unwrap_or(CommitEmphasisPhase::None)
+            .unwrap_or(TransientEmphasisPhase::None)
     }
 
-    pub fn set_commit_emphasis(&mut self, id: String, phase: CommitEmphasisPhase) {
-        if phase == CommitEmphasisPhase::None {
+    pub fn set_commit_emphasis(&mut self, id: String, phase: TransientEmphasisPhase) {
+        if phase == TransientEmphasisPhase::None {
             self.commit_emphasis.remove(&id);
         } else {
             self.commit_emphasis.insert(id, phase);
@@ -399,15 +372,15 @@ impl App {
         &self.tasks
     }
 
-    pub fn task_emphasis(&self, key: &TaskPresentationKey) -> TaskEmphasisPhase {
+    pub fn task_emphasis(&self, key: &TaskPresentationKey) -> TransientEmphasisPhase {
         self.task_emphasis
             .get(key)
             .copied()
-            .unwrap_or(TaskEmphasisPhase::None)
+            .unwrap_or(TransientEmphasisPhase::None)
     }
 
-    pub fn set_task_emphasis(&mut self, key: TaskPresentationKey, phase: TaskEmphasisPhase) {
-        if phase == TaskEmphasisPhase::None {
+    pub fn set_task_emphasis(&mut self, key: TaskPresentationKey, phase: TransientEmphasisPhase) {
+        if phase == TransientEmphasisPhase::None {
             self.task_emphasis.remove(&key);
         } else {
             self.task_emphasis.insert(key, phase);
@@ -433,7 +406,7 @@ impl App {
         }
     }
 
-    pub fn evidence_change_phase(&self, kind: BuildTestKind) -> EvidenceChangePhase {
+    pub fn evidence_change_phase(&self, kind: BuildTestKind) -> TransientEmphasisPhase {
         self.evidence_change_phase[match kind {
             BuildTestKind::BuildDebug => 0,
             BuildTestKind::BuildRelease => 1,
@@ -441,7 +414,11 @@ impl App {
         }]
     }
 
-    pub fn set_evidence_change_phase(&mut self, kind: BuildTestKind, phase: EvidenceChangePhase) {
+    pub fn set_evidence_change_phase(
+        &mut self,
+        kind: BuildTestKind,
+        phase: TransientEmphasisPhase,
+    ) {
         self.evidence_change_phase[match kind {
             BuildTestKind::BuildDebug => 0,
             BuildTestKind::BuildRelease => 1,

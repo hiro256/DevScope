@@ -1,9 +1,7 @@
 //! Session-local addition cues; task domain identity remains unchanged.
-use crate::app::{App, TaskEmphasisPhase, TaskPresentationKey, TaskState};
-use std::{
-    collections::BTreeMap,
-    time::{Duration, Instant},
-};
+use super::transient::transient_emphasis_phase;
+use crate::app::{App, TaskPresentationKey, TaskState, TransientEmphasisPhase};
+use std::{collections::BTreeMap, time::Instant};
 
 pub(super) struct TasksRuntime {
     previous: BTreeMap<TaskPresentationKey, usize>,
@@ -35,36 +33,26 @@ impl TasksRuntime {
             if current.contains_key(key) {
                 return true;
             }
-            app.set_task_emphasis(key.clone(), TaskEmphasisPhase::None);
+            app.set_task_emphasis(key.clone(), TransientEmphasisPhase::None);
             redraw = true;
             false
         });
         for (key, count) in &current {
             if *count > self.previous.get(key).copied().unwrap_or(0) {
                 self.added_at.insert(key.clone(), now);
-                redraw |= app.task_emphasis(key) != TaskEmphasisPhase::Hot;
-                app.set_task_emphasis(key.clone(), TaskEmphasisPhase::Hot);
+                redraw |= app.task_emphasis(key) != TransientEmphasisPhase::Hot;
+                app.set_task_emphasis(key.clone(), TransientEmphasisPhase::Hot);
             }
         }
         self.previous = current;
         redraw
     }
     pub(super) fn advance(&mut self, app: &mut App, now: Instant) -> bool {
-        use TaskEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let mut redraw = false;
         self.added_at.retain(|key, start| {
             let elapsed = now.saturating_duration_since(*start);
-            let phase = if elapsed < Duration::from_millis(750) {
-                Hot
-            } else if elapsed < Duration::from_millis(1500) {
-                Warm
-            } else if elapsed < Duration::from_millis(2250) {
-                Settling
-            } else if elapsed < Duration::from_millis(3000) {
-                Cooling
-            } else {
-                None
-            };
+            let phase = transient_emphasis_phase(elapsed);
             let previous = app.task_emphasis(key);
             if previous != phase {
                 app.set_task_emphasis(key.clone(), phase);
@@ -84,6 +72,7 @@ mod tests {
         progress::{TaskSummary, TaskSummaryItem},
         project::ProjectSnapshot,
     };
+    use std::time::Duration;
 
     fn state(names: &[&str], first_line: usize) -> TaskState {
         TaskState::Available(TaskSummary::new(
@@ -114,7 +103,7 @@ mod tests {
     }
     #[test]
     fn additions_ignore_line_shifts_reorder_and_completion() {
-        use TaskEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup();
         assert!(!runtime.observe(&mut app, now));
         apply(&mut app, &["B", "A"], 100);
@@ -132,7 +121,7 @@ mod tests {
     }
     #[test]
     fn boundaries_and_unchanged_observation_do_not_extend_timer() {
-        use TaskEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup();
         apply(&mut app, &["A", "B", "C"], 1);
         runtime.observe(&mut app, now);
@@ -158,7 +147,7 @@ mod tests {
     }
     #[test]
     fn duplicate_increase_restarts_only_matching_key_and_counts_decrease_does_not() {
-        use TaskEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime, now) = setup();
         apply(&mut app, &["A", "B", "C"], 1);
         runtime.observe(&mut app, now);

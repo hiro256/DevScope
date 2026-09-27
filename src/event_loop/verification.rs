@@ -1,7 +1,8 @@
 //! TUI process verification lifecycle, independent of keyboard and layout routing.
 //! App retains Evidence state; this private child owns execution and freshness baselines.
+use super::transient::transient_emphasis_phase;
 
-use crate::app::{App, EvidenceChangePhase};
+use crate::app::{App, TransientEmphasisPhase};
 use devscope::{
     config::ProjectConfig,
     progress::{
@@ -13,13 +14,8 @@ use devscope::{
 };
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Instant,
 };
-
-const EVIDENCE_CHANGE_TTL: Duration = Duration::from_secs(3);
-const EVIDENCE_HOT_DURATION: Duration = Duration::from_millis(750);
-const EVIDENCE_WARM_END: Duration = Duration::from_millis(1500);
-const EVIDENCE_SETTLING_END: Duration = Duration::from_millis(2250);
 
 #[derive(Default)]
 pub(super) struct BuildTestRuntime {
@@ -41,7 +37,7 @@ impl BuildTestRuntime {
             BuildTestKind::Test => 2,
         };
         self.changed_at[index] = Some(now);
-        app.set_evidence_change_phase(kind, EvidenceChangePhase::Hot);
+        app.set_evidence_change_phase(kind, TransientEmphasisPhase::Hot);
     }
 
     fn apply_state(&mut self, app: &mut App, kind: BuildTestKind, state: BuildTestState) {
@@ -58,18 +54,10 @@ impl BuildTestRuntime {
                 continue;
             };
             let elapsed = now.saturating_duration_since(started);
-            let phase = if elapsed < EVIDENCE_HOT_DURATION {
-                EvidenceChangePhase::Hot
-            } else if elapsed < EVIDENCE_WARM_END {
-                EvidenceChangePhase::Warm
-            } else if elapsed < EVIDENCE_SETTLING_END {
-                EvidenceChangePhase::Settling
-            } else if elapsed < EVIDENCE_CHANGE_TTL {
-                EvidenceChangePhase::Cooling
-            } else {
+            let phase = transient_emphasis_phase(elapsed);
+            if phase == TransientEmphasisPhase::None {
                 self.changed_at[index] = None;
-                EvidenceChangePhase::None
-            };
+            }
             if app.evidence_change_phase(kind) != phase {
                 app.set_evidence_change_phase(kind, phase);
                 changed = true;
@@ -423,18 +411,18 @@ mod tests {
         let kind = BuildTestKind::BuildDebug;
         assert!(!runtime.advance_emphasis(&mut app, now));
         runtime.mark_changed(&mut app, kind, now);
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        assert_eq!(app.evidence_change_phase(kind), TransientEmphasisPhase::Hot);
         for (millis, phase, redraw) in [
-            (0, EvidenceChangePhase::Hot, false),
-            (749, EvidenceChangePhase::Hot, false),
-            (750, EvidenceChangePhase::Warm, true),
-            (1499, EvidenceChangePhase::Warm, false),
-            (1500, EvidenceChangePhase::Settling, true),
-            (2249, EvidenceChangePhase::Settling, false),
-            (2250, EvidenceChangePhase::Cooling, true),
-            (2999, EvidenceChangePhase::Cooling, false),
-            (3000, EvidenceChangePhase::None, true),
-            (3250, EvidenceChangePhase::None, false),
+            (0, TransientEmphasisPhase::Hot, false),
+            (749, TransientEmphasisPhase::Hot, false),
+            (750, TransientEmphasisPhase::Warm, true),
+            (1499, TransientEmphasisPhase::Warm, false),
+            (1500, TransientEmphasisPhase::Settling, true),
+            (2249, TransientEmphasisPhase::Settling, false),
+            (2250, TransientEmphasisPhase::Cooling, true),
+            (2999, TransientEmphasisPhase::Cooling, false),
+            (3000, TransientEmphasisPhase::None, true),
+            (3250, TransientEmphasisPhase::None, false),
         ] {
             assert_eq!(
                 runtime.advance_emphasis(&mut app, now + Duration::from_millis(millis)),
@@ -443,34 +431,40 @@ mod tests {
             assert_eq!(app.evidence_change_phase(kind), phase);
             assert_eq!(
                 app.evidence_change_phase(BuildTestKind::Test),
-                EvidenceChangePhase::None
+                TransientEmphasisPhase::None
             );
         }
         assert_eq!(runtime.changed_at, [None; 3]);
         runtime.mark_changed(&mut app, kind, now);
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(1));
         runtime.mark_changed(&mut app, BuildTestKind::Test, now + Duration::from_secs(1));
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Warm);
+        assert_eq!(
+            app.evidence_change_phase(kind),
+            TransientEmphasisPhase::Warm
+        );
         runtime.mark_changed(&mut app, kind, now + Duration::from_secs(2));
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Hot);
+        assert_eq!(app.evidence_change_phase(kind), TransientEmphasisPhase::Hot);
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(3));
-        assert_eq!(app.evidence_change_phase(kind), EvidenceChangePhase::Warm);
+        assert_eq!(
+            app.evidence_change_phase(kind),
+            TransientEmphasisPhase::Warm
+        );
         assert_eq!(
             app.evidence_change_phase(BuildTestKind::Test),
-            EvidenceChangePhase::Settling
+            TransientEmphasisPhase::Settling
         );
         runtime.advance_emphasis(&mut app, now + Duration::from_secs(4));
         assert_eq!(
             app.evidence_change_phase(kind),
-            EvidenceChangePhase::Settling
+            TransientEmphasisPhase::Settling
         );
         assert_eq!(
             app.evidence_change_phase(BuildTestKind::Test),
-            EvidenceChangePhase::None
+            TransientEmphasisPhase::None
         );
         assert_eq!(
             app.evidence_change_phase(BuildTestKind::BuildRelease),
-            EvidenceChangePhase::None
+            TransientEmphasisPhase::None
         );
     }
 
@@ -478,10 +472,10 @@ mod tests {
     fn changes_restart_hot_from_every_active_phase_without_touching_other_targets() {
         let now = Instant::now();
         for (millis, phase) in [
-            (100, EvidenceChangePhase::Hot),
-            (1000, EvidenceChangePhase::Warm),
-            (2000, EvidenceChangePhase::Settling),
-            (2500, EvidenceChangePhase::Cooling),
+            (100, TransientEmphasisPhase::Hot),
+            (1000, TransientEmphasisPhase::Warm),
+            (2000, TransientEmphasisPhase::Settling),
+            (2500, TransientEmphasisPhase::Cooling),
         ] {
             let mut app = App::new(ProjectSnapshot::unavailable());
             let mut runtime = BuildTestRuntime::default();
@@ -495,12 +489,12 @@ mod tests {
             assert_eq!(runtime.changed_at[2], Some(now));
             assert_eq!(
                 app.evidence_change_phase(BuildTestKind::BuildDebug),
-                EvidenceChangePhase::Hot
+                TransientEmphasisPhase::Hot
             );
             assert_eq!(app.evidence_change_phase(BuildTestKind::Test), phase);
             assert_eq!(
                 app.evidence_change_phase(BuildTestKind::BuildRelease),
-                EvidenceChangePhase::None
+                TransientEmphasisPhase::None
             );
         }
     }
@@ -515,7 +509,7 @@ mod tests {
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
+                .all(|kind| app.evidence_change_phase(kind) == TransientEmphasisPhase::None)
         );
         let kind = BuildTestKind::BuildDebug;
         let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
@@ -532,7 +526,7 @@ mod tests {
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
+                .all(|kind| app.evidence_change_phase(kind) == TransientEmphasisPhase::None)
         );
         runtime.apply_state(
             &mut app,
@@ -543,7 +537,7 @@ mod tests {
                 "cargo check",
             )),
         );
-        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        assert!(app.evidence_change_phase(kind) == TransientEmphasisPhase::Hot);
         runtime.changed_at[0] = Some(Instant::now());
         let old_expiry = runtime.changed_at[0];
         apply_build_test_completion(
@@ -555,16 +549,16 @@ mod tests {
             Some(baseline),
         );
         assert!(runtime.changed_at[0] > old_expiry);
-        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        runtime.advance_emphasis(&mut app, Instant::now() + Duration::from_secs(3));
         fs::write(root.join("source.rs"), "changed").unwrap();
         assert!(check_build_test_freshness(
             Some(&root),
             &mut app,
             &mut runtime
         ));
-        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        assert!(app.evidence_change_phase(kind) == TransientEmphasisPhase::Hot);
         assert!(
-            app.evidence_change_phase(BuildTestKind::BuildRelease) == EvidenceChangePhase::None
+            app.evidence_change_phase(BuildTestKind::BuildRelease) == TransientEmphasisPhase::None
         );
         let expiry = runtime.changed_at;
         assert!(!check_build_test_freshness(
@@ -573,7 +567,7 @@ mod tests {
             &mut runtime
         ));
         assert_eq!(runtime.changed_at, expiry);
-        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        runtime.advance_emphasis(&mut app, Instant::now() + Duration::from_secs(3));
         apply_build_test_completion(
             Some(&root),
             &mut app,
@@ -587,7 +581,7 @@ mod tests {
             false,
             None,
         );
-        assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+        assert!(app.evidence_change_phase(kind) == TransientEmphasisPhase::Hot);
         let expiry = runtime.changed_at;
         let same_state = app.build_test_state(kind).clone();
         runtime.apply_state(&mut app, kind, same_state);
@@ -705,11 +699,13 @@ mod tests {
         };
         assert_eq!(run.source_label(), "configured-build");
         assert_eq!(run.command_label(), "configured-build --focused");
-        assert!(app.evidence_change_phase(BuildTestKind::BuildDebug) == EvidenceChangePhase::Hot);
         assert!(
-            app.evidence_change_phase(BuildTestKind::BuildRelease) == EvidenceChangePhase::None
+            app.evidence_change_phase(BuildTestKind::BuildDebug) == TransientEmphasisPhase::Hot
         );
-        assert!(app.evidence_change_phase(BuildTestKind::Test) == EvidenceChangePhase::None);
+        assert!(
+            app.evidence_change_phase(BuildTestKind::BuildRelease) == TransientEmphasisPhase::None
+        );
+        assert!(app.evidence_change_phase(BuildTestKind::Test) == TransientEmphasisPhase::None);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -876,11 +872,11 @@ mod tests {
                 Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
             );
         }
-        runtime.advance_emphasis(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        runtime.advance_emphasis(&mut app, Instant::now() + Duration::from_secs(3));
         assert!(
             BuildTestKind::ALL
                 .into_iter()
-                .all(|kind| app.evidence_change_phase(kind) == EvidenceChangePhase::None)
+                .all(|kind| app.evidence_change_phase(kind) == TransientEmphasisPhase::None)
         );
         fs::write(root.join("source.rs"), "after").unwrap();
         assert!(check_build_test_freshness(
@@ -897,7 +893,7 @@ mod tests {
             assert!(
                 matches!(app.build_test_state(kind), BuildTestState::Completed(result) if result.kind() == kind && result.freshness() == BuildTestFreshness::Stale)
             );
-            assert!(app.evidence_change_phase(kind) == EvidenceChangePhase::Hot);
+            assert!(app.evidence_change_phase(kind) == TransientEmphasisPhase::Hot);
         }
         apply_build_test_completion(
             Some(&root),

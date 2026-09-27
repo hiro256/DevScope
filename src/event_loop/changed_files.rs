@@ -1,11 +1,8 @@
 //! Session-local Changed Files presentation; Git observations remain unchanged.
-use crate::app::{ActivityState, App, ChangedFileEmphasisPhase};
+use super::transient::transient_emphasis_phase;
+use crate::app::{ActivityState, App, TransientEmphasisPhase};
 use devscope::progress::GitChangedFile;
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, path::PathBuf, time::Instant};
 
 pub(super) struct ChangedFilesRuntime {
     previous: BTreeMap<PathBuf, GitChangedFile>,
@@ -39,14 +36,14 @@ impl ChangedFilesRuntime {
             if current.contains_key(path) {
                 return true;
             }
-            app.set_changed_file_emphasis(path.clone(), ChangedFileEmphasisPhase::None);
+            app.set_changed_file_emphasis(path.clone(), TransientEmphasisPhase::None);
             changed = true;
             false
         });
         for (path, file) in &current {
             if self.previous.get(path) != Some(file) {
                 self.changed_at.insert(path.clone(), now);
-                app.set_changed_file_emphasis(path.clone(), ChangedFileEmphasisPhase::Hot);
+                app.set_changed_file_emphasis(path.clone(), TransientEmphasisPhase::Hot);
                 changed = true;
             }
         }
@@ -58,17 +55,7 @@ impl ChangedFilesRuntime {
         let mut redraw = false;
         self.changed_at.retain(|path, started| {
             let elapsed = now.saturating_duration_since(*started);
-            let phase = if elapsed < Duration::from_millis(750) {
-                ChangedFileEmphasisPhase::Hot
-            } else if elapsed < Duration::from_millis(1500) {
-                ChangedFileEmphasisPhase::Warm
-            } else if elapsed < Duration::from_millis(2250) {
-                ChangedFileEmphasisPhase::Settling
-            } else if elapsed < Duration::from_secs(3) {
-                ChangedFileEmphasisPhase::Cooling
-            } else {
-                ChangedFileEmphasisPhase::None
-            };
+            let phase = transient_emphasis_phase(elapsed);
             let previous = app.changed_file_emphasis(path);
             if previous != phase {
                 app.set_changed_file_emphasis(path.clone(), phase);
@@ -76,12 +63,12 @@ impl ChangedFilesRuntime {
                 redraw |= !matches!(
                     (previous, phase),
                     (
-                        ChangedFileEmphasisPhase::Warm,
-                        ChangedFileEmphasisPhase::Settling
+                        TransientEmphasisPhase::Warm,
+                        TransientEmphasisPhase::Settling
                     )
                 );
             }
-            phase != ChangedFileEmphasisPhase::None
+            phase != TransientEmphasisPhase::None
         });
         redraw
     }
@@ -95,6 +82,7 @@ mod tests {
         progress::{ActivitySummary, GitActivity, GitChangeCounts, GitFileStatus},
         project::ProjectSnapshot,
     };
+    use std::time::Duration;
 
     fn file(path: &str, additions: u64) -> GitChangedFile {
         GitChangedFile {
@@ -132,13 +120,13 @@ mod tests {
         assert!(runtime.observe(&mut app, now));
         assert_eq!(
             app.changed_file_emphasis(std::path::Path::new("b")),
-            ChangedFileEmphasisPhase::Hot
+            TransientEmphasisPhase::Hot
         );
         app.apply_activity_state(state(vec![file("b", 3)]));
         runtime.observe(&mut app, now);
         assert_eq!(
             app.changed_file_emphasis(std::path::Path::new("new")),
-            ChangedFileEmphasisPhase::None
+            TransientEmphasisPhase::None
         );
         for unavailable in [ActivityState::Unavailable, ActivityState::NotRepository] {
             app.apply_activity_state(unavailable);
@@ -147,13 +135,13 @@ mod tests {
             assert!(runtime.previous.is_empty());
             assert_eq!(
                 app.changed_file_emphasis(std::path::Path::new("b")),
-                ChangedFileEmphasisPhase::None
+                TransientEmphasisPhase::None
             );
         }
     }
     #[test]
     fn independent_boundaries_unchanged_refresh_and_restart() {
-        use ChangedFileEmphasisPhase::*;
+        use TransientEmphasisPhase::*;
         let (mut app, mut runtime) = setup(vec![file("a", 1)]);
         let now = Instant::now();
         app.apply_activity_state(state(vec![file("a", 2), file("b", 1)]));
