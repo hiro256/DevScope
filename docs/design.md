@@ -44,6 +44,15 @@ Agent integrations are adapters. They may enrich the observed state, but must no
 become a dependency of the core model.
 ## TUI interaction model
 
+Overview identifies the observed root's final directory component beside DevScope on
+the left; it is a directory label, not a configured title or Git repository identity.
+An unusable component falls back to `Project`, without exposing the absolute path.
+Refresh metadata is right-aligned as status, source, and recorded local `HH:mm`.
+The clock is captured when a refresh is recorded, never recomputed during rendering;
+`--:--` means local time was unavailable. It is not data age, duration, or watcher health.
+Narrow headers drop time, source, and ordinary status before truncating project identity;
+DevScope remains the final fallback. Actual refresh errors retain explicit error text.
+
 The TUI supports human-oriented project understanding, while the CLI remains the
 precise interface for AI and automation. A focused panel identifies the visible
 interaction surface that receives navigation; selection identifies an item within that
@@ -61,12 +70,12 @@ The initial panel-focus experiment validated Tasks, Evidence, and Changed Files 
 Hidden panels are excluded from navigation, and panel-local selection persists independently.
 
 Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
-Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item. NOW is the TUI representation of explicit Current Work Active state, not an inference from Next or checklist order. In Overview navigation, `▌` and a bold title denote the focused section; `>` denotes only a selected item; `[Work]` denotes Current Work association; `● NOW` denotes explicit Active state; and `│` in Task context denotes the source task line, not selection.
+Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item. NOW is the TUI representation of explicit Current Work Active state, not an inference from Next or checklist order. In Overview navigation, `▌` and a bold title denote the focused section; `>` denotes only a selected item; `[Work parent]` denotes Current Work association; `● NOW` denotes explicit Active state; and `│` in Task context denotes the source task line, not selection.
 
 Overview navigation sections are borderless and separated by whitespace; Project Progress
 retains its status-card frame and passive Preview retains its inspection frame. Nonfocused
 navigation titles remain normal, and truncated navigation rows use `…` within terminal-cell
-width, preserving selection/status cues and the reserved `[Work]` suffix. NOW remains bold;
+width, preserving selection/status cues and the reserved `[Work parent]` suffix. NOW remains bold;
 the footer remains subordinate. Focus does not depend on color or bold support alone.
 Side-by-side Windows Terminal dogfood accepted this hierarchy; displaying bold weight there
 may require the terminal profile's `intenseTextStyle` to be `bold` rather than `bright`.
@@ -80,7 +89,7 @@ both tall full listings and shorter layouts with accurate overflow counts.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
-The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.
+The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work parent]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.
 
 The Current Work TUI experiment validated overview-only Work progress as sufficient for
 the current workflow. A dedicated Current Work panel remains deferred until a concrete

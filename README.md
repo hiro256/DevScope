@@ -169,16 +169,18 @@ Change detection is lightweight: unchanged polling does not recollect Git Activi
 Git status and commit data are collected only after a relevant worktree or Git
 metadata change is detected.
 
-The status line reports the latest refresh source and timestamp. For example:
+The Overview header identifies the observed directory on the left and places refresh
+metadata on the right. For example:
 
 ```text
-Watching · Last refresh: Initial +00:00
-Watching · Last refresh: Git +00:15
-Retry pending · Last refresh: Markdown +00:20
+Watching · Initial 09:42
+Watching · Git 09:43
+Retry pending · Markdown 09:44
 ```
 
-The `+00:15` value is the timestamp relative to the start of the current DevScope
-session, not wall-clock time or an "ago" value.
+The time is the local 24-hour clock at the latest recorded refresh, not data age,
+refresh duration, or watcher health. `--:--` means local time could not be obtained.
+Narrow headers omit lower-priority metadata while retaining project identity where possible.
 
 ## Changed Files
 

@@ -127,7 +127,7 @@
 - [ ] Support Build verification profiles for Debug and Release
 - [x] Refine Preview content and density across focused panels
 - [x] Refine TUI visual alignment for side-by-side Codex use
-- [ ] Dogfood five-second project-state understanding
+- [x] Dogfood five-second project-state understanding
 
 The keyboard slice implements Left/Right panel navigation, Tab/Shift+Tab compatibility,
 Up/Down or j/k selection, Enter/p Preview toggle, Ctrl+Up/Down passive Preview scrolling,
@@ -208,10 +208,16 @@ the minimum terminal size; validate narrow Windows Terminal and side-by-side use
 Themes, arbitrary color customization, syntax highlighting, animation, mouse interaction,
 graphical widgets, and terminal-specific hacks are outside this task.
 
-The final five-second dogfood follows visual refinement and tests whether Overview alone
-reveals project state quickly: NOW, project health, and changed areas should be easy to
-scan, selected detail easy to locate, and eye movement natural beside Codex. Preview
-confirms a selection, while File Browser provides optional surrounding-file inspection.
+Windows Terminal side-by-side five-second dogfood and follow-up confirmation passed
+for active/unset NOW, partial Plan/Work progress, Passed/Fresh, Passed/Stale, Test failure,
+multiple Tasks/Changed Files, Preview ON/OFF, and Large/Medium layouts. NOW drew attention
+first; `(stale)` and Passed/Failed markers distinguished freshness from outcome.
+The observed Work-marker ambiguity was resolved with `[Work parent]` for association,
+while NOW alone denotes explicit Active. The header now identifies the observed directory
+on the left and shows refresh source plus recorded local clock time on the right.
+The user accepted the clearer layout without additional Overview panels or color.
+Changed paths are discoverable; understanding unfamiliar areas or actual edits still
+requires project knowledge or diff inspection, not a five-second Overview summary.
 
 ### AI workflow refinement
 

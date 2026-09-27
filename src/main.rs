@@ -317,6 +317,7 @@ fn run_tui() -> io::Result<()> {
     };
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(snapshot);
+    app.set_project_root(project_root.as_deref());
     restore_tui_build_test_states(project_root.as_deref(), &config, &mut app);
     app.apply_artifact(load_tui_artifact(project_root.as_deref()).map_err(io::Error::other)?);
     app.apply_current_work(load_tui_current_work(project_root.as_deref()));

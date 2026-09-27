@@ -1,4 +1,8 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use time::{OffsetDateTime, Time};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use devscope::{
@@ -24,19 +28,22 @@ pub enum RefreshSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RefreshStatus {
     last_update: Duration,
+    last_clock: Option<Time>,
     last_source: RefreshSource,
     retry_pending: bool,
 }
 
 impl RefreshStatus {
-    const fn initial() -> Self {
+    fn initial() -> Self {
         Self {
             last_update: Duration::ZERO,
+            last_clock: local_refresh_clock(),
             last_source: RefreshSource::Initial,
             retry_pending: false,
         }
     }
 
+    #[cfg(test)]
     pub const fn last_update(&self) -> Duration {
         self.last_update
     }
@@ -45,9 +52,17 @@ impl RefreshStatus {
         self.last_source
     }
 
+    pub const fn last_clock(&self) -> Option<Time> {
+        self.last_clock
+    }
+
     pub const fn retry_pending(&self) -> bool {
         self.retry_pending
     }
+}
+
+fn local_refresh_clock() -> Option<Time> {
+    OffsetDateTime::now_local().ok().map(|now| now.time())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +105,7 @@ enum AppView {
 }
 
 pub struct App {
+    project_name: String,
     view: AppView,
     pub file_browser: crate::file_browser::FileBrowserState,
     running: bool,
@@ -117,6 +133,7 @@ pub struct App {
 impl App {
     pub fn new(snapshot: ProjectSnapshot) -> Self {
         let mut app = Self {
+            project_name: "Project".into(),
             view: AppView::Overview,
             file_browser: crate::file_browser::FileBrowserState::default(),
             running: true,
@@ -148,6 +165,23 @@ impl App {
         let (plan, activity, tasks) = snapshot.into_parts();
         self.apply_markdown_state(plan, tasks);
         self.apply_activity_state(activity);
+    }
+
+    pub fn set_project_root(&mut self, root: Option<&Path>) {
+        self.project_name = root
+            .and_then(Path::file_name)
+            .map(|name| {
+                name.to_string_lossy()
+                    .chars()
+                    .map(|ch| if ch.is_control() { ' ' } else { ch })
+                    .collect::<String>()
+            })
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Project".into());
+    }
+
+    pub fn project_name(&self) -> &str {
+        &self.project_name
     }
 
     pub fn apply_markdown_state(&mut self, plan: PlanState, tasks: TaskState) {
@@ -199,8 +233,18 @@ impl App {
     }
 
     pub fn record_refresh(&mut self, source: RefreshSource, elapsed: Duration) {
+        self.record_refresh_at(source, elapsed, local_refresh_clock());
+    }
+
+    pub fn record_refresh_at(
+        &mut self,
+        source: RefreshSource,
+        elapsed: Duration,
+        clock: Option<Time>,
+    ) {
         self.refresh_status.last_source = source;
         self.refresh_status.last_update = elapsed;
+        self.refresh_status.last_clock = clock;
     }
 
     pub fn set_refresh_pending(&mut self, pending: bool) -> bool {
@@ -1165,6 +1209,37 @@ mod tests {
         assert_eq!(status.last_source(), RefreshSource::Initial);
         assert_eq!(status.last_update(), Duration::ZERO);
         assert!(!status.retry_pending());
+    }
+
+    #[test]
+    fn project_identity_uses_only_leaf_and_handles_unusable_roots() {
+        let mut app = app(1);
+        for (root, expected) in [
+            (Some(Path::new("C:/dev/src/DevScope")), "DevScope"),
+            (Some(Path::new("C:/dev/日本語")), "日本語"),
+            (Some(Path::new("/")), "Project"),
+            (Some(Path::new("")), "Project"),
+            (None, "Project"),
+            (Some(Path::new("/dev/\u{1b}\n")), "Project"),
+        ] {
+            app.set_project_root(root);
+            assert_eq!(app.project_name(), expected);
+        }
+    }
+
+    #[test]
+    fn refresh_clock_changes_only_when_recorded() {
+        let mut app = app(1);
+        let clock = Some(time::macros::time!(09:42:15));
+        app.record_refresh_at(RefreshSource::Git, Duration::from_secs(12), clock);
+        app.set_refresh_pending(true);
+        app.set_refresh_error("Retry required");
+        assert_eq!(app.refresh_status().last_clock(), clock);
+        assert_eq!(app.refresh_status().last_update(), Duration::from_secs(12));
+        app.clear_refresh_error();
+        assert_eq!(app.refresh_status().last_clock(), clock);
+        app.record_refresh_at(RefreshSource::Manual, Duration::from_secs(20), None);
+        assert_eq!(app.refresh_status().last_clock(), None);
     }
 
     #[test]

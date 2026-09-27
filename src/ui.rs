@@ -386,13 +386,44 @@ fn browser_footer_text(width: u16) -> &'static str {
 
 fn header_title(app: &App, width: usize) -> String {
     const TITLE: &str = "DevScope";
-    const GAP: &str = "  ";
-    let refresh = refresh_status(app);
-    if Line::from(format!("{TITLE}{GAP}{refresh}")).width() <= width {
-        format!("{TITLE}{GAP}{refresh}")
-    } else {
-        truncate_text(TITLE, width)
+    let identity = format!("{TITLE} · {}", app.project_name());
+    if let Some(error) = app.refresh_error() {
+        let error = safe_display_text(error).replace('\n', " ");
+        let status = format!("Refresh error: {error}");
+        if let Some(full) = aligned_header(&identity, &status, width) {
+            return full;
+        }
+        // Errors remain explicit even when ordinary identity/status fields would be dropped.
+        if let Some(full) = aligned_header(TITLE, &status, width) {
+            return full;
+        }
+        return truncate_text(&format!("{TITLE}  Refresh error: {error}"), width);
     }
+    let status = app.refresh_status();
+    let watching = if status.retry_pending() {
+        "Retry pending"
+    } else {
+        "Watching"
+    };
+    [
+        refresh_status(app),
+        format!("{watching} · {}", refresh_source(status.last_source())),
+        watching.to_owned(),
+    ]
+    .into_iter()
+    .find_map(|status| aligned_header(&identity, &status, width))
+    .unwrap_or_else(|| {
+        if width >= Line::from("DevScope · …").width() {
+            truncate_text(&identity, width)
+        } else {
+            truncate_text(TITLE, width)
+        }
+    })
+}
+
+fn aligned_header(identity: &str, status: &str, width: usize) -> Option<String> {
+    let used = Line::from(identity).width() + Line::from(status).width();
+    (used + 2 <= width).then(|| format!("{identity}{}{status}", " ".repeat(width - used)))
 }
 
 fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
@@ -1066,9 +1097,9 @@ fn refresh_status(app: &App) -> String {
         "Watching"
     };
     format!(
-        "{watching} · Last refresh: {} {}",
+        "{watching} · {} {}",
         refresh_source(status.last_source()),
-        format_timestamp(status.last_update())
+        format_timestamp(status.last_clock())
     )
 }
 
@@ -1082,16 +1113,11 @@ fn refresh_source(source: RefreshSource) -> &'static str {
     }
 }
 
-fn format_timestamp(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-    if hours == 0 {
-        format!("+{minutes:02}:{seconds:02}")
-    } else {
-        format!("+{hours}:{minutes:02}:{seconds:02}")
-    }
+fn format_timestamp(clock: Option<time::Time>) -> String {
+    clock.map_or_else(
+        || "--:--".into(),
+        |clock| format!("{:02}:{:02}", clock.hour(), clock.minute()),
+    )
 }
 fn evidence(app: &App) -> String {
     let build = app.build_test_state(BuildTestKind::Build);
@@ -1314,7 +1340,7 @@ fn task_line(
         return Line::from(format!("{prefix}{}", task.text()));
     }
 
-    const INDICATOR: &str = "  [Work]";
+    const INDICATOR: &str = "  [Work parent]";
     let reserved = Line::from(prefix.clone()).width() + Line::from(INDICATOR).width();
     if reserved > width {
         return Line::from(format!("{prefix}{}", task.text()));
@@ -2844,15 +2870,18 @@ mod tests {
 
     #[test]
     fn renders_initial_refresh_status() {
-        let app = app(
+        let mut app = app(
             TaskState::Available(TaskSummary::new(0, vec![])),
             ActivityState::Unavailable,
         );
+        app.record_refresh_at(
+            RefreshSource::Initial,
+            Duration::ZERO,
+            Some(time::macros::time!(09:42)),
+        );
         let output = draw(&app, 80, 30);
-        assert!(output.contains("Watching"));
-        assert!(output.contains("Last refresh"));
-        assert!(output.contains("Initial"));
-        assert!(output.contains("+00:00"));
+        assert!(output.contains("Watching · Initial 09:42"));
+        assert_eq!(output, draw(&app, 80, 30));
     }
 
     #[test]
@@ -2861,20 +2890,98 @@ mod tests {
             TaskState::Available(TaskSummary::new(0, vec![])),
             ActivityState::Unavailable,
         );
-        app.record_refresh(RefreshSource::Git, Duration::from_secs(65));
+        app.record_refresh_at(
+            RefreshSource::Git,
+            Duration::from_secs(65),
+            Some(time::macros::time!(09:42)),
+        );
         app.set_refresh_pending(true);
         let output = draw(&app, 80, 30);
         assert!(output.contains("Retry pending"));
         assert!(output.contains("Git"));
-        assert!(output.contains("+01:05"));
+        assert!(output.contains("09:42"));
     }
 
     #[test]
-    fn formats_session_relative_timestamps() {
-        assert_eq!(format_timestamp(Duration::from_secs(0)), "+00:00");
-        assert_eq!(format_timestamp(Duration::from_secs(7)), "+00:07");
-        assert_eq!(format_timestamp(Duration::from_secs(65)), "+01:05");
-        assert_eq!(format_timestamp(Duration::from_secs(3661)), "+1:01:01");
+    fn formats_recorded_local_timestamps() {
+        assert_eq!(
+            format_timestamp(Some(time::macros::time!(00:00:07))),
+            "00:00"
+        );
+        assert_eq!(
+            format_timestamp(Some(time::macros::time!(09:42:59))),
+            "09:42"
+        );
+        assert_eq!(
+            format_timestamp(Some(time::macros::time!(23:59:59))),
+            "23:59"
+        );
+        assert_eq!(format_timestamp(None), "--:--");
+    }
+
+    #[test]
+    fn overview_header_right_aligns_metadata_using_cell_width() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.set_project_root(Some(std::path::Path::new("C:/dev/顧客ポータル")));
+        app.record_refresh_at(
+            RefreshSource::Git,
+            Duration::ZERO,
+            Some(time::macros::time!(09:42)),
+        );
+        for width in [80, 100, 120] {
+            let header = header_title(&app, width);
+            assert!(header.starts_with("DevScope · 顧客ポータル"));
+            assert!(header.ends_with("Watching · Git 09:42"));
+            assert_eq!(Line::from(header).width(), width);
+            let mut terminal = Terminal::new(TestBackend::new(width as u16, 30)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[((width - 1) as u16, 0)].symbol(),
+                "2"
+            );
+        }
+        app.set_refresh_pending(true);
+        assert!(header_title(&app, 80).ends_with("Retry pending · Git 09:42"));
+        app.set_refresh_error("Read failed");
+        let error = header_title(&app, 80);
+        assert_eq!(Line::from(error.clone()).width(), 80);
+        assert!(error.ends_with("Refresh error: Read failed"));
+        assert!(!error.contains("Watching"));
+    }
+
+    #[test]
+    fn project_header_drops_fields_in_priority_and_keeps_errors_visible() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.set_project_root(Some(std::path::Path::new("C:/dev/Portal")));
+        app.record_refresh_at(
+            RefreshSource::Git,
+            Duration::from_secs(123),
+            Some(time::macros::time!(09:42)),
+        );
+        for expected in [
+            "DevScope · Portal  Watching · Git 09:42",
+            "DevScope · Portal  Watching · Git",
+            "DevScope · Portal  Watching",
+            "DevScope · Portal",
+            "DevScope",
+        ] {
+            assert_eq!(header_title(&app, Line::from(expected).width()), expected);
+        }
+        app.set_refresh_pending(true);
+        assert!(header_title(&app, 80).contains("Retry pending · Git 09:42"));
+        app.set_project_root(Some(std::path::Path::new(
+            "C:/dev/日本語の長いプロジェクト名",
+        )));
+        for width in 0..160 {
+            assert!(Line::from(header_title(&app, width)).width() <= width);
+        }
+        assert!(!header_title(&app, 25).contains("Watching"));
+        app.set_refresh_error("Unable to refresh");
+        assert!(header_title(&app, 40).contains("Refresh error"));
+        assert!(!header_title(&app, 80).contains("Watching"));
+        for width in 0..160 {
+            assert!(Line::from(header_title(&app, width)).width() <= width);
+        }
     }
     #[test]
     fn renders_without_panicking_at_small_sizes() {
@@ -3024,12 +3131,12 @@ mod tests {
         let current_work = matching_work_state("docs\\roadmap.md", parent_task, "- [ ] Work item");
 
         let lines = task_lines(&summary, Some(0), 3, 100, &current_work);
-        assert!(!line_text(&lines[0]).contains("[Work]"));
-        assert!(line_text(&lines[1]).contains("[Work]"));
-        assert!(!line_text(&lines[2]).contains("[Work]"));
+        assert!(!line_text(&lines[0]).contains("[Work parent]"));
+        assert!(line_text(&lines[1]).contains("[Work parent]"));
+        assert!(!line_text(&lines[2]).contains("[Work parent]"));
 
         let lines = task_lines(&summary, Some(2), 3, 100, &current_work);
-        assert!(line_text(&lines[1]).contains("[Work]"));
+        assert!(line_text(&lines[1]).contains("[Work parent]"));
     }
 
     #[test]
@@ -3042,16 +3149,17 @@ mod tests {
         let current_work = matching_work_state("docs/roadmap.md", parent_task, "- [ ] Work item");
 
         let line = line_text(&task_lines(&summary, Some(0), 1, 30, &current_work)[0]);
-        assert!(line.contains("[Work]"));
+        assert!(line.contains("[Work parent]"));
         assert!(line.contains('…'));
         assert!(Line::from(line).width() <= 30);
 
         let mut app = app(TaskState::Available(summary), ActivityState::Unavailable);
         app.apply_current_work(current_work);
-        assert!(draw(&app, 70, 30).contains("[Work]"));
+        assert!(draw(&app, 70, 30).contains("[Work parent]"));
+        assert!(draw(&app, 70, 30).contains("NOW  Not set"));
 
         app.apply_current_work(CurrentWorkState::Unavailable);
-        assert!(!draw(&app, 70, 30).contains("[Work]"));
+        assert!(!draw(&app, 70, 30).contains("[Work parent]"));
     }
 
     #[test]
@@ -3775,12 +3883,13 @@ mod tests {
                 let row = fit_navigation_lines(vec![task_line(&task, true, width, work)], width)
                     .remove(0);
                 assert!(row.width() <= width);
-                if (16..=30).contains(&width) {
+                let minimum = Line::from("> □   [Work parent]…").width();
+                if (minimum..=30).contains(&width) {
                     let text = row.to_string();
                     assert!(text.starts_with("> □ "));
                     assert!(text.contains('…'));
                     if work {
-                        assert!(text.ends_with("[Work]"));
+                        assert!(text.ends_with("[Work parent]"));
                     }
                 }
             }
