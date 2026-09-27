@@ -1,3 +1,4 @@
+use crate::app::{TaskEmphasisPhase, TaskPresentationKey};
 use std::time::Duration;
 
 use crate::app::{
@@ -536,15 +537,13 @@ fn large_navigation_heights(height: u16, evidence_height: u16, app: &App) -> [u1
 
 fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(fit_navigation_lines(
-            tasks(
-                app.tasks(),
-                app.selected_task(),
-                inner_height(area),
-                inner_width(area),
-                app.current_work(),
-            ),
+        Paragraph::new(tasks(
+            app.tasks(),
+            app.selected_task(),
+            inner_height(area),
             inner_width(area),
+            app.current_work(),
+            |task| app.task_emphasis(&TaskPresentationKey::from_task(task)),
         ))
         .block(navigation_block(
             "Tasks",
@@ -1372,18 +1371,23 @@ fn tasks(
     rows: usize,
     width: usize,
     current_work: &CurrentWorkState,
+    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TaskEmphasisPhase,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
     }
 
     match task_state {
-        TaskState::Unavailable => vec![Line::from("Unavailable")],
-        TaskState::Available(summary) if summary.total() == 0 => vec![Line::from("No tasks found")],
-        TaskState::Available(summary) if summary.remaining() == 0 => {
-            vec![Line::from("All tasks completed")]
+        TaskState::Unavailable => vec![Line::from(truncate_text("Unavailable", width))],
+        TaskState::Available(summary) if summary.total() == 0 => {
+            vec![Line::from(truncate_text("No tasks found", width))]
         }
-        TaskState::Available(summary) => task_lines(summary, selected, rows, width, current_work),
+        TaskState::Available(summary) if summary.remaining() == 0 => {
+            vec![Line::from(truncate_text("All tasks completed", width))]
+        }
+        TaskState::Available(summary) => {
+            task_lines(summary, selected, rows, width, current_work, phase_for)
+        }
     }
 }
 
@@ -1393,6 +1397,7 @@ fn task_lines(
     rows: usize,
     width: usize,
     current_work: &CurrentWorkState,
+    phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TaskEmphasisPhase,
 ) -> Vec<Line<'static>> {
     let total = summary.remaining();
     let selected = selected.unwrap_or(0).min(total - 1);
@@ -1415,12 +1420,16 @@ fn task_lines(
                 index == selected,
                 width,
                 task_matches_current_work(item, current_work),
+                phase_for(item),
             )
         })
         .collect::<Vec<_>>();
 
     if end < total && lines.len() < rows {
-        lines.push(Line::from(format!("... and {} more", total - end)));
+        lines.push(Line::from(truncate_text(
+            &format!("... and {} more", total - end),
+            width,
+        )));
     }
     lines
 }
@@ -1430,19 +1439,64 @@ fn task_line(
     selected: bool,
     width: usize,
     has_current_work: bool,
+    phase: TaskEmphasisPhase,
 ) -> Line<'static> {
     let prefix = format!("{} □ ", if selected { ">" } else { " " });
-    if !has_current_work {
-        return Line::from(format!("{prefix}{}", task.text()));
-    }
-
     const INDICATOR: &str = "  [Work parent]";
     let reserved = Line::from(prefix.clone()).width() + Line::from(INDICATOR).width();
-    if reserved > width {
-        return Line::from(format!("{prefix}{}", task.text()));
+    let show_work = has_current_work && reserved <= width;
+    let text = if show_work {
+        truncate_text(task.text(), width.saturating_sub(reserved))
+    } else {
+        task.text().to_owned()
+    };
+    let columns = [
+        (
+            if selected {
+                "> ".to_owned()
+            } else {
+                "  ".to_owned()
+            },
+            false,
+        ),
+        ("□ ".to_owned(), phase == TaskEmphasisPhase::Hot),
+        (text, phase != TaskEmphasisPhase::None),
+        (
+            if show_work {
+                INDICATOR.to_owned()
+            } else {
+                String::new()
+            },
+            matches!(phase, TaskEmphasisPhase::Hot | TaskEmphasisPhase::Warm),
+        ),
+    ];
+    let content: String = columns.iter().map(|(text, _)| text.as_str()).collect();
+    let clipped = truncate_text(&content, width);
+    let truncated = clipped != content;
+    let prefix = if truncated {
+        clipped.strip_suffix('…').unwrap_or(&clipped)
+    } else {
+        &clipped
+    };
+    let mut remaining = prefix.chars().count();
+    let mut spans = Vec::new();
+    for (column, bold) in columns {
+        let mut text: String = column.chars().take(remaining).collect();
+        remaining = remaining.saturating_sub(column.chars().count());
+        if remaining == 0 && truncated && clipped.ends_with('…') {
+            text.push('…');
+        }
+        let style = if bold {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(text, style));
+        if remaining == 0 {
+            break;
+        }
     }
-    let text = truncate_text(task.text(), width.saturating_sub(reserved));
-    Line::from(format!("{prefix}{text}{INDICATOR}"))
+    Line::from(spans)
 }
 
 fn fit_navigation_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
@@ -3484,6 +3538,73 @@ mod tests {
         }
         assert!(draw(&app, 40, 18).contains("> □ Task 7"));
     }
+    #[test]
+    fn task_emphasis_preserves_text_work_suffix_and_unicode_width() {
+        use TaskEmphasisPhase::*;
+        let task = TaskSummaryItem::new(
+            "plan.md".into(),
+            1,
+            "日本語の新しいタスク with a long ending".into(),
+        );
+        for width in 0..=100 {
+            for work in [false, true] {
+                let prefix = "> □ ";
+                let suffix = "  [Work parent]";
+                let reserved = Line::from(prefix).width() + Line::from(suffix).width();
+                let expected = if work && reserved <= width {
+                    format!(
+                        "{prefix}{}{suffix}",
+                        truncate_text(task.text(), width - reserved)
+                    )
+                } else {
+                    format!("{prefix}{}", task.text())
+                };
+                let expected = truncate_text(&expected, width);
+                for phase in [None, Hot, Warm, Settling, Cooling] {
+                    let line = task_line(&task, true, width, work, phase);
+                    assert_eq!(line.to_string(), expected);
+                    assert!(line.width() <= width);
+                    assert!(!line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+                }
+            }
+        }
+        for (phase, bold) in [
+            (None, vec![false, false, false, false]),
+            (Hot, vec![false, true, true, true]),
+            (Warm, vec![false, false, true, true]),
+            (Settling, vec![false, false, true, false]),
+            (Cooling, vec![false, false, true, false]),
+        ] {
+            let row = task_line(&task, true, 100, true, phase);
+            assert_eq!(
+                row.spans
+                    .iter()
+                    .map(|s| s.style.add_modifier.contains(Modifier::BOLD))
+                    .collect::<Vec<_>>(),
+                bold
+            );
+        }
+    }
+
+    #[test]
+    fn tasks_render_preserves_emphasis_spans() {
+        let task = TaskSummaryItem::new("plan.md".into(), 1, "New task".into());
+        let key = TaskPresentationKey::from_task(&task);
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(1, vec![task])),
+            ActivityState::Unavailable,
+        );
+        app.set_task_emphasis(key, TaskEmphasisPhase::Hot);
+        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        terminal
+            .draw(|frame| render_tasks(frame, frame.area(), &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(!buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(3, 1)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(5, 1)].modifier.contains(Modifier::BOLD));
+    }
+
     fn activity_with_files(files: Vec<GitChangedFile>) -> ActivityState {
         ActivityState::Available(ActivitySummary::from(&GitActivity {
             changed_files: files,
@@ -3664,12 +3785,16 @@ mod tests {
         );
         let current_work = matching_work_state("docs\\roadmap.md", parent_task, "- [ ] Work item");
 
-        let lines = task_lines(&summary, Some(0), 3, 100, &current_work);
+        let lines = task_lines(&summary, Some(0), 3, 100, &current_work, |_| {
+            TaskEmphasisPhase::None
+        });
         assert!(!line_text(&lines[0]).contains("[Work parent]"));
         assert!(line_text(&lines[1]).contains("[Work parent]"));
         assert!(!line_text(&lines[2]).contains("[Work parent]"));
 
-        let lines = task_lines(&summary, Some(2), 3, 100, &current_work);
+        let lines = task_lines(&summary, Some(2), 3, 100, &current_work, |_| {
+            TaskEmphasisPhase::None
+        });
         assert!(line_text(&lines[1]).contains("[Work parent]"));
     }
 
@@ -3682,7 +3807,11 @@ mod tests {
         );
         let current_work = matching_work_state("docs/roadmap.md", parent_task, "- [ ] Work item");
 
-        let line = line_text(&task_lines(&summary, Some(0), 1, 30, &current_work)[0]);
+        let line = line_text(
+            &task_lines(&summary, Some(0), 1, 30, &current_work, |_| {
+                TaskEmphasisPhase::None
+            })[0],
+        );
         assert!(line.contains("[Work parent]"));
         assert!(line.contains('…'));
         assert!(Line::from(line).width() <= 30);
@@ -4424,8 +4553,11 @@ mod tests {
         );
         for width in 0..=80 {
             for work in [false, true] {
-                let row = fit_navigation_lines(vec![task_line(&task, true, width, work)], width)
-                    .remove(0);
+                let row = fit_navigation_lines(
+                    vec![task_line(&task, true, width, work, TaskEmphasisPhase::None)],
+                    width,
+                )
+                .remove(0);
                 assert!(row.width() <= width);
                 let minimum = Line::from("> □   [Work parent]…").width();
                 if (minimum..=30).contains(&width) {

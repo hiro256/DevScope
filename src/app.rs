@@ -124,6 +124,24 @@ pub enum ChangedFileEmphasisPhase {
     Cooling,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TaskPresentationKey(pub PathBuf, pub String);
+
+impl TaskPresentationKey {
+    pub fn from_task(task: &devscope::progress::TaskSummaryItem) -> Self {
+        Self(task.source_path().into(), task.text().into())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskEmphasisPhase {
+    None,
+    Hot,
+    Warm,
+    Settling,
+    Cooling,
+}
+
 pub struct App {
     project_name: String,
     view: AppView,
@@ -132,6 +150,7 @@ pub struct App {
     plan: PlanState,
     activity: ActivityState,
     changed_file_emphasis: BTreeMap<PathBuf, ChangedFileEmphasisPhase>,
+    task_emphasis: BTreeMap<TaskPresentationKey, TaskEmphasisPhase>,
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
@@ -163,6 +182,7 @@ impl App {
             plan: PlanState::Unavailable,
             activity: ActivityState::Unavailable,
             changed_file_emphasis: BTreeMap::new(),
+            task_emphasis: BTreeMap::new(),
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
@@ -351,6 +371,21 @@ impl App {
 
     pub fn tasks(&self) -> &TaskState {
         &self.tasks
+    }
+
+    pub fn task_emphasis(&self, key: &TaskPresentationKey) -> TaskEmphasisPhase {
+        self.task_emphasis
+            .get(key)
+            .copied()
+            .unwrap_or(TaskEmphasisPhase::None)
+    }
+
+    pub fn set_task_emphasis(&mut self, key: TaskPresentationKey, phase: TaskEmphasisPhase) {
+        if phase == TaskEmphasisPhase::None {
+            self.task_emphasis.remove(&key);
+        } else {
+            self.task_emphasis.insert(key, phase);
+        }
     }
     pub fn current_work(&self) -> &CurrentWorkState {
         &self.current_work

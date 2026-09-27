@@ -128,14 +128,17 @@
 - [x] Refine Preview content and density across focused panels
 - [x] Refine TUI visual alignment for side-by-side Codex use
 - [x] Dogfood five-second project-state understanding
-- [x] Experiment with aligned Evidence columns and transient process-state cues
+- [ ] Experiment with aligned Evidence columns and transient process-state cues
 
 The follow-up narrows width-free bold emphasis from full content to state columns,
 state text without its symbol, freshness (or visible status text), then normal over three seconds.
 Windows Terminal dogfood accepted this five-phase refinement, including the return to normal.
 Windows Terminal dogfood completed for path-keyed shrinking emphasis for changed/new Git
 rows, without changing Activity semantics, ordering, layout, or the Evidence runtime.
-User acceptance of the Changed Files emphasis remains pending.
+The user has confirmed visual acceptance of the Changed Files emphasis.
+Follow-up: emphasize newly added incomplete Tasks using source-path/text occurrence counts,
+without treating line-number shifts as additions. Windows Terminal checks confirmed new-task
+emphasis and no emphasis on remaining rows after completion. Full Tasks acceptance is pending.
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

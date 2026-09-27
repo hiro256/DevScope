@@ -120,7 +120,19 @@ Reordering and unchanged observations do not restart it; removed paths and unava
 Activity clear it. A private event-loop runtime owns timing, App holds only display phases,
 and rendering preserves row text, Unicode cell width, and truncation. This is a presentation
 cue, not Activity history or Evidence; Preview and Full View are unchanged.
-Windows Terminal dogfood completed for the Changed Files emphasis; user acceptance remains pending.
+Windows Terminal dogfood completed for the Changed Files emphasis; the user confirmed visual acceptance.
+
+Overview Tasks emphasize only newly added incomplete tasks after a quiet startup baseline.
+The session-local runtime compares occurrence counts keyed by source path and task text;
+line-number movement, reordering, and Current Work association are not additions. Identical
+duplicates may share emphasis when their count increases. Completion/removal clears the
+key when no occurrences remain, without an exit animation or persisted task identity.
+Over the same three-second cadence, Hot bolds checkbox/text/Work suffix, Warm text/suffix,
+and Settling/Cooling text only, before returning to normal. Selection stays unstyled;
+Unicode truncation, Work reservation, ordering, Preview, and Full View are unchanged.
+The user confirmed new-task emphasis and quiet remaining rows after completion in Windows
+Terminal. Full Tasks dogfood acceptance remains pending; these checks do not establish all
+startup, timing, and Unicode truncation scenarios.
 
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
