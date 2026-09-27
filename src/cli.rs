@@ -106,16 +106,23 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, ..] if first == OsStr::new("artifact") => Err(UsageError {
             message: "expected `devscope artifact inspect [path]`",
         }),
+        [first, second, profile] if first == OsStr::new("verify") && second == OsStr::new("build") => {
+            match profile.to_str() {
+                Some("debug") => Ok(EntryMode::Verify(BuildTestKind::BuildDebug)),
+                Some("release") => Ok(EntryMode::Verify(BuildTestKind::BuildRelease)),
+                _ => Err(UsageError { message: "expected `devscope verify build [debug|release]`" }),
+            }
+        },
         [first, second] if first == OsStr::new("verify") => match second.to_string_lossy().as_ref()
         {
-            "build" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Build)),
+            "build" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::BuildDebug)),
             "test" => Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Test)),
             _ => Err(UsageError {
-                message: "expected `devscope verify build` or `devscope verify test`",
+                message: "expected `devscope verify build [debug|release]` or `devscope verify test`",
             }),
         },
         [first, ..] if first == OsStr::new("verify") => Err(UsageError {
-            message: "expected `devscope verify build` or `devscope verify test`",
+            message: "expected `devscope verify build [debug|release]` or `devscope verify test`",
         }),
         [first, ..] if first == OsStr::new("task") => Err(UsageError {
             message: "expected `devscope task list`",
@@ -133,7 +140,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify build debug\n  devscope verify build release\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_context(
@@ -300,9 +307,14 @@ fn render_evidence(root: &Path) -> Result<String, ConfigError> {
     for entry in &mut stored {
         entry.restore_freshness_with_exclusions(root, config.verify().excludes());
     }
-    let build = evidence_kind_summary(root, &config, &stored, BuildTestKind::Build);
-    let test = evidence_kind_summary(root, &config, &stored, BuildTestKind::Test);
-    Ok(format!("Evidence: Build {build} | Test {test}"))
+    let targets = BuildTestKind::ALL.map(|kind| {
+        format!(
+            "{} {}",
+            kind.label(),
+            evidence_kind_summary(root, &config, &stored, kind)
+        )
+    });
+    Ok(format!("Evidence: {}", targets.join(" | ")))
 }
 
 fn evidence_kind_summary(
@@ -369,10 +381,7 @@ pub fn render_verify(completion: &devscope::progress::BuildTestExecutionCompleti
     match completion {
         BuildTestExecutionCompletion::Completed(result) => format!(
             "{}\nStatus: {}\nCommand: {}\nDuration: {}\n{}",
-            match result.kind() {
-                devscope::progress::BuildTestKind::Build => "Build",
-                devscope::progress::BuildTestKind::Test => "Test",
-            },
+            result.kind().label(),
             match result.outcome() {
                 BuildTestOutcome::Passed => "Passed",
                 BuildTestOutcome::Failed => "Failed",
@@ -387,10 +396,7 @@ pub fn render_verify(completion: &devscope::progress::BuildTestExecutionCompleti
         ),
         BuildTestExecutionCompletion::ExecutionError(error) => format!(
             "{}\nStatus: Execution error\nCommand: {}\nError: {}\n",
-            match error.kind() {
-                devscope::progress::BuildTestKind::Build => "Build",
-                devscope::progress::BuildTestKind::Test => "Test",
-            },
+            error.kind().label(),
             error.command_label(),
             error.message()
         ),
@@ -517,8 +523,8 @@ mod tests {
         let baseline = BuildTestFreshnessBaseline::capture(project.path()).unwrap();
         save_build_test_state(
             project.path(),
-            BuildTestKind::Build,
-            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            BuildTestKind::BuildDebug,
+            &persisted_result(BuildTestKind::BuildDebug, BuildTestOutcome::Passed),
             Some(&baseline),
         )
         .unwrap();
@@ -534,14 +540,18 @@ mod tests {
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
         );
-        assert!(fresh.contains("Evidence: Build Passed (Fresh) | Test Failed (Fresh)"));
+        assert!(fresh.contains(
+            "Evidence: Build Debug Passed (Fresh) | Build Release Not run | Test Failed (Fresh)"
+        ));
         fs::write(project.path().join("input.rs"), "after and longer").unwrap();
         let stale = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
         );
-        assert!(stale.contains("Evidence: Build Passed (Stale) | Test Failed (Stale)"));
+        assert!(stale.contains(
+            "Evidence: Build Debug Passed (Stale) | Build Release Not run | Test Failed (Stale)"
+        ));
     }
 
     #[test]
@@ -566,8 +576,8 @@ mod tests {
                 .unwrap();
         save_build_test_state(
             project.path(),
-            BuildTestKind::Build,
-            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            BuildTestKind::BuildDebug,
+            &persisted_result(BuildTestKind::BuildDebug, BuildTestOutcome::Passed),
             Some(&baseline),
         )
         .unwrap();
@@ -581,7 +591,9 @@ mod tests {
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
         );
-        assert!(output.contains("Evidence: Build Passed (Fresh) | Test Not run"));
+        assert!(output.contains(
+            "Evidence: Build Debug Passed (Fresh) | Build Release Not run | Test Not run"
+        ));
     }
 
     #[test]
@@ -593,18 +605,20 @@ mod tests {
         )
         .unwrap();
         let error = BuildTestState::ExecutionError(BuildTestExecutionError::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "Cargo",
             "cargo check",
             "failed to start",
         ));
-        save_build_test_state(project.path(), BuildTestKind::Build, &error, None).unwrap();
+        save_build_test_state(project.path(), BuildTestKind::BuildDebug, &error, None).unwrap();
         let output = render_context_ok(
             project.path(),
             &ProjectSnapshot::unavailable(),
             CurrentWorkContext::NotSet,
         );
-        assert!(output.contains("Evidence: Build Execution error | Test Not run"));
+        assert!(output.contains(
+            "Evidence: Build Debug Execution error | Build Release Not run | Test Not run"
+        ));
     }
     fn render_context_ok(
         root: &Path,
@@ -696,10 +710,48 @@ mod tests {
     }
 
     #[test]
+    fn parses_and_labels_build_profiles_without_adding_test_profiles() {
+        for (args, expected) in [
+            (vec!["verify", "build"], BuildTestKind::BuildDebug),
+            (vec!["verify", "build", "debug"], BuildTestKind::BuildDebug),
+            (
+                vec!["verify", "build", "release"],
+                BuildTestKind::BuildRelease,
+            ),
+            (vec!["verify", "test"], BuildTestKind::Test),
+        ] {
+            assert_eq!(
+                parse_args(args.into_iter().map(OsString::from)),
+                Ok(EntryMode::Verify(expected))
+            );
+            let BuildTestState::Completed(result) =
+                persisted_result(expected, BuildTestOutcome::Passed)
+            else {
+                panic!()
+            };
+            assert!(
+                render_verify(&devscope::progress::BuildTestExecutionCompletion::Completed(result))
+                    .starts_with(expected.label())
+            );
+        }
+        for args in [
+            vec!["verify", "release"],
+            vec!["verify", "build", "custom"],
+            vec!["verify", "test", "release"],
+            vec!["verify", "build", "release", "extra"],
+        ] {
+            assert!(parse_args(args.into_iter().map(OsString::from)).is_err());
+        }
+        assert!(usage().contains("devscope verify build release"));
+    }
+
+    #[test]
     fn parses_verify_build_test_and_rejects_other_targets() {
         assert_eq!(
             parse_args([OsString::from("verify"), OsString::from("build")]),
-            Ok(EntryMode::Verify(devscope::progress::BuildTestKind::Build))
+            Ok(EntryMode::Verify(
+                devscope::progress::BuildTestKind::BuildDebug
+            ))
         );
         assert_eq!(
             parse_args([OsString::from("verify"), OsString::from("test")]),
@@ -715,7 +767,7 @@ mod tests {
             BuildTestOutcome, BuildTestResult,
         };
         let passed = BuildTestExecutionCompletion::Completed(BuildTestResult::new(
-            devscope::progress::BuildTestKind::Build,
+            devscope::progress::BuildTestKind::BuildDebug,
             BuildTestOutcome::Passed,
             BuildTestFreshness::Fresh,
             "cargo",
@@ -725,7 +777,9 @@ mod tests {
             "passed",
             None,
         ));
-        assert!(render_verify(&passed).contains("Build\nStatus: Passed\nCommand: cargo check"));
+        assert!(
+            render_verify(&passed).contains("Build Debug\nStatus: Passed\nCommand: cargo check")
+        );
         let error = BuildTestExecutionCompletion::ExecutionError(BuildTestExecutionError::new(
             devscope::progress::BuildTestKind::Test,
             "cargo",
@@ -821,7 +875,9 @@ mod tests {
         assert!(output.contains("Plan: 1/7"));
         assert!(output.contains("Tasks: 6 remaining"));
         assert!(output.contains("Activity: not a Git repository"));
-        assert!(output.contains("Evidence: Build Not run | Test Not run"));
+        assert!(
+            output.contains("Evidence: Build Debug Not run | Build Release Not run | Test Not run")
+        );
         assert!(!output.contains(&project.path().display().to_string()));
         assert!(output.contains("docs"));
         assert!(output.contains(":1  Task 1"));
@@ -862,7 +918,9 @@ mod tests {
         assert!(unavailable.contains("Plan: unavailable"));
         assert!(unavailable.contains("Tasks: unavailable"));
         assert!(unavailable.contains("Activity: unavailable"));
-        assert!(unavailable.contains("Evidence: Build Unavailable | Test Unavailable"));
+        assert!(unavailable.contains(
+            "Evidence: Build Debug Unavailable | Build Release Unavailable | Test Unavailable"
+        ));
     }
 
     #[test]
@@ -877,8 +935,8 @@ mod tests {
 
         save_build_test_state(
             project.path(),
-            BuildTestKind::Build,
-            &persisted_result(BuildTestKind::Build, BuildTestOutcome::Passed),
+            BuildTestKind::BuildDebug,
+            &persisted_result(BuildTestKind::BuildDebug, BuildTestOutcome::Passed),
             None,
         )
         .unwrap();
@@ -889,7 +947,9 @@ mod tests {
             CurrentWorkContext::NotSet,
         );
 
-        assert!(output.contains("Evidence: Build Unavailable | Test Not run"));
+        assert!(output.contains(
+            "Evidence: Build Debug Unavailable | Build Release Unavailable | Test Not run"
+        ));
         assert!(!output.contains("Cargo Build/Test"));
     }
 

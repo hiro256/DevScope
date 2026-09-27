@@ -259,7 +259,7 @@ mod tests {
     fn reports_spawn_failure_as_an_execution_error() {
         let project = TempProject::new();
         let spec = BuildTestCommandSpec::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "fixture",
             "missing fixture",
             project.0.join("definitely-missing-program"),
@@ -273,7 +273,7 @@ mod tests {
         else {
             panic!("missing executable should be an execution error");
         };
-        assert_eq!(error.kind(), BuildTestKind::Build);
+        assert_eq!(error.kind(), BuildTestKind::BuildDebug);
         assert_eq!(error.source_label(), "fixture");
         assert_eq!(error.command_label(), "missing fixture");
         assert!(
@@ -336,7 +336,7 @@ mod tests {
     fn executes_program_and_arguments_without_parsing_display_metadata() {
         let project = TempProject::new();
         let spec = BuildTestCommandSpec::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "display-only source",
             "this is not an executable command",
             env::current_exe().unwrap().into_os_string(),
@@ -354,7 +354,7 @@ mod tests {
         else {
             panic!("fixture program should complete successfully");
         };
-        assert_eq!(result.kind(), BuildTestKind::Build);
+        assert_eq!(result.kind(), BuildTestKind::BuildDebug);
         assert_eq!(result.outcome(), BuildTestOutcome::Passed);
         assert_eq!(result.source_label(), "display-only source");
         assert_eq!(result.command_label(), "this is not an executable command");

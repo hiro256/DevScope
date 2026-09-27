@@ -243,7 +243,7 @@ width; narrow layouts hide it, and resizing preserves the user's `p` toggle stat
 
 The interaction model is considered validated, but the exact contents remain provisional. Task
 Detail currently shows task text, source path, section, and Markdown context. Evidence Detail
-currently shows Status, Freshness, Command, Duration, and Result or Error. Changed File Detail
+currently shows Status, Freshness, Source, Command, Duration, and Result or Error when available. Changed File Detail
 currently shows status, change counts, and diff content, with Full Detail for scrolling. These are
 current useful contents, not final contracts: future observation sources and workflows may change
 them. Recent Commits remains overview-only until a concrete selection or drill-down need appears.
@@ -264,6 +264,23 @@ Future Detail Pane work, if justified, may examine a Recent Commits detail,
 or consider syntax highlighting and colors. It does not imply Detail Pane focus or Full
 Detail for Tasks or Evidence.
 ## Instrumented verification experiment
+
+Process verification has exactly three typed identities: Build Debug, Build Release, and
+Test. Each owns its lifecycle, latest result, freshness baseline, and persisted slot.
+Evidence selection and CLI context use that order, with optional Artifact after Test.
+Space executes only the selected runnable target from visible Evidence Preview; any
+Running target blocks another execution. No Test profiles or arbitrary command registry
+are introduced.
+
+`[verify.build]` and `devscope verify build` retain their default/Debug meanings;
+`devscope verify build debug` is explicit Debug. `[verify.build.release]` and
+`devscope verify build release` address Release. Resolution is independently configured
+command, then Cargo fallback, then Unavailable. Cargo constructs `cargo check`,
+`cargo check --release`, and `cargo test`; core/UI never add toolchain flags.
+The existing `.devscope/evidence/build-test-v1.tsv` uses `build`, `build-release`, and
+`test` in that order. Legacy `build` restores as Debug, with legacy Test unchanged.
+Re-running one target never replaces another's result; all retain the existing shared
+input policy and independent Fresh/Stale interpretation.
 
 Build/Test verification can be invoked through DevScope itself by the TUI or CLI. Verification
 becomes agent-neutral Observed Evidence when DevScope runs the command and observes its result;
@@ -307,7 +324,7 @@ Artifact paths are project-relative both lexically and physically. DevScope reje
 Broken filesystem indirection is treated as observation failure rather than Missing.
 
 The first registration experiment uses one optional project-configured Artifact target. `devscope artifact inspect` observes it, while an explicit path overrides configuration. Configuration defines the observation target and is not Evidence itself. Multiple targets, names, labels, and generic Evidence configuration remain deferred until a concrete need appears.
-When an Artifact target is configured, the Evidence panel includes it as a selectable third observed source. Its Detail Pane shows the recorded path and current observation status, with kind and size for an existing target or an error message when observation fails. Artifact Evidence has no Fresh/Stale interpretation, persistence, or dedicated panel.
+When an Artifact target is configured, the Evidence panel includes it after the three process targets. Its Detail Pane shows the recorded path and current observation status, with kind and size for an existing target or an error message when observation fails. Artifact Evidence has no Fresh/Stale interpretation, persistence, or dedicated panel.
 
 The TUI observes the configured target on startup and when project state is refreshed. It remains a passive filesystem observation: no watch service, automatic verification, or inference about artifact validity is introduced.
 
@@ -326,7 +343,7 @@ detail              path / kind / size / error
 freshness           none
 persistence         none
 observation timing  CLI explicit inspect / TUI startup / TUI refresh
-TUI                 Evidence panel third selectable source / Detail Pane
+TUI                 Evidence panel after process targets / Detail Pane
 ```
 
 Configuration answers what DevScope should observe; an Artifact observation is the

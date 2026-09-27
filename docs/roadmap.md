@@ -124,7 +124,7 @@
 - [x] Explore read-only project File Browser with Preview
 - [x] Implement minimal read-only project File Browser
 - [x] Refine contextual Detail actions and Evidence execution
-- [ ] Support Build verification profiles for Debug and Release
+- [x] Support Build verification profiles for Debug and Release
 - [x] Refine Preview content and density across focused panels
 - [x] Refine TUI visual alignment for side-by-side Codex use
 - [x] Dogfood five-second project-state understanding
@@ -175,24 +175,23 @@ Up/Down or j/k scrolling, Enter/Esc Back, and q Quit. Contextual shortcuts no lo
 the global footer. This task owns interaction and action placement; later visual alignment owns borders,
 spacing, typography, and exact footer styling.
 
-Next, explore Build Debug and Build Release as independent verification targets on that
-action model, keeping Test as one target. Distinguish each Build profile's state, latest
-result, freshness, command, and persisted identity. Start with a small Build-plus-variant
-extension rather than an arbitrary named-command framework, workflow engine, plugin
-execution API, or stabilized generic Evidence API. Check possible future Test variants
-without including their generalization in this task. Preserve source-specific Evidence
-semantics and the UI / progress-analysis boundary.
-
-The Config schema remains undecided. Investigate existing single-build `[verify.build]`
-compatibility, Cargo auto-detection, command resolution, persistence keying and format
-compatibility, per-profile freshness, and CLI/TUI consistency before choosing it. Keep
-behavior toolchain-neutral: Cargo Debug/Release and .NET Debug/Release command differences
-belong in configuration/resolution, not tool-specific core or UI models.
+Build profiles are implemented as three fixed process targets: Build Debug, Build Release,
+and Test, each with independent state, command, freshness, and latest persisted result.
+Existing `[verify.build]` and `verify build` retain Debug semantics; `[verify.build.release]`
+and `verify build release` select Release. Cargo defaults are `cargo check`,
+`cargo check --release`, and `cargo test`; configured commands are never given inferred
+toolchain flags. The existing v1 state file keeps legacy `build`/`test` and adds
+`build-release`. CLI/context and TUI selection expose the three targets independently,
+with one active verification process. No generic command registry or Test profiles were added.
+User-confirmed Windows Terminal dogfood passed: all targets remain visible side-by-side,
+Space executes the selected command with independent results and a single-active gate,
+a source change stales all completed targets, and rerunning only Release makes only
+Release Fresh. Restart restored Debug/Stale, Release/Fresh, and Test/Stale correctly.
 
 Preview density refinement is complete: compact metadata fields, source-grounded Task
 context, separate Evidence outcome/freshness, and width-aware wrapping preserve detail
 and fixed contextual actions. Half-screen Windows Terminal dogfood accepted the result;
-Build profiles remain a separate pending task.
+Build profiles were completed separately as recorded above.
 
 Visual alignment is complete after user-accepted side-by-side Windows Terminal dogfood.
 Project Progress and Preview retain their frames; Tasks, Evidence, Changed Files, and

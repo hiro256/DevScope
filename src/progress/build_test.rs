@@ -8,11 +8,24 @@ use std::time::Duration;
 /// The maximum number of Unicode scalar values retained for diagnostic output.
 pub const MAX_DIAGNOSTIC_CHARS: usize = 4096;
 
-/// A verification category in the v0.3 Build/Test model.
+/// The three supported process verification targets; not an arbitrary command registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildTestKind {
-    Build,
+    BuildDebug,
+    BuildRelease,
     Test,
+}
+
+impl BuildTestKind {
+    pub const ALL: [Self; 3] = [Self::BuildDebug, Self::BuildRelease, Self::Test];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::BuildDebug => "Build Debug",
+            Self::BuildRelease => "Build Release",
+            Self::Test => "Test",
+        }
+    }
 }
 
 /// The outcome of a completed verification process.
@@ -270,8 +283,34 @@ mod tests {
     }
 
     #[test]
+    fn all_targets_retain_identity_in_runs_results_and_errors() {
+        for (index, kind) in BuildTestKind::ALL.into_iter().enumerate() {
+            for other in &BuildTestKind::ALL[index + 1..] {
+                assert_ne!(kind, *other);
+            }
+            assert_eq!(BuildTestRun::new(kind, "tool", "command").kind(), kind);
+            assert_eq!(
+                BuildTestExecutionError::new(kind, "tool", "command", "error").kind(),
+                kind
+            );
+            let result = BuildTestResult::new(
+                kind,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "tool",
+                "command",
+                Some(0),
+                Duration::ZERO,
+                "ok",
+                None,
+            );
+            assert_eq!(result.kind(), kind);
+        }
+    }
+
+    #[test]
     fn keeps_build_and_test_kinds_distinct() {
-        assert_ne!(BuildTestKind::Build, BuildTestKind::Test);
+        assert_ne!(BuildTestKind::BuildDebug, BuildTestKind::Test);
     }
 
     #[test]
@@ -301,7 +340,7 @@ mod tests {
     #[test]
     fn derives_running_not_run_and_unavailable_statuses() {
         let running = BuildTestState::Running(BuildTestRun::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "cargo",
             "cargo check",
         ));
@@ -371,7 +410,7 @@ mod tests {
     fn mark_stale_preserves_every_completed_result_field() {
         let diagnostic = BuildTestDiagnostic::new("diagnostic detail");
         let mut result = BuildTestResult::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestOutcome::Failed,
             BuildTestFreshness::Fresh,
             "fixture source",
@@ -386,7 +425,7 @@ mod tests {
         result.mark_stale();
 
         assert_eq!(result.freshness(), BuildTestFreshness::Stale);
-        assert_eq!(result.kind(), BuildTestKind::Build);
+        assert_eq!(result.kind(), BuildTestKind::BuildDebug);
         assert_eq!(result.outcome(), BuildTestOutcome::Failed);
         assert_eq!(result.source_label(), "fixture source");
         assert_eq!(result.command_label(), "fixture command");

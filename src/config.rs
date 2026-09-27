@@ -90,10 +90,14 @@ impl PlanConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VerifyConfig {
     build: Option<VerifyCommandConfig>,
+    build_release: Option<VerifyCommandConfig>,
     test: Option<VerifyCommandConfig>,
     excludes: Vec<PathBuf>,
 }
 impl VerifyConfig {
+    pub fn build_release(&self) -> Option<&VerifyCommandConfig> {
+        self.build_release.as_ref()
+    }
     pub fn build(&self) -> Option<&VerifyCommandConfig> {
         self.build.as_ref()
     }
@@ -368,8 +372,25 @@ fn parse_verify_config(
             return Err(unknown_key(path, key, "[verify]"));
         }
     }
+    // Strip only the supported nested profile before validating the legacy command.
+    // An implicitly created build table containing just release is not a Debug command.
+    let mut build = table.get("build").cloned();
+    let release = build
+        .as_mut()
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|table| table.remove("release"));
+    let release_only = release.is_some()
+        && build
+            .as_ref()
+            .and_then(toml::Value::as_table)
+            .is_some_and(|table| table.is_empty());
     Ok(VerifyConfig {
-        build: parse_verify_command(path, table.get("build"), "build")?,
+        build: parse_verify_command(
+            path,
+            if release_only { None } else { build.as_ref() },
+            "build",
+        )?,
+        build_release: parse_verify_command(path, release.as_ref(), "build.release")?,
         test: parse_verify_command(path, table.get("test"), "test")?,
         excludes: parse_excludes(path, table.get("exclude"), "verify.exclude")?,
     })
@@ -577,6 +598,31 @@ mod tests {
     impl Drop for TempProject {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn parses_build_profiles_and_rejects_unknown_or_malformed_profiles() {
+        let path = Path::new(CONFIG_PATH);
+        let config = parse_project_config(path, "[verify.build]\nprogram = 'debug-tool'\n[verify.build.release]\nprogram = 'release-tool'\nargs = ['release']").unwrap();
+        assert_eq!(config.verify().build().unwrap().program(), "debug-tool");
+        assert_eq!(config.verify().build_release().unwrap().args(), ["release"]);
+        let config =
+            parse_project_config(path, "[verify.build.release]\nprogram = 'release-tool'").unwrap();
+        assert!(config.verify().build().is_none());
+        assert!(config.verify().build_release().is_some());
+        for text in [
+            "[verify.build.release]\nargs = []",
+            "[verify.build.release]\nprogram = ''",
+            "[verify.build.release]\nprogram = 'tool'\nargs = [42]",
+            "[verify.build.release]\nprogram = 'tool'\nunknown = true",
+            "[verify.build]\nrelease = 'tool'",
+            "[verify.build]\nprogram = 'tool'\n[verify.build.debug]\nprogram = 'other'",
+            "[verify.build.custom]\nprogram = 'tool'",
+            "[verify.test.release]\nprogram = 'tool'",
+            "[verify.build]\nargs = []\n[verify.build.release]\nprogram = 'tool'",
+        ] {
+            assert!(parse_project_config(path, text).is_err(), "{text}");
         }
     }
 

@@ -529,6 +529,7 @@ fn apply_refresh_status(
 struct BuildTestRuntime {
     active: Option<BuildTestExecution>,
     build_baseline: Option<BuildTestFreshnessBaseline>,
+    release_baseline: Option<BuildTestFreshnessBaseline>,
     test_baseline: Option<BuildTestFreshnessBaseline>,
     active_baseline: Option<BuildTestFreshnessBaseline>,
     active_inputs_changed: bool,
@@ -538,14 +539,16 @@ struct BuildTestRuntime {
 impl BuildTestRuntime {
     fn clear_baseline(&mut self, kind: BuildTestKind) {
         match kind {
-            BuildTestKind::Build => self.build_baseline = None,
+            BuildTestKind::BuildDebug => self.build_baseline = None,
+            BuildTestKind::BuildRelease => self.release_baseline = None,
             BuildTestKind::Test => self.test_baseline = None,
         }
     }
 
     fn set_baseline(&mut self, kind: BuildTestKind, baseline: Option<BuildTestFreshnessBaseline>) {
         match kind {
-            BuildTestKind::Build => self.build_baseline = baseline,
+            BuildTestKind::BuildDebug => self.build_baseline = baseline,
+            BuildTestKind::BuildRelease => self.release_baseline = baseline,
             BuildTestKind::Test => self.test_baseline = baseline,
         }
     }
@@ -556,7 +559,7 @@ fn initialize_build_test_availability(
     config: &ProjectConfig,
     app: &mut App,
 ) {
-    for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+    for kind in BuildTestKind::ALL {
         if project_root.is_some_and(|root| resolve_build_test_command(root, config, kind).is_some())
         {
             if matches!(app.build_test_state(kind), BuildTestState::Unavailable) {
@@ -655,7 +658,8 @@ fn apply_build_test_completion(
             if let (Some(root), Some(baseline)) = (
                 project_root,
                 match kind {
-                    BuildTestKind::Build => runtime.build_baseline.as_ref(),
+                    BuildTestKind::BuildDebug => runtime.build_baseline.as_ref(),
+                    BuildTestKind::BuildRelease => runtime.release_baseline.as_ref(),
                     BuildTestKind::Test => runtime.test_baseline.as_ref(),
                 },
             ) {
@@ -719,7 +723,13 @@ fn check_build_test_freshness(
         project_root,
         app,
         runtime.build_baseline.as_ref(),
-        BuildTestKind::Build,
+        BuildTestKind::BuildDebug,
+        runtime.config.verify().excludes(),
+    ) | check_completed_build_test_freshness(
+        project_root,
+        app,
+        runtime.release_baseline.as_ref(),
+        BuildTestKind::BuildRelease,
         runtime.config.verify().excludes(),
     ) | check_completed_build_test_freshness(
         project_root,
@@ -812,7 +822,7 @@ pub fn run(
         ..Default::default()
     };
     initialize_build_test_availability(project_root, config, app);
-    for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+    for kind in BuildTestKind::ALL {
         if matches!(app.build_test_state(kind), BuildTestState::Completed(result) if matches!(result.freshness(), BuildTestFreshness::Fresh))
         {
             build_test_runtime.set_baseline(
@@ -1115,7 +1125,7 @@ mod tests {
             outcome,
             BuildTestFreshness::Fresh,
             "cargo",
-            if kind == BuildTestKind::Build {
+            if kind == BuildTestKind::BuildDebug {
                 "cargo check"
             } else {
                 "cargo test"
@@ -1135,12 +1145,12 @@ mod tests {
     fn maps_manual_build_and_test_keys_only_on_press() {
         let mut app = App::new(ProjectSnapshot::unavailable());
         app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
         let area = ratatui::layout::Rect::new(0, 0, 120, 30);
         assert_eq!(
             contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))),
-            Some(BuildTestKind::Build)
+            Some(BuildTestKind::BuildDebug)
         );
         app.select_evidence_detail(BuildTestKind::Test);
         assert_eq!(
@@ -1167,7 +1177,7 @@ mod tests {
         let mut app = App::new(ProjectSnapshot::unavailable());
         let area = ratatui::layout::Rect::new(0, 0, 120, 30);
         let space = key(KeyCode::Char(' '));
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
         for panel in [
             FocusedPanel::Tasks,
@@ -1184,7 +1194,7 @@ mod tests {
             assert_eq!(
                 contextual_build_test_kind(&app, area, space),
                 if panel == FocusedPanel::Evidence {
-                    Some(BuildTestKind::Build)
+                    Some(BuildTestKind::BuildDebug)
                 } else {
                     None
                 }
@@ -1195,18 +1205,18 @@ mod tests {
         handle_navigation_key(None, &mut app, key(KeyCode::Enter), area);
         assert_eq!(
             contextual_build_test_kind(&app, area, space),
-            Some(BuildTestKind::Build)
+            Some(BuildTestKind::BuildDebug)
         );
         assert_eq!(
             contextual_build_test_kind(&app, ratatui::layout::Rect::new(0, 0, 40, 20), space),
             None
         );
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::Unavailable);
         assert_eq!(contextual_build_test_kind(&app, area, space), None);
         app.apply_build_test_state(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestState::Running(devscope::progress::BuildTestRun::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "fixture",
                 "build",
             )),
@@ -1214,7 +1224,7 @@ mod tests {
         assert_eq!(contextual_build_test_kind(&app, area, space), None);
         app.select_evidence_detail(BuildTestKind::Test);
         assert_eq!(contextual_build_test_kind(&app, area, space), None);
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         app.apply_build_test_state(
             BuildTestKind::Test,
             BuildTestState::ExecutionError(BuildTestExecutionError::new(
@@ -1247,9 +1257,9 @@ mod tests {
         let root = temp_root();
         fs::create_dir_all(root.join(".devscope")).unwrap();
         fs::write(root.join(".devscope/config.toml"),
-            "[verify.build]\nprogram = \"missing-contextual-fixture\"\n[verify.test]\nprogram = \"missing-contextual-fixture\"\n").unwrap();
+            "[verify.build]\nprogram = \"missing-contextual-fixture\"\n[verify.build.release]\nprogram = \"missing-release-fixture\"\n[verify.test]\nprogram = \"missing-contextual-fixture\"\n").unwrap();
         let area = ratatui::layout::Rect::new(0, 0, 120, 30);
-        for kind in [BuildTestKind::Build, BuildTestKind::Test] {
+        for kind in BuildTestKind::ALL {
             let mut app = App::new(ProjectSnapshot::unavailable());
             let mut runtime = BuildTestRuntime {
                 config: load_project_config(&root).unwrap(),
@@ -1267,6 +1277,36 @@ mod tests {
                 selected
             ));
             assert_eq!(app.evidence_detail_kind(), Some(kind));
+            for other in BuildTestKind::ALL
+                .into_iter()
+                .filter(|other| *other != kind)
+            {
+                assert_eq!(app.build_test_state(other), &BuildTestState::NotRun);
+                app.select_evidence_detail(other);
+                assert_eq!(
+                    contextual_build_test_kind(&app, area, key(KeyCode::Char(' '))),
+                    None
+                );
+                assert!(!start_manual_build_test(
+                    Some(&root),
+                    &mut app,
+                    &mut runtime,
+                    other
+                ));
+            }
+            app.select_evidence_detail(kind);
+            let BuildTestState::Running(run) = app.build_test_state(kind) else {
+                panic!()
+            };
+            assert_eq!(run.kind(), kind);
+            assert_eq!(
+                run.command_label(),
+                if kind == BuildTestKind::BuildRelease {
+                    "missing-release-fixture"
+                } else {
+                    "missing-contextual-fixture"
+                }
+            );
             assert!(matches!(
                 app.build_test_state(kind),
                 BuildTestState::Running(_)
@@ -1375,7 +1415,7 @@ mod tests {
             &mut cargo_app,
         );
         assert_eq!(
-            cargo_app.build_test_state(BuildTestKind::Build),
+            cargo_app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::NotRun
         );
         assert_eq!(
@@ -1391,7 +1431,7 @@ mod tests {
             &mut non_cargo_app,
         );
         assert_eq!(
-            non_cargo_app.build_test_state(BuildTestKind::Build),
+            non_cargo_app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::Unavailable
         );
         assert_eq!(
@@ -1431,7 +1471,7 @@ mod tests {
 
             assert_eq!(
                 matches!(
-                    app.build_test_state(BuildTestKind::Build),
+                    app.build_test_state(BuildTestKind::BuildDebug),
                     BuildTestState::NotRun
                 ),
                 build_available
@@ -1467,9 +1507,9 @@ mod tests {
             Some(&root),
             &mut app,
             &mut runtime,
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
         ));
-        let BuildTestState::Running(run) = app.build_test_state(BuildTestKind::Build) else {
+        let BuildTestState::Running(run) = app.build_test_state(BuildTestKind::BuildDebug) else {
             panic!("configured command should enter the running state");
         };
         assert_eq!(run.source_label(), "configured-build");
@@ -1507,7 +1547,7 @@ mod tests {
         assert_eq!(run.source_label(), "configured-test");
         assert_eq!(run.command_label(), "configured-test --override");
         assert_eq!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::NotRun
         );
         let _ = fs::remove_dir_all(root);
@@ -1547,11 +1587,11 @@ mod tests {
             Some(&root),
             &mut app,
             &mut runtime,
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
         ));
         assert!(runtime.active.is_none());
         assert_eq!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::Unavailable
         );
         let _ = fs::remove_dir_all(root);
@@ -1561,7 +1601,7 @@ mod tests {
     fn ignores_a_second_manual_start_while_an_execution_is_active() {
         let root = temp_root();
         let active = BuildTestExecution::start(BuildTestCommandSpec::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "fixture",
             "missing fixture",
             root.join("missing-program"),
@@ -1594,12 +1634,12 @@ mod tests {
             Some(&root),
             &mut app,
             &mut runtime,
-            BuildTestKind::Build
+            BuildTestKind::BuildDebug
         ));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
         runtime.active = Some(
             BuildTestExecution::start(BuildTestCommandSpec::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "fixture",
                 "missing",
                 root.join("missing"),
@@ -1614,16 +1654,89 @@ mod tests {
             &mut runtime,
             BuildTestKind::Test
         ));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn profiles_stale_independently_and_only_rerun_target_becomes_fresh() {
+        let root = temp_root();
+        fs::write(root.join("source.rs"), "before").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+        for kind in BuildTestKind::ALL {
+            apply_build_test_completion(
+                Some(&root),
+                &mut app,
+                &mut runtime,
+                BuildTestExecutionCompletion::Completed(completed_result(
+                    kind,
+                    if kind == BuildTestKind::BuildRelease {
+                        BuildTestOutcome::Failed
+                    } else {
+                        BuildTestOutcome::Passed
+                    },
+                )),
+                false,
+                Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+            );
+        }
+        fs::write(root.join("source.rs"), "after").unwrap();
+        assert!(check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        for kind in BuildTestKind::ALL {
+            assert!(
+                matches!(app.build_test_state(kind), BuildTestState::Completed(result) if result.kind() == kind && result.freshness() == BuildTestFreshness::Stale)
+            );
+        }
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(completed_result(
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Passed,
+            )),
+            false,
+            Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
+        );
+        let mut restarted = App::new(ProjectSnapshot::unavailable());
+        crate::restore_tui_build_test_states(
+            Some(&root),
+            &ProjectConfig::default(),
+            &mut restarted,
+        );
+        for kind in BuildTestKind::ALL {
+            let BuildTestState::Completed(result) = restarted.build_test_state(kind) else {
+                panic!()
+            };
+            assert_eq!(result.kind(), kind);
+            assert_eq!(
+                result.freshness(),
+                if kind == BuildTestKind::BuildDebug {
+                    BuildTestFreshness::Fresh
+                } else {
+                    BuildTestFreshness::Stale
+                }
+            );
+            assert_eq!(
+                result.outcome(),
+                if kind == BuildTestKind::BuildRelease {
+                    BuildTestOutcome::Failed
+                } else {
+                    BuildTestOutcome::Passed
+                }
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn applies_completions_and_keeps_kind_baselines_independent() {
         let root = temp_root();
         fs::write(root.join("input.txt"), "input").unwrap();
         let mut app = App::new(ProjectSnapshot::unavailable());
         let mut runtime = BuildTestRuntime::default();
-        let build = completed_result(BuildTestKind::Build, BuildTestOutcome::Passed);
+        let build = completed_result(BuildTestKind::BuildDebug, BuildTestOutcome::Passed);
         apply_build_test_completion(
             Some(&root),
             &mut app,
@@ -1633,7 +1746,7 @@ mod tests {
             Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert_eq!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::Completed(build)
         );
         assert!(runtime.build_baseline.is_some());
@@ -1670,7 +1783,7 @@ mod tests {
             &mut app,
             &mut runtime,
             BuildTestExecutionCompletion::Completed(completed_result(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 BuildTestOutcome::Passed,
             )),
             false,
@@ -1680,7 +1793,8 @@ mod tests {
 
         fs::write(input, "after").unwrap();
         assert!(check_build_test_freshness(Some(&root), &mut app, &runtime));
-        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
+        else {
             panic!("a completed Build result should remain completed");
         };
         assert_eq!(result.outcome(), BuildTestOutcome::Passed);
@@ -1740,12 +1854,13 @@ mod tests {
             &mut app,
             &mut runtime,
             BuildTestExecutionCompletion::Completed(completed_result(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 BuildTestOutcome::Passed,
             )),
         );
 
-        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
+        else {
             panic!("a completed Build result should remain completed");
         };
         assert_eq!(result.freshness(), BuildTestFreshness::Fresh);
@@ -1773,12 +1888,13 @@ mod tests {
             &mut app,
             &mut runtime,
             BuildTestExecutionCompletion::Completed(completed_result(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 BuildTestOutcome::Passed,
             )),
         );
 
-        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
+        else {
             panic!("a completed Build result should remain completed");
         };
         assert_eq!(result.freshness(), BuildTestFreshness::Fresh);
@@ -1858,7 +1974,7 @@ mod tests {
             &mut app,
             &mut runtime,
             BuildTestExecutionCompletion::Completed(completed_result(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 BuildTestOutcome::Passed,
             )),
             false,
@@ -1867,7 +1983,8 @@ mod tests {
 
         fs::remove_dir_all(&root).unwrap();
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
-        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Build) else {
+        let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
+        else {
             panic!("a completed Build result should remain completed");
         };
         assert_eq!(result.freshness(), BuildTestFreshness::Fresh);
@@ -1884,31 +2001,31 @@ mod tests {
         };
         fs::write(root.join("input.txt"), "after changed").unwrap();
 
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::NotRun);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::NotRun
         ));
 
         app.apply_build_test_state(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestState::Running(BuildTestRun::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "cargo",
                 "cargo check",
             )),
         );
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::Running(_)
         ));
 
         app.apply_build_test_state(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestState::ExecutionError(BuildTestExecutionError::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "cargo",
                 "cargo check",
                 "could not start",
@@ -1916,14 +2033,14 @@ mod tests {
         );
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::ExecutionError(_)
         ));
 
-        app.apply_build_test_state(BuildTestKind::Build, BuildTestState::Unavailable);
+        app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::Unavailable);
         assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::Unavailable
         ));
         assert!(runtime.build_baseline.is_some());
@@ -1945,7 +2062,7 @@ mod tests {
             &mut app,
             &mut runtime,
             BuildTestExecutionCompletion::ExecutionError(BuildTestExecutionError::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "cargo",
                 "cargo check",
                 "worker disconnected",
@@ -1954,7 +2071,7 @@ mod tests {
             Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::ExecutionError(_)
         ));
         assert!(runtime.build_baseline.is_none());
@@ -3047,7 +3164,7 @@ mod tests {
             );
             assert_eq!(
                 app.evidence_selection(),
-                crate::app::EvidenceSelection::Build
+                crate::app::EvidenceSelection::BuildDebug
             );
             assert_eq!(app.preview_scroll(), 0);
         }

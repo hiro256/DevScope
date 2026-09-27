@@ -104,8 +104,8 @@ mod tests {
     #[test]
     fn retains_build_and_test_kinds() {
         assert_eq!(
-            command_spec(BuildTestKind::Build).kind(),
-            BuildTestKind::Build
+            command_spec(BuildTestKind::BuildDebug).kind(),
+            BuildTestKind::BuildDebug
         );
         assert_eq!(
             command_spec(BuildTestKind::Test).kind(),
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn permits_empty_arguments() {
         let spec = BuildTestCommandSpec::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             "fixture",
             "display only",
             OsString::from("tool"),

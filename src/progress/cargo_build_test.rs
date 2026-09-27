@@ -20,9 +20,13 @@ pub fn is_cargo_project(root: &Path) -> bool {
 /// Returns `None` when the root does not directly contain a regular `Cargo.toml`.
 pub fn cargo_build_test_command(root: &Path, kind: BuildTestKind) -> Option<BuildTestCommandSpec> {
     is_cargo_project(root).then(|| {
-        let (command_label, argument) = match kind {
-            BuildTestKind::Build => ("cargo check", "check"),
-            BuildTestKind::Test => ("cargo test", "test"),
+        let (command_label, arguments) = match kind {
+            BuildTestKind::BuildDebug => ("cargo check", vec![OsString::from("check")]),
+            BuildTestKind::BuildRelease => (
+                "cargo check --release",
+                vec![OsString::from("check"), OsString::from("--release")],
+            ),
+            BuildTestKind::Test => ("cargo test", vec![OsString::from("test")]),
         };
 
         BuildTestCommandSpec::new(
@@ -30,7 +34,7 @@ pub fn cargo_build_test_command(root: &Path, kind: BuildTestKind) -> Option<Buil
             CARGO_SOURCE_LABEL,
             command_label,
             OsString::from(CARGO_PROGRAM),
-            vec![OsString::from(argument)],
+            arguments,
             root,
         )
     })
@@ -47,6 +51,19 @@ mod tests {
     };
 
     static ID: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn release_uses_exact_cargo_release_arguments() {
+        let project = TempProject::new("release");
+        fs::write(project.0.join("Cargo.toml"), "[package]").unwrap();
+        let spec = cargo_build_test_command(&project.0, BuildTestKind::BuildRelease).unwrap();
+        assert_eq!(spec.kind(), BuildTestKind::BuildRelease);
+        assert_eq!(spec.command_label(), "cargo check --release");
+        assert_eq!(
+            spec.arguments(),
+            [OsString::from("check"), OsString::from("--release")]
+        );
+    }
 
     struct TempProject(PathBuf);
 
@@ -95,9 +112,9 @@ mod tests {
     fn creates_the_build_command_spec() {
         let project = TempProject::new("build");
         project.manifest();
-        let spec = cargo_build_test_command(&project.0, BuildTestKind::Build).unwrap();
+        let spec = cargo_build_test_command(&project.0, BuildTestKind::BuildDebug).unwrap();
 
-        assert_eq!(spec.kind(), BuildTestKind::Build);
+        assert_eq!(spec.kind(), BuildTestKind::BuildDebug);
         assert_eq!(spec.source_label(), "cargo");
         assert_eq!(spec.command_label(), "cargo check");
         assert_eq!(spec.program(), OsStr::new("cargo"));
@@ -123,7 +140,7 @@ mod tests {
     fn keeps_build_and_test_as_separate_commands() {
         let project = TempProject::new("separate");
         project.manifest();
-        let build = cargo_build_test_command(&project.0, BuildTestKind::Build).unwrap();
+        let build = cargo_build_test_command(&project.0, BuildTestKind::BuildDebug).unwrap();
         let test = cargo_build_test_command(&project.0, BuildTestKind::Test).unwrap();
 
         assert_ne!(build.command_label(), test.command_label());
@@ -147,7 +164,7 @@ mod tests {
         assert!(!is_cargo_project(&directory_manifest.0));
 
         let missing = TempProject::new("non-cargo-command");
-        assert!(cargo_build_test_command(&missing.0, BuildTestKind::Build).is_none());
+        assert!(cargo_build_test_command(&missing.0, BuildTestKind::BuildDebug).is_none());
         assert!(cargo_build_test_command(&missing.0, BuildTestKind::Test).is_none());
 
         let parent = TempProject::new("parent-manifest");

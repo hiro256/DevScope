@@ -58,8 +58,9 @@ pub fn save_build_test_state(
         baseline_fingerprint: baseline.map(BuildTestFreshnessBaseline::fingerprint_value),
     });
     states.sort_by_key(|entry| match entry.kind {
-        BuildTestKind::Build => 0,
-        BuildTestKind::Test => 1,
+        BuildTestKind::BuildDebug => 0,
+        BuildTestKind::BuildRelease => 1,
+        BuildTestKind::Test => 2,
     });
     let path = root.join(STATE_PATH);
     fs::create_dir_all(path.parent().expect("state path has parent"))?;
@@ -76,7 +77,8 @@ fn parse_states(text: &str) -> Result<Vec<PersistedBuildTestState>, ()> {
             return Err(());
         }
         let kind = match fields[0] {
-            "build" => BuildTestKind::Build,
+            "build" => BuildTestKind::BuildDebug,
+            "build-release" => BuildTestKind::BuildRelease,
             "test" => BuildTestKind::Test,
             _ => return Err(()),
         };
@@ -146,7 +148,8 @@ fn render_states(states: &[PersistedBuildTestState]) -> String {
         .iter()
         .map(|entry| {
             let kind = match entry.kind {
-                BuildTestKind::Build => "build",
+                BuildTestKind::BuildDebug => "build",
+                BuildTestKind::BuildRelease => "build-release",
                 BuildTestKind::Test => "test",
             };
             match &entry.state {
@@ -235,13 +238,74 @@ mod tests {
         ))
     }
     #[test]
+    fn profiles_persist_independently_and_restore_legacy_keys_and_freshness() {
+        let root = root();
+        let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
+        for kind in BuildTestKind::ALL {
+            save_build_test_state(&root, kind, &result(kind), Some(&baseline)).unwrap();
+        }
+        let states = load_build_test_states(&root);
+        assert_eq!(
+            states.iter().map(|entry| entry.kind).collect::<Vec<_>>(),
+            BuildTestKind::ALL
+        );
+        let text = fs::read_to_string(state_path(&root)).unwrap();
+        assert_eq!(
+            text.lines()
+                .map(|line| line.split('\t').next().unwrap())
+                .collect::<Vec<_>>(),
+            ["build", "build-release", "test"]
+        );
+        // A legacy file with no Release row still restores Debug and Test.
+        let legacy = text
+            .lines()
+            .filter(|line| !line.starts_with("build-release\t"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            parse_states(&legacy)
+                .unwrap()
+                .iter()
+                .map(|entry| entry.kind)
+                .collect::<Vec<_>>(),
+            [BuildTestKind::BuildDebug, BuildTestKind::Test]
+        );
+        fs::write(root.join("input.rs"), "two").unwrap();
+        let new_baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
+        save_build_test_state(
+            &root,
+            BuildTestKind::BuildRelease,
+            &result(BuildTestKind::BuildRelease),
+            Some(&new_baseline),
+        )
+        .unwrap();
+        let mut restored = load_build_test_states(&root);
+        for entry in &mut restored {
+            entry.restore_freshness(&root);
+            let BuildTestState::Completed(result) = &entry.state else {
+                panic!()
+            };
+            assert_eq!(result.kind(), entry.kind);
+            assert_eq!(
+                result.freshness(),
+                if entry.kind == BuildTestKind::BuildRelease {
+                    BuildTestFreshness::Fresh
+                } else {
+                    BuildTestFreshness::Stale
+                }
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn saves_and_reloads_build_and_test_results() {
         let root = root();
         let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
         save_build_test_state(
             &root,
-            BuildTestKind::Build,
-            &result(BuildTestKind::Build),
+            BuildTestKind::BuildDebug,
+            &result(BuildTestKind::BuildDebug),
             Some(&baseline),
         )
         .unwrap();
@@ -268,7 +332,7 @@ mod tests {
     fn stale_result_remains_stale_after_reload() {
         let root = root();
         let state = BuildTestState::Completed(BuildTestResult::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestOutcome::Passed,
             BuildTestFreshness::Stale,
             "cargo",
@@ -278,7 +342,7 @@ mod tests {
             "passed",
             None,
         ));
-        save_build_test_state(&root, BuildTestKind::Build, &state, None).unwrap();
+        save_build_test_state(&root, BuildTestKind::BuildDebug, &state, None).unwrap();
 
         let mut restored = load_build_test_states(&root).pop().unwrap();
         restored.restore_freshness(&root);
@@ -294,8 +358,8 @@ mod tests {
         let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
         save_build_test_state(
             &root,
-            BuildTestKind::Build,
-            &result(BuildTestKind::Build),
+            BuildTestKind::BuildDebug,
+            &result(BuildTestKind::BuildDebug),
             Some(&baseline),
         )
         .unwrap();
@@ -324,8 +388,8 @@ mod tests {
             BuildTestFreshnessBaseline::capture_with_exclusions(&root, &exclusions).unwrap();
         save_build_test_state(
             &root,
-            BuildTestKind::Build,
-            &result(BuildTestKind::Build),
+            BuildTestKind::BuildDebug,
+            &result(BuildTestKind::BuildDebug),
             Some(&baseline),
         )
         .unwrap();
@@ -359,8 +423,8 @@ mod tests {
             BuildTestFreshnessBaseline::capture_with_exclusions(&source_root, &exclusions).unwrap();
         save_build_test_state(
             &source_root,
-            BuildTestKind::Build,
-            &result(BuildTestKind::Build),
+            BuildTestKind::BuildDebug,
+            &result(BuildTestKind::BuildDebug),
             Some(&baseline),
         )
         .unwrap();
@@ -384,8 +448,8 @@ mod tests {
             BuildTestFreshnessBaseline::capture_with_exclusions(&root, &exclusions).unwrap();
         save_build_test_state(
             &root,
-            BuildTestKind::Build,
-            &result(BuildTestKind::Build),
+            BuildTestKind::BuildDebug,
+            &result(BuildTestKind::BuildDebug),
             Some(&baseline),
         )
         .unwrap();

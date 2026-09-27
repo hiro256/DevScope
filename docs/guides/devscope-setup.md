@@ -74,7 +74,7 @@ Evidence, or AI memory. It can address implemented project-specific cases:
   `[plan].exclude` for a literal project-relative file or directory that should not be
   observed as Plan, such as a derived or duplicated Markdown source;
 - `[artifact].path` for one optional project-relative Artifact observation target;
-- `[verify]`, `[verify.build]`, and `[verify.test]` for Build/Test command resolution
+- `[verify]`, `[verify.build]`, `[verify.build.release]`, and `[verify.test]` for command resolution
   and freshness-only exclusions;
 - `[activity].exclude` for explicit worktree scan exclusions, maintained separately
   from Plan and verification freshness. Use the Skill's approval-gated proposal workflow.
@@ -102,16 +102,19 @@ Include paths must exist and remain project-relative; existing excludes still wi
 A Config-free project root with a regular `Cargo.toml` uses the Cargo defaults:
 
 ```powershell
-devscope verify build  # cargo check
-devscope verify test   # cargo test
+devscope verify build          # Build Debug: cargo check (backward-compatible shorthand)
+devscope verify build debug    # Build Debug: cargo check
+devscope verify build release  # Build Release: cargo check --release
+devscope verify test           # Test: cargo test
 ```
 
-A configured kind overrides that Cargo default. A non-Cargo project has an available
-Build or Test slot only when that kind is configured; partial configuration is valid. For
-example, configuring only Test leaves Build on its Cargo fallback when applicable, or
-Unavailable for a non-Cargo project.
+A configured target overrides only its matching Cargo default. Existing `[verify.build]`
+continues to configure Debug; `[verify.build.release]` configures Release independently.
+Release-only configuration is valid. A non-Cargo target without a configured command is
+Unavailable. DevScope never appends `--release` or other inferred flags to arbitrary
+configured commands. Test remains one target; custom profile names are not supported.
 
-The following `.NET` project Config enables both kinds and excludes generated outputs
+The following `.NET` project Config enables all three targets and excludes generated outputs
 from freshness observation:
 
 ```toml
@@ -125,7 +128,11 @@ exclude = [
 
 [verify.build]
 program = "dotnet"
-args = ["build"]
+args = ["build", "-c", "Debug"]
+
+[verify.build.release]
+program = "dotnet"
+args = ["build", "-c", "Release"]
 
 [verify.test]
 program = "dotnet"
@@ -146,6 +153,11 @@ confirmed. Generated outputs such as .NET `bin` and `obj` can be excluded, while
 changes themselves remain relevant and make completed Evidence stale.
 
 `.devscope/evidence/` stores local observed Evidence state. It is normally not committed.
+The existing `build-test-v1.tsv` file keeps independent `build` (Debug), `build-release`,
+and `test` entries. Legacy Build/Test results remain readable without deleting the file.
+Re-running one target updates only that target; changed inputs can stale all completed
+results. The TUI lists Debug, Release, Test, then optional Artifact. Space runs only the
+selected runnable process target from a visible Evidence Preview, with one active process.
 
 ## 4. Change minimally and validate
 

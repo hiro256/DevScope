@@ -260,7 +260,10 @@ fn run_verify(kind: BuildTestKind) -> ExitCode {
     };
     let exclusions = config.verify().excludes();
     let Some(spec) = resolve_build_test_command(&root, &config, kind) else {
-        eprintln!("error: Build/Test verification is unavailable for this project");
+        eprintln!(
+            "error: {} verification is unavailable for this project",
+            kind.label()
+        );
         return ExitCode::FAILURE;
     };
     let baseline =

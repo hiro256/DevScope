@@ -1,5 +1,18 @@
 # Decision Log
 
+## 2026-09-27 — Fixed Build Debug and Release identities
+
+- **Decision:** Extend process Evidence with exactly Build Debug, Build Release, and Test.
+  Preserve `[verify.build]` and `verify build` as Debug; add `[verify.build.release]`
+  and `verify build release`. Configured commands override only their matching Cargo
+  fallback, without inferred toolchain arguments. State, baselines, and TUI selection
+  are independent, while TUI execution remains single-active.
+- **Compatibility:** Retain `build-test-v1.tsv` with legacy `build` (Debug) and `test`
+  identifiers and add `build-release`, ordered Debug, Release, Test. Existing results
+  load without migration or deletion.
+- **Reason:** Two concrete Build variants need distinct observations, not a generic
+  named-command registry, Test-profile system, or Evidence extension API.
+
 ## 2026-09-26 — File Browser as on-demand project inspection
 
 - **Decision:** Implement File Browser as a separate, read-only project inspection view

@@ -73,7 +73,8 @@ pub enum CurrentWorkState {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvidenceSelection {
-    Build,
+    BuildDebug,
+    BuildRelease,
     Test,
     Artifact,
 }
@@ -113,6 +114,7 @@ pub struct App {
     activity: ActivityState,
     tasks: TaskState,
     build_test_build: BuildTestState,
+    build_test_release: BuildTestState,
     build_test_test: BuildTestState,
     evidence_selection: EvidenceSelection,
     artifact: Option<ArtifactObservation>,
@@ -141,8 +143,9 @@ impl App {
             activity: ActivityState::Unavailable,
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
+            build_test_release: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
-            evidence_selection: EvidenceSelection::Build,
+            evidence_selection: EvidenceSelection::BuildDebug,
             artifact: None,
             focused_panel: FocusedPanel::Tasks,
             selected_task: None,
@@ -317,27 +320,30 @@ impl App {
 
     pub fn build_test_state(&self, kind: BuildTestKind) -> &BuildTestState {
         match kind {
-            BuildTestKind::Build => &self.build_test_build,
+            BuildTestKind::BuildDebug => &self.build_test_build,
+            BuildTestKind::BuildRelease => &self.build_test_release,
             BuildTestKind::Test => &self.build_test_test,
         }
     }
 
     pub fn apply_build_test_state(&mut self, kind: BuildTestKind, state: BuildTestState) {
         match kind {
-            BuildTestKind::Build => self.build_test_build = state,
+            BuildTestKind::BuildDebug => self.build_test_build = state,
+            BuildTestKind::BuildRelease => self.build_test_release = state,
             BuildTestKind::Test => self.build_test_test = state,
         }
     }
 
     pub const fn evidence_detail_kind(&self) -> Option<BuildTestKind> {
         match self.evidence_selection {
-            EvidenceSelection::Build => Some(BuildTestKind::Build),
+            EvidenceSelection::BuildDebug => Some(BuildTestKind::BuildDebug),
+            EvidenceSelection::BuildRelease => Some(BuildTestKind::BuildRelease),
             EvidenceSelection::Test => Some(BuildTestKind::Test),
             EvidenceSelection::Artifact => None,
         }
     }
     pub fn runnable_evidence_kind(&self) -> Option<BuildTestKind> {
-        if [BuildTestKind::Build, BuildTestKind::Test]
+        if BuildTestKind::ALL
             .iter()
             .any(|kind| matches!(self.build_test_state(*kind), BuildTestState::Running(_)))
         {
@@ -358,7 +364,8 @@ impl App {
     pub fn select_evidence_detail(&mut self, kind: BuildTestKind) {
         let previous = self.evidence_selection;
         self.evidence_selection = match kind {
-            BuildTestKind::Build => EvidenceSelection::Build,
+            BuildTestKind::BuildDebug => EvidenceSelection::BuildDebug,
+            BuildTestKind::BuildRelease => EvidenceSelection::BuildRelease,
             BuildTestKind::Test => EvidenceSelection::Test,
         };
         if previous != self.evidence_selection && self.focused_panel == FocusedPanel::Evidence {
@@ -371,7 +378,7 @@ impl App {
     pub fn apply_artifact(&mut self, artifact: Option<ArtifactObservation>) {
         self.artifact = artifact;
         if self.artifact.is_none() && self.evidence_selection == EvidenceSelection::Artifact {
-            self.evidence_selection = EvidenceSelection::Build;
+            self.evidence_selection = EvidenceSelection::BuildDebug;
             if self.focused_panel == FocusedPanel::Evidence {
                 self.preview_scroll = 0;
             }
@@ -647,10 +654,12 @@ impl App {
             delta.is_positive(),
             self.artifact.is_some(),
         ) {
-            (EvidenceSelection::Build, true, _) => EvidenceSelection::Test,
+            (EvidenceSelection::BuildDebug, true, _) => EvidenceSelection::BuildRelease,
+            (EvidenceSelection::BuildRelease, true, _) => EvidenceSelection::Test,
             (EvidenceSelection::Test, true, true) => EvidenceSelection::Artifact,
             (EvidenceSelection::Artifact, true, _) => EvidenceSelection::Artifact,
-            (EvidenceSelection::Test, false, _) => EvidenceSelection::Build,
+            (EvidenceSelection::Test, false, _) => EvidenceSelection::BuildRelease,
+            (EvidenceSelection::BuildRelease, false, _) => EvidenceSelection::BuildDebug,
             (EvidenceSelection::Artifact, false, _) => EvidenceSelection::Test,
             (selection, _, _) => selection,
         };
@@ -984,7 +993,7 @@ mod tests {
 
     fn completed_build_result() -> BuildTestResult {
         BuildTestResult::new(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestOutcome::Passed,
             BuildTestFreshness::Fresh,
             "cargo",
@@ -1000,7 +1009,7 @@ mod tests {
     fn build_test_states_start_unavailable_and_remain_independent() {
         let mut app = app(1);
         assert_eq!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::Unavailable
         );
         assert_eq!(
@@ -1009,9 +1018,9 @@ mod tests {
         );
 
         app.apply_build_test_state(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestState::Running(BuildTestRun::new(
-                BuildTestKind::Build,
+                BuildTestKind::BuildDebug,
                 "cargo",
                 "cargo check",
             )),
@@ -1019,7 +1028,7 @@ mod tests {
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
 
         assert!(matches!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::Running(_)
         ));
         assert_eq!(
@@ -1033,7 +1042,7 @@ mod tests {
         let mut app = app(2);
         let completed = completed_build_result();
         app.apply_build_test_state(
-            BuildTestKind::Build,
+            BuildTestKind::BuildDebug,
             BuildTestState::Completed(completed.clone()),
         );
         app.apply_build_test_state(
@@ -1054,7 +1063,7 @@ mod tests {
         app.apply_activity_state(ActivityState::NotRepository);
 
         assert_eq!(
-            app.build_test_state(BuildTestKind::Build),
+            app.build_test_state(BuildTestKind::BuildDebug),
             &BuildTestState::Completed(completed)
         );
         assert!(matches!(
@@ -1066,11 +1075,11 @@ mod tests {
     #[test]
     fn evidence_selection_starts_at_build_and_survives_state_and_snapshot_updates() {
         let mut app = app(2);
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
-        app.select_evidence_detail(BuildTestKind::Build);
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
+        app.select_evidence_detail(BuildTestKind::BuildDebug);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
         app.apply_snapshot(snapshot(1));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
         app.select_evidence_detail(BuildTestKind::Test);
         assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
         app.apply_artifact(Some(ArtifactObservation::observation_error(
@@ -1082,7 +1091,7 @@ mod tests {
         assert_eq!(app.evidence_selection(), EvidenceSelection::Artifact);
         assert_eq!(app.evidence_detail_kind(), None);
         app.apply_artifact(None);
-        assert_eq!(app.evidence_selection(), EvidenceSelection::Build);
+        assert_eq!(app.evidence_selection(), EvidenceSelection::BuildDebug);
     }
     #[test]
     fn navigation_clamps() {
@@ -1491,22 +1500,28 @@ mod tests {
     fn panel_focus_wraps_and_routes_selection_locally() {
         let mut app = app(3);
         assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
         app.handle_key(key(KeyCode::Char('j')));
         assert_eq!(app.selected_task(), Some(1));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
 
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
         app.handle_key(key(KeyCode::Down));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+        assert_eq!(
+            app.evidence_detail_kind(),
+            Some(BuildTestKind::BuildRelease)
+        );
         assert_eq!(app.selected_task(), Some(1));
         app.handle_key(key(KeyCode::Down));
         assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
         app.handle_key(key(KeyCode::Up));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(
+            app.evidence_detail_kind(),
+            Some(BuildTestKind::BuildRelease)
+        );
         app.handle_key(key(KeyCode::Up));
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Build));
+        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::BuildDebug));
 
         app.handle_key(key(KeyCode::BackTab));
         assert_eq!(app.focused_panel(), FocusedPanel::Tasks);
@@ -1522,7 +1537,10 @@ mod tests {
         app.handle_key(key(KeyCode::Char('j')));
         app.apply_snapshot(snapshot(1));
         assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
-        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+        assert_eq!(
+            app.evidence_detail_kind(),
+            Some(BuildTestKind::BuildRelease)
+        );
     }
     #[test]
     fn detail_scroll_is_bounded_and_resets_when_the_detail_closes() {

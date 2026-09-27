@@ -24,7 +24,7 @@ behind it; consult the package's release notes for its features and controls.
 
 - Current Work with explicit Active state, NOW presentation, and compact history
 - Focused-panel Preview and Task Detail support for source-grounded context
-- Configurable Build/Test commands and project-specific freshness exclusions
+- Independent Build Debug / Build Release / Test commands, results, and freshness
 - Artifact Evidence alongside Build/Test Evidence
 - Background Git worktree observation with safe Activity exclusion proposals and an approval-gated workflow
 - Changed File Full View with Git diff or explicitly labeled safe current text
@@ -115,6 +115,8 @@ devscope task list
 devscope work list
 devscope activity suggest-excludes
 devscope verify build
+devscope verify build debug
+devscope verify build release
 devscope verify test
 devscope artifact inspect
 ```
@@ -123,7 +125,12 @@ devscope artifact inspect
 TUI. `context` includes Build/Test availability and latest saved outcome with current
 Fresh/Stale status or Not run. Verification runs the resolved command and persists the
 latest observed result locally for later CLI/TUI use; this is not Evidence history.
-Cargo defaults are `cargo check` for Build and `cargo test` for Test. Other toolchains
+`verify build` is the backward-compatible shorthand for `verify build debug`.
+Cargo defaults are `cargo check` for Build Debug, `cargo check --release` for Build Release,
+and `cargo test` for Test. Each target keeps its own latest result and Fresh/Stale state;
+`context` and the TUI show all three separately. Existing `[verify.build]` configures Debug;
+`[verify.build.release]` optionally configures Release. Only one TUI verification runs at once.
+Other toolchains
 can use configured commands; see [verification setup](docs/guides/devscope-setup.md#buildtest-verification).
 
 `activity suggest-excludes` runs a read-only diagnostic and reports up to three Git-safe
@@ -233,7 +240,7 @@ the TUI.
 
 ## Not yet implemented
 
-- Build Debug/Release profiles; dedicated Full View for Evidence and Evidence history
+- Dedicated Full View for Evidence and Evidence history
 - Agent adapters, including a Codex adapter
 - IDE or Web/API frontends
 - Package-manager distribution
