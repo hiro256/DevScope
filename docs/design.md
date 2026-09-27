@@ -93,6 +93,17 @@ shortest Large boundary with three Evidence items). Remaining space can show mor
 Small priorities and Preview geometry are unchanged. Windows Terminal dogfood accepted
 both tall full listings and shorter layouts with accurate overflow counts.
 
+The Overview Evidence selector aligns process targets, Outcome, and Freshness in
+separate columns. Completed results retain Passed/Failed independently of Fresh/Stale;
+non-completed states and Artifact have no freshness value. A session-local `*` marks
+a runtime process-state change for approximately three seconds, independently per target.
+Verification runtime owns expiry; App holds visibility and rendering only reads it.
+Initial restoration and availability setup remain quiet. The cue is not Evidence state,
+persistence, or history and uses no color or animation. Narrow rows drop the cue before
+freshness text, prioritizing target and primary status. Project Progress's compact summary
+and Evidence Preview remain separate and unchanged. Windows Terminal dogfood accepted
+the column alignment and transient cue.
+
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
 The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work parent]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.

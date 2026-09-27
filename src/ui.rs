@@ -455,7 +455,7 @@ fn footer_text(width: u16, height: u16) -> &'static str {
 }
 fn render_navigation_panels(frame: &mut Frame, area: Rect, layout: LayoutVariant, app: &App) {
     // Navigation reserves one title row and one separating row around its content.
-    let evidence_height = u16::try_from(evidence_selector_lines(app).len())
+    let evidence_height = u16::try_from(evidence_selector_lines(app, usize::MAX).len())
         .unwrap_or(u16::MAX)
         .saturating_add(2);
     match layout {
@@ -557,7 +557,7 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
 fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(fit_navigation_lines(
-            evidence_selector_lines(app),
+            evidence_selector_lines(app, inner_width(area)),
             inner_width(area),
         ))
         .block(navigation_block(
@@ -568,7 +568,7 @@ fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
+fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let mut lines = BuildTestKind::ALL
         .into_iter()
         .map(|kind| {
@@ -582,11 +582,32 @@ fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
             } else {
                 "  "
             };
-            Line::from(format!(
-                "{marker}{}  {}",
-                detail_kind(kind),
-                evidence_selector_status(app.build_test_state(kind))
-            ))
+            let state = app.build_test_state(kind);
+            let status = evidence_selector_status(state);
+            let freshness = match state {
+                BuildTestState::Completed(result) => match result.freshness() {
+                    BuildTestFreshness::Fresh => "Fresh",
+                    BuildTestFreshness::Stale => "Stale",
+                },
+                _ => "",
+            };
+            let base = format!("{marker}{:<13}  {status}", detail_kind(kind));
+            let full = format!(
+                "{marker}{:<13}  {status:<9}  {freshness:<5}",
+                detail_kind(kind)
+            );
+            let marked = format!("{full}  *");
+            let row = if app.evidence_changed(kind) && Line::from(marked.as_str()).width() <= width
+            {
+                marked
+            } else if Line::from(full.trim_end()).width() <= width {
+                full.trim_end().to_owned()
+            } else if Line::from(base.as_str()).width() <= width {
+                base
+            } else {
+                format!("{marker}{} {status}", detail_kind(kind))
+            };
+            Line::from(truncate_text(&row, width))
         })
         .collect::<Vec<_>>();
     if let Some(artifact) = app.artifact() {
@@ -596,7 +617,7 @@ fn evidence_selector_lines(app: &App) -> Vec<Line<'static>> {
             "  "
         };
         let status = artifact_selector_status(artifact.status());
-        lines.push(Line::from(format!("{marker}Artifact  {status}")));
+        lines.push(Line::from(format!("{marker}{:<13}  {status}", "Artifact")));
     }
     lines
 }
@@ -604,9 +625,9 @@ fn evidence_selector_status(state: &BuildTestState) -> String {
     match state {
         BuildTestState::Completed(result) => match (result.outcome(), result.freshness()) {
             (BuildTestOutcome::Passed, BuildTestFreshness::Fresh) => "✓ Passed".into(),
-            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "! Passed (stale)".into(),
+            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "✓ Passed".into(),
             (BuildTestOutcome::Failed, BuildTestFreshness::Fresh) => "✕ Failed".into(),
-            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "✕ Failed (stale)".into(),
+            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "✕ Failed".into(),
         },
         BuildTestState::Unavailable => "? Unavailable".into(),
         BuildTestState::NotRun => "· Not run".into(),
@@ -2276,8 +2297,8 @@ mod tests {
         assert!(not_run.contains("Not run"));
         assert!(not_run.contains("Space Run"));
         assert!(!not_run.contains("Press b"));
-        assert!(not_run.contains("> Build Debug  · Not run"));
-        assert!(not_run.contains("  Test  · Not run"));
+        assert!(not_run.contains("> Build Debug    · Not run"));
+        assert!(not_run.contains("  Test           · Not run"));
 
         app.apply_build_test_state(
             BuildTestKind::BuildDebug,
@@ -2288,7 +2309,7 @@ mod tests {
             )),
         );
         let running = draw(&app, 80, 30);
-        assert!(running.contains("Build Debug  ▶ Running"));
+        assert!(running.contains("Build Debug    ▶ Running"));
         assert!(running.contains("cargo check"));
 
         app.apply_build_test_state(
@@ -2323,7 +2344,7 @@ mod tests {
         let stale = draw(&app, 80, 30);
         assert!(stale.contains("Passed"));
         assert!(stale.contains("Stale"));
-        assert!(stale.contains("> Build Debug  ! Passed (stale)"));
+        assert!(stale.contains("> Build Debug    ✓ Passed   Stale"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -2351,8 +2372,8 @@ mod tests {
         assert!(failed.contains("Detail: Test"));
         assert!(failed.contains("Failed"));
         assert!(failed.contains("1 failed"));
-        assert!(failed.contains("  Build Debug  ! Passed (stale)"));
-        assert!(failed.contains("> Test  ✕ Failed"));
+        assert!(failed.contains("  Build Debug    ✓ Passed   Stale"));
+        assert!(failed.contains("> Test           ✕ Failed"));
 
         app.apply_build_test_state(
             BuildTestKind::Test,
@@ -2361,6 +2382,70 @@ mod tests {
         let error = draw(&app, 80, 30);
         assert!(error.contains("Execution error"));
         assert!(error.contains("a detailed execution error"));
+    }
+
+    #[test]
+    fn evidence_columns_and_optional_cues_fit_the_navigation_width() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+            for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
+                for kind in BuildTestKind::ALL {
+                    app.apply_build_test_state(kind, completed_state(kind, outcome, freshness));
+                    app.set_evidence_changed(kind, true);
+                }
+                let rows = evidence_selector_lines(&app, 45);
+                let outcome_text = if outcome == BuildTestOutcome::Passed {
+                    "✓ Passed"
+                } else {
+                    "✕ Failed"
+                };
+                let freshness_text = if freshness == BuildTestFreshness::Fresh {
+                    "Fresh"
+                } else {
+                    "Stale"
+                };
+                for row in rows {
+                    let row = row.to_string();
+                    let prefix = row.split(outcome_text).next().unwrap();
+                    assert_eq!(Line::from(prefix).width(), 17);
+                    let prefix = row.split(freshness_text).next().unwrap();
+                    assert_eq!(Line::from(prefix).width(), 28);
+                    assert!(row.ends_with('*'));
+                }
+            }
+        }
+        let summary = evidence(&app);
+        for kind in BuildTestKind::ALL {
+            app.set_evidence_changed(kind, false);
+        }
+        assert_eq!(evidence(&app), summary);
+        app.set_evidence_changed(BuildTestKind::BuildDebug, true);
+        let full = evidence_selector_lines(&app, 36)[0].to_string();
+        assert!(full.ends_with('*'));
+        let no_marker = evidence_selector_lines(&app, 33)[0].to_string();
+        assert!(no_marker.ends_with("Stale"));
+        let no_freshness = evidence_selector_lines(&app, 32)[0].to_string();
+        assert!(no_freshness.ends_with("✕ Failed"));
+        assert!(!no_freshness.contains("Stale"));
+        for width in 2..=80 {
+            let row = &evidence_selector_lines(&app, width)[0];
+            assert!(row.width() <= width);
+            assert!(row.to_string().starts_with('>'));
+        }
+        for state in [
+            BuildTestState::NotRun,
+            BuildTestState::Unavailable,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::BuildDebug,
+                "cargo",
+                "cargo check",
+            )),
+            execution_error_state(BuildTestKind::BuildDebug),
+        ] {
+            app.apply_build_test_state(BuildTestKind::BuildDebug, state);
+            let row = evidence_selector_lines(&app, 45)[0].to_string();
+            assert!(!row.contains("Fresh") && !row.contains("Stale"));
+        }
     }
 
     #[test]
@@ -2379,7 +2464,7 @@ mod tests {
                 BuildTestOutcome::Passed,
                 BuildTestFreshness::Stale,
             )),
-            "! Passed (stale)"
+            "✓ Passed"
         );
         assert_eq!(
             evidence_selector_status(&completed_state(
@@ -2480,7 +2565,7 @@ mod tests {
                 "Freshness: Fresh"
             }));
             assert!(
-                evidence_selector_lines(&app)[index]
+                evidence_selector_lines(&app, usize::MAX)[index]
                     .to_string()
                     .starts_with(&format!("> {}", kind.label()))
             );
@@ -2519,11 +2604,11 @@ mod tests {
                 }
                 let output = draw(&app, 80, height);
                 assert!(
-                    output.contains("> Artifact  ! Error"),
+                    output.contains("> Artifact       ! Error"),
                     "height={height}, preview={preview}\n{output}"
                 );
-                assert!(output.contains("Build Debug  ? Unavailable"));
-                assert!(output.contains("Test  ? Unavailable"));
+                assert!(output.contains("Build Debug    ? Unavailable"));
+                assert!(output.contains("Test           ? Unavailable"));
             }
         }
     }
@@ -2558,8 +2643,8 @@ mod tests {
         app.reconcile_focus(&[FocusedPanel::Evidence]);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(
-            evidence_selector_lines(&app)[3],
-            Line::from("> Artifact  ! Error")
+            evidence_selector_lines(&app, usize::MAX)[3],
+            Line::from("> Artifact       ! Error")
         );
         let (title, detail) = artifact_preview(app.artifact());
         assert_eq!(title, "Detail: Artifact");
@@ -2601,7 +2686,7 @@ mod tests {
         );
         let running = draw(&app, 120, 30);
         assert!(running.contains("Evidence"));
-        assert!(running.contains("Build Debug  ▶ Running"));
+        assert!(running.contains("Build Debug    ▶ Running"));
         assert!(running.contains("cargo check"));
         assert!(running.contains("Source: hidden source"));
         app.apply_build_test_state(
@@ -2619,7 +2704,7 @@ mod tests {
             )),
         );
         let passed = draw(&app, 120, 30);
-        assert!(passed.contains("Build Debug  ✓ Passed"));
+        assert!(passed.contains("Build Debug    ✓ Passed"));
         assert!(passed.contains("cargo check passed"));
     }
 
@@ -2648,7 +2733,7 @@ mod tests {
             )),
         );
         let failed = draw(&app, 120, 30);
-        assert!(failed.contains("Test  ✕ Failed"));
+        assert!(failed.contains("Test           ✕ Failed"));
         assert!(failed.contains("Evidence"));
         assert!(failed.contains("cargo test failed"));
         assert!(failed.contains("Result"));
@@ -2660,12 +2745,12 @@ mod tests {
                 BuildTestFreshness::Stale,
             ),
         );
-        assert!(draw(&app, 120, 30).contains("Test  ✕ Failed (stale)"));
+        assert!(draw(&app, 120, 30).contains("Test           ✕ Failed   Stale"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             execution_error_state(BuildTestKind::Test),
         );
-        assert!(draw(&app, 120, 30).contains("Test  ! Error"));
+        assert!(draw(&app, 120, 30).contains("Test           ! Error"));
         assert!(draw(&app, 120, 30).contains("a detailed execution error"));
     }
 
@@ -2724,10 +2809,10 @@ mod tests {
         }
         assert_eq!(evidence(&app), "Debug ✓! | Release ✕ | Test ✓");
         assert!(draw(&app, 80, 30).contains("Evidence   Debug ✓! | Release ✕ | Test ✓"));
-        let rows = evidence_selector_lines(&app);
+        let rows = evidence_selector_lines(&app, usize::MAX);
         assert!(
             rows.iter()
-                .any(|line| line.to_string().contains("Build Debug  ! Passed (stale)"))
+                .any(|line| line.to_string().contains("Build Debug    ✓ Passed   Stale"))
         );
         assert!(
             rows.iter()
@@ -2819,7 +2904,7 @@ mod tests {
         );
         let output = draw(&app, 120, 30);
         assert!(output.contains("Evidence   Debug ! | Release ? | Test ·"));
-        assert!(output.contains("Build Debug  ! Error"));
+        assert!(output.contains("Build Debug    ! Error"));
         assert!(output.contains("a detailed execution error"));
         assert!(!output.contains("detailed result summary"));
     }
@@ -3940,7 +4025,7 @@ mod tests {
         ));
         assert!(draw(&app, 80, 31).contains("commit-1"));
         assert!(draw(&app, 80, 32).contains("commit-2"));
-        assert!(draw(&app, 80, 30).contains("Artifact  ! Error"));
+        assert!(draw(&app, 80, 30).contains("Artifact       ! Error"));
     }
 
     #[test]
@@ -4053,7 +4138,7 @@ mod tests {
         for text in [
             "> M  src/日本語のとても長いファイル名.rs",
             "abcdef0 Very long commit message to inspect",
-            "> Build Debug  ! Passed (stale)",
+            "> Build Debug    ✓ Passed   Stale",
         ] {
             let row = fit_navigation_lines(vec![Line::from(text)], 18).remove(0);
             assert!(row.width() <= 18);

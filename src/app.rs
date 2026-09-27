@@ -116,6 +116,7 @@ pub struct App {
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
     build_test_test: BuildTestState,
+    evidence_changed: [bool; 3],
     evidence_selection: EvidenceSelection,
     artifact: Option<ArtifactObservation>,
     focused_panel: FocusedPanel,
@@ -145,6 +146,7 @@ impl App {
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
             build_test_test: BuildTestState::Unavailable,
+            evidence_changed: [false; 3],
             evidence_selection: EvidenceSelection::BuildDebug,
             artifact: None,
             focused_panel: FocusedPanel::Tasks,
@@ -332,6 +334,22 @@ impl App {
             BuildTestKind::BuildRelease => self.build_test_release = state,
             BuildTestKind::Test => self.build_test_test = state,
         }
+    }
+
+    pub fn evidence_changed(&self, kind: BuildTestKind) -> bool {
+        self.evidence_changed[match kind {
+            BuildTestKind::BuildDebug => 0,
+            BuildTestKind::BuildRelease => 1,
+            BuildTestKind::Test => 2,
+        }]
+    }
+
+    pub fn set_evidence_changed(&mut self, kind: BuildTestKind, visible: bool) {
+        self.evidence_changed[match kind {
+            BuildTestKind::BuildDebug => 0,
+            BuildTestKind::BuildRelease => 1,
+            BuildTestKind::Test => 2,
+        }] = visible;
     }
 
     pub const fn evidence_detail_kind(&self) -> Option<BuildTestKind> {

@@ -11,7 +11,12 @@ use devscope::{
         save_build_test_state,
     },
 };
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+
+const EVIDENCE_CHANGE_TTL: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 pub(super) struct BuildTestRuntime {
@@ -22,9 +27,39 @@ pub(super) struct BuildTestRuntime {
     active_baseline: Option<BuildTestFreshnessBaseline>,
     active_inputs_changed: bool,
     config: ProjectConfig,
+    marker_expiry: [Option<Instant>; 3],
 }
 
 impl BuildTestRuntime {
+    fn mark_changed(&mut self, app: &mut App, kind: BuildTestKind, now: Instant) {
+        let index = match kind {
+            BuildTestKind::BuildDebug => 0,
+            BuildTestKind::BuildRelease => 1,
+            BuildTestKind::Test => 2,
+        };
+        self.marker_expiry[index] = Some(now + EVIDENCE_CHANGE_TTL);
+        app.set_evidence_changed(kind, true);
+    }
+
+    fn apply_state(&mut self, app: &mut App, kind: BuildTestKind, state: BuildTestState) {
+        if app.build_test_state(kind) != &state {
+            app.apply_build_test_state(kind, state);
+            self.mark_changed(app, kind, Instant::now());
+        }
+    }
+
+    pub(super) fn expire_markers(&mut self, app: &mut App, now: Instant) -> bool {
+        let mut changed = false;
+        for (index, kind) in BuildTestKind::ALL.into_iter().enumerate() {
+            if self.marker_expiry[index].is_some_and(|expiry| now >= expiry) {
+                self.marker_expiry[index] = None;
+                app.set_evidence_changed(kind, false);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(super) fn new(config: ProjectConfig) -> Self {
         Self {
             config,
@@ -110,11 +145,11 @@ pub(super) fn start_manual_build_test(
     runtime.active_baseline = None;
     runtime.active_inputs_changed = false;
     let Some(root) = project_root else {
-        app.apply_build_test_state(kind, BuildTestState::Unavailable);
+        runtime.apply_state(app, kind, BuildTestState::Unavailable);
         return true;
     };
     let Some(spec) = resolve_build_test_command(root, &runtime.config, kind) else {
-        app.apply_build_test_state(kind, BuildTestState::Unavailable);
+        runtime.apply_state(app, kind, BuildTestState::Unavailable);
         return true;
     };
 
@@ -125,12 +160,12 @@ pub(super) fn start_manual_build_test(
     .ok();
     match BuildTestExecution::start(spec) {
         Ok(execution) => {
-            app.apply_build_test_state(kind, BuildTestState::Running(execution.run().clone()));
+            runtime.apply_state(app, kind, BuildTestState::Running(execution.run().clone()));
             runtime.active = Some(execution);
         }
         Err(error) => {
             runtime.active_baseline = None;
-            app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            runtime.apply_state(app, kind, BuildTestState::ExecutionError(error));
             if let Some(root) = project_root {
                 let _ = save_build_test_state(root, kind, app.build_test_state(kind), None);
             }
@@ -163,7 +198,7 @@ fn apply_build_test_completion(
             if matches!(freshness, BuildTestFreshness::Stale) {
                 result.mark_stale();
             }
-            app.apply_build_test_state(kind, BuildTestState::Completed(result));
+            runtime.apply_state(app, kind, BuildTestState::Completed(result));
             runtime.set_baseline(kind, persisted_baseline);
             if let (Some(root), Some(baseline)) = (
                 project_root,
@@ -184,7 +219,7 @@ fn apply_build_test_completion(
             runtime.clear_baseline(kind);
             runtime.active_baseline = None;
             runtime.active_inputs_changed = false;
-            app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            runtime.apply_state(app, kind, BuildTestState::ExecutionError(error));
             if let Some(root) = project_root {
                 let _ = save_build_test_state(root, kind, app.build_test_state(kind), None);
             }
@@ -223,31 +258,30 @@ fn check_completed_build_test_freshness(
 pub(super) fn check_build_test_freshness(
     project_root: Option<&Path>,
     app: &mut App,
-    runtime: &BuildTestRuntime,
+    runtime: &mut BuildTestRuntime,
 ) -> bool {
     let Some(project_root) = project_root else {
         return false;
     };
-
-    check_completed_build_test_freshness(
-        project_root,
-        app,
-        runtime.build_baseline.as_ref(),
-        BuildTestKind::BuildDebug,
-        runtime.config.verify().excludes(),
-    ) | check_completed_build_test_freshness(
-        project_root,
-        app,
-        runtime.release_baseline.as_ref(),
-        BuildTestKind::BuildRelease,
-        runtime.config.verify().excludes(),
-    ) | check_completed_build_test_freshness(
-        project_root,
-        app,
-        runtime.test_baseline.as_ref(),
-        BuildTestKind::Test,
-        runtime.config.verify().excludes(),
-    )
+    let mut changed = false;
+    for kind in BuildTestKind::ALL {
+        let baseline = match kind {
+            BuildTestKind::BuildDebug => runtime.build_baseline.as_ref(),
+            BuildTestKind::BuildRelease => runtime.release_baseline.as_ref(),
+            BuildTestKind::Test => runtime.test_baseline.as_ref(),
+        };
+        if check_completed_build_test_freshness(
+            project_root,
+            app,
+            baseline,
+            kind,
+            runtime.config.verify().excludes(),
+        ) {
+            runtime.mark_changed(app, kind, Instant::now());
+            changed = true;
+        }
+    }
+    changed
 }
 pub(super) fn observe_active_build_test_inputs(
     project_root: Option<&Path>,
@@ -308,7 +342,7 @@ pub(super) fn poll_build_test_execution(
             runtime.clear_baseline(kind);
             runtime.active_baseline = None;
             runtime.active_inputs_changed = false;
-            app.apply_build_test_state(kind, BuildTestState::ExecutionError(error));
+            runtime.apply_state(app, kind, BuildTestState::ExecutionError(error));
             true
         }
     }
@@ -361,6 +395,125 @@ mod tests {
             "completed",
             None,
         )
+    }
+
+    #[test]
+    fn marker_timers_are_independent_restartable_and_expire_without_refresh() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+        let now = Instant::now();
+        assert!(
+            BuildTestKind::ALL
+                .into_iter()
+                .all(|kind| !app.evidence_changed(kind))
+        );
+        runtime.mark_changed(&mut app, BuildTestKind::BuildDebug, now);
+        runtime.mark_changed(&mut app, BuildTestKind::Test, now + Duration::from_secs(1));
+        runtime.mark_changed(
+            &mut app,
+            BuildTestKind::BuildDebug,
+            now + Duration::from_secs(2),
+        );
+        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
+        assert!(!runtime.expire_markers(&mut app, now + Duration::from_secs(3)));
+        assert!(runtime.expire_markers(&mut app, now + Duration::from_secs(4)));
+        assert!(!app.evidence_changed(BuildTestKind::Test));
+        assert!(app.evidence_changed(BuildTestKind::BuildDebug));
+        assert!(runtime.expire_markers(&mut app, now + Duration::from_secs(5)));
+        assert!(!runtime.expire_markers(&mut app, now + Duration::from_secs(6)));
+        assert!(
+            BuildTestKind::ALL
+                .into_iter()
+                .all(|kind| !app.evidence_changed(kind))
+        );
+    }
+
+    #[test]
+    fn startup_is_quiet_and_runtime_completion_error_and_stale_mark_changes() {
+        let root = temp_root();
+        fs::write(root.join("Cargo.toml"), "[package]").unwrap();
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        let mut runtime = BuildTestRuntime::default();
+        runtime.initialize(Some(&root), &mut app);
+        assert!(
+            BuildTestKind::ALL
+                .into_iter()
+                .all(|kind| !app.evidence_changed(kind))
+        );
+        let kind = BuildTestKind::BuildDebug;
+        let baseline = BuildTestFreshnessBaseline::capture(&root).unwrap();
+        let result = completed_result(kind, BuildTestOutcome::Passed);
+        save_build_test_state(
+            &root,
+            kind,
+            &BuildTestState::Completed(result.clone()),
+            Some(&baseline),
+        )
+        .unwrap();
+        crate::restore_tui_build_test_states(Some(&root), &ProjectConfig::default(), &mut app);
+        runtime.initialize(Some(&root), &mut app);
+        assert!(
+            BuildTestKind::ALL
+                .into_iter()
+                .all(|kind| !app.evidence_changed(kind))
+        );
+        runtime.apply_state(
+            &mut app,
+            kind,
+            BuildTestState::Running(devscope::progress::BuildTestRun::new(
+                kind,
+                "cargo",
+                "cargo check",
+            )),
+        );
+        assert!(app.evidence_changed(kind));
+        runtime.marker_expiry[0] = Some(Instant::now());
+        let old_expiry = runtime.marker_expiry[0];
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::Completed(result),
+            false,
+            Some(baseline),
+        );
+        assert!(runtime.marker_expiry[0] > old_expiry);
+        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        fs::write(root.join("source.rs"), "changed").unwrap();
+        assert!(check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
+        assert!(app.evidence_changed(kind));
+        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
+        let expiry = runtime.marker_expiry;
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
+        assert_eq!(runtime.marker_expiry, expiry);
+        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        apply_build_test_completion(
+            Some(&root),
+            &mut app,
+            &mut runtime,
+            BuildTestExecutionCompletion::ExecutionError(BuildTestExecutionError::new(
+                kind,
+                "cargo",
+                "cargo check",
+                "error",
+            )),
+            false,
+            None,
+        );
+        assert!(app.evidence_changed(kind));
+        let expiry = runtime.marker_expiry;
+        let same_state = app.build_test_state(kind).clone();
+        runtime.apply_state(&mut app, kind, same_state);
+        assert_eq!(runtime.marker_expiry, expiry);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -473,6 +626,9 @@ mod tests {
         };
         assert_eq!(run.source_label(), "configured-build");
         assert_eq!(run.command_label(), "configured-build --focused");
+        assert!(app.evidence_changed(BuildTestKind::BuildDebug));
+        assert!(!app.evidence_changed(BuildTestKind::BuildRelease));
+        assert!(!app.evidence_changed(BuildTestKind::Test));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -639,13 +795,28 @@ mod tests {
                 Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
             );
         }
+        runtime.expire_markers(&mut app, Instant::now() + EVIDENCE_CHANGE_TTL);
+        assert!(
+            BuildTestKind::ALL
+                .into_iter()
+                .all(|kind| !app.evidence_changed(kind))
+        );
         fs::write(root.join("source.rs"), "after").unwrap();
-        assert!(check_build_test_freshness(Some(&root), &mut app, &runtime));
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         for kind in BuildTestKind::ALL {
             assert!(
                 matches!(app.build_test_state(kind), BuildTestState::Completed(result) if result.kind() == kind && result.freshness() == BuildTestFreshness::Stale)
             );
+            assert!(app.evidence_changed(kind));
         }
         apply_build_test_completion(
             Some(&root),
@@ -748,17 +919,29 @@ mod tests {
             false,
             Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
         );
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
 
         fs::write(input, "after").unwrap();
-        assert!(check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
         else {
             panic!("a completed Build result should remain completed");
         };
         assert_eq!(result.outcome(), BuildTestOutcome::Passed);
         assert_eq!(result.freshness(), BuildTestFreshness::Stale);
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         assert!(matches!(
             app.build_test_state(BuildTestKind::Test),
             BuildTestState::Unavailable
@@ -882,10 +1065,18 @@ mod tests {
         fs::create_dir_all(root.join("target")).unwrap();
         fs::write(root.join(".git/metadata"), "internal change").unwrap();
         fs::write(root.join("target/output"), "generated change").unwrap();
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
 
         fs::write(root.join("README.md"), "relevant change").unwrap();
-        assert!(check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::Test) else {
             panic!("a completed Test result should remain completed");
         };
@@ -941,7 +1132,11 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         let BuildTestState::Completed(result) = app.build_test_state(BuildTestKind::BuildDebug)
         else {
             panic!("a completed Build result should remain completed");
@@ -954,14 +1149,18 @@ mod tests {
         let root = temp_root();
         fs::write(root.join("input.txt"), "before").unwrap();
         let mut app = App::new(ProjectSnapshot::unavailable());
-        let runtime = BuildTestRuntime {
+        let mut runtime = BuildTestRuntime {
             build_baseline: Some(BuildTestFreshnessBaseline::capture(&root).unwrap()),
             ..Default::default()
         };
         fs::write(root.join("input.txt"), "after changed").unwrap();
 
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         assert!(matches!(
             app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::NotRun
@@ -975,7 +1174,11 @@ mod tests {
                 "cargo check",
             )),
         );
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         assert!(matches!(
             app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::Running(_)
@@ -990,14 +1193,22 @@ mod tests {
                 "could not start",
             )),
         );
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         assert!(matches!(
             app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::ExecutionError(_)
         ));
 
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::Unavailable);
-        assert!(!check_build_test_freshness(Some(&root), &mut app, &runtime));
+        assert!(!check_build_test_freshness(
+            Some(&root),
+            &mut app,
+            &mut runtime
+        ));
         assert!(matches!(
             app.build_test_state(BuildTestKind::BuildDebug),
             BuildTestState::Unavailable

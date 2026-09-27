@@ -128,6 +128,7 @@
 - [x] Refine Preview content and density across focused panels
 - [x] Refine TUI visual alignment for side-by-side Codex use
 - [x] Dogfood five-second project-state understanding
+- [x] Experiment with aligned Evidence columns and transient process-state cues
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

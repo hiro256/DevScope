@@ -666,10 +666,11 @@ pub fn run(
         }
 
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
+        needs_render |= build_test_runtime.expire_markers(app, Instant::now());
 
         if scheduler.is_due(Instant::now()) {
             observe_active_build_test_inputs(project_root, &mut build_test_runtime);
-            needs_render |= check_build_test_freshness(project_root, app, &build_test_runtime);
+            needs_render |= check_build_test_freshness(project_root, app, &mut build_test_runtime);
             let config_changed = collect_change_requests(
                 project_root,
                 &mut markdown_changes,
