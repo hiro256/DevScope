@@ -138,7 +138,12 @@ rows, without changing Activity semantics, ordering, layout, or the Evidence run
 The user has confirmed visual acceptance of the Changed Files emphasis.
 Follow-up: emphasize newly added incomplete Tasks using source-path/text occurrence counts,
 without treating line-number shifts as additions. Windows Terminal checks confirmed new-task
-emphasis and no emphasis on remaining rows after completion. Full Tasks acceptance is pending.
+emphasis and no emphasis on remaining rows after completion. The user confirmed Tasks display acceptance.
+Follow-up: emphasize newly prepended Recent Commits by ID, quietly resetting the baseline
+when the previous head is absent. Windows Terminal checks confirmed new-commit emphasis
+and expiry, quiet unchanged reload/history switch, and emphasis for a new commit after
+that switch. Multiple-addition/independent-timing checks passed automatically; separate
+manual confirmation remains pending.
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

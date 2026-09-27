@@ -142,6 +142,15 @@ pub enum TaskEmphasisPhase {
     Cooling,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitEmphasisPhase {
+    None,
+    Hot,
+    Warm,
+    Settling,
+    Cooling,
+}
+
 pub struct App {
     project_name: String,
     view: AppView,
@@ -151,6 +160,7 @@ pub struct App {
     activity: ActivityState,
     changed_file_emphasis: BTreeMap<PathBuf, ChangedFileEmphasisPhase>,
     task_emphasis: BTreeMap<TaskPresentationKey, TaskEmphasisPhase>,
+    commit_emphasis: BTreeMap<String, CommitEmphasisPhase>,
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
@@ -183,6 +193,7 @@ impl App {
             activity: ActivityState::Unavailable,
             changed_file_emphasis: BTreeMap::new(),
             task_emphasis: BTreeMap::new(),
+            commit_emphasis: BTreeMap::new(),
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
@@ -367,6 +378,21 @@ impl App {
 
     pub fn activity(&self) -> &ActivityState {
         &self.activity
+    }
+
+    pub fn commit_emphasis(&self, id: &str) -> CommitEmphasisPhase {
+        self.commit_emphasis
+            .get(id)
+            .copied()
+            .unwrap_or(CommitEmphasisPhase::None)
+    }
+
+    pub fn set_commit_emphasis(&mut self, id: String, phase: CommitEmphasisPhase) {
+        if phase == CommitEmphasisPhase::None {
+            self.commit_emphasis.remove(&id);
+        } else {
+            self.commit_emphasis.insert(id, phase);
+        }
     }
 
     pub fn tasks(&self) -> &TaskState {

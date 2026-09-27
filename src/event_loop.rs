@@ -1,4 +1,6 @@
 mod changed_files;
+mod commits;
+use commits::CommitsRuntime;
 mod tasks;
 use tasks::TasksRuntime;
 mod verification;
@@ -564,6 +566,7 @@ pub fn run(
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
     let mut requests = RefreshRequest::default();
     let mut changed_files_runtime = ChangedFilesRuntime::new(app.activity());
+    let mut commits_runtime = CommitsRuntime::new(app.activity());
     let mut tasks_runtime = TasksRuntime::new(app.tasks());
     let mut build_test_runtime = BuildTestRuntime::new(config.clone());
     build_test_runtime.initialize(project_root, app);
@@ -595,6 +598,7 @@ pub fn run(
                         match try_collect_project_snapshot(root) {
                             Ok(snapshot) => {
                                 app.apply_snapshot(snapshot);
+                                commits_runtime.observe(app, Instant::now());
                                 tasks_runtime.observe(app, Instant::now());
                                 changed_files_runtime.observe(app, Instant::now());
                                 app.clear_refresh_error();
@@ -676,6 +680,7 @@ pub fn run(
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
         needs_render |= build_test_runtime.advance_emphasis(app, Instant::now());
         needs_render |= changed_files_runtime.advance(app, Instant::now());
+        needs_render |= commits_runtime.advance(app, Instant::now());
         needs_render |= tasks_runtime.advance(app, Instant::now());
 
         if scheduler.is_due(Instant::now()) {
@@ -711,6 +716,7 @@ pub fn run(
                     needs_render |= tasks_runtime.observe(app, Instant::now());
                 }
                 if outcome.git {
+                    needs_render |= commits_runtime.observe(app, Instant::now());
                     needs_render |= changed_files_runtime.observe(app, Instant::now());
                 }
                 reconcile_worktree_worker(

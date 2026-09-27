@@ -1,3 +1,4 @@
+use crate::app::CommitEmphasisPhase;
 use crate::app::{TaskEmphasisPhase, TaskPresentationKey};
 use std::time::Duration;
 
@@ -712,9 +713,11 @@ fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(fit_navigation_lines(
-            commits(app.activity(), inner_height(area)),
+        Paragraph::new(commits(
+            app.activity(),
+            inner_height(area),
             inner_width(area),
+            |id| app.commit_emphasis(id),
         ))
         .block(navigation_block("Recent Commits", false)),
         area,
@@ -1712,23 +1715,68 @@ fn git_file_status(status: &GitFileStatus) -> &'static str {
         GitFileStatus::Renamed => "R",
     }
 }
-fn commits(activity: &ActivityState, rows: usize) -> Vec<Line<'static>> {
+fn commits(
+    activity: &ActivityState,
+    rows: usize,
+    width: usize,
+    phase_for: impl Fn(&str) -> CommitEmphasisPhase,
+) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
     }
 
     match activity {
         ActivityState::Available(summary) if summary.recent_commits().is_empty() => {
-            vec![Line::from("No commits yet")]
+            vec![Line::from(truncate_text("No commits yet", width))]
         }
         ActivityState::Available(summary) => summary
             .recent_commits()
             .iter()
             .take(rows)
-            .map(|commit| Line::from(format!("{}  {}", commit.id, commit.summary)))
+            .map(|commit| commit_line(commit, width, phase_for(&commit.id)))
             .collect(),
-        _ => vec![Line::from("Unavailable")],
+        _ => vec![Line::from(truncate_text("Unavailable", width))],
     }
+}
+
+fn commit_line(
+    commit: &devscope::progress::GitCommit,
+    width: usize,
+    phase: CommitEmphasisPhase,
+) -> Line<'static> {
+    let content = format!("{}  {}", commit.id, commit.summary);
+    let clipped = truncate_text(&content, width);
+    let truncated = clipped != content;
+    let prefix = if truncated {
+        clipped.strip_suffix('…').unwrap_or(&clipped)
+    } else {
+        &clipped
+    };
+    let mut remaining = prefix.chars().count();
+    let mut spans = Vec::new();
+    for (column, bold) in [
+        (commit.id.as_str(), phase == CommitEmphasisPhase::Hot),
+        ("  ", false),
+        (commit.summary.as_str(), phase != CommitEmphasisPhase::None),
+    ] {
+        let mut text: String = column.chars().take(remaining).collect();
+        remaining = remaining.saturating_sub(column.chars().count());
+        if remaining == 0 && truncated && clipped.ends_with('…') {
+            text.push('…');
+        }
+        spans.push(Span::styled(
+            text,
+            if bold {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ));
+        if remaining == 0 {
+            break;
+        }
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -3603,6 +3651,54 @@ mod tests {
         assert!(!buffer[(1, 1)].modifier.contains(Modifier::BOLD));
         assert!(buffer[(3, 1)].modifier.contains(Modifier::BOLD));
         assert!(buffer[(5, 1)].modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn commit_emphasis_preserves_unicode_text_width_and_styles() {
+        use CommitEmphasisPhase::*;
+        let commit = GitCommit {
+            id: "abc1234".into(),
+            summary: "日本語の新しいコミット subject".into(),
+        };
+        for width in 0..=100 {
+            let expected = truncate_text(&format!("{}  {}", commit.id, commit.summary), width);
+            for phase in [None, Hot, Warm, Settling, Cooling] {
+                let line = commit_line(&commit, width, phase);
+                assert_eq!(line.to_string(), expected);
+                assert!(line.width() <= width);
+                assert_eq!(line.width(), Line::from(expected.clone()).width());
+            }
+        }
+        for phase in [None, Hot, Warm, Settling, Cooling] {
+            let row = commit_line(&commit, 100, phase);
+            assert_eq!(
+                row.spans[0].style.add_modifier.contains(Modifier::BOLD),
+                phase == Hot
+            );
+            assert!(!row.spans[1].style.add_modifier.contains(Modifier::BOLD));
+            assert_eq!(
+                row.spans[2].style.add_modifier.contains(Modifier::BOLD),
+                phase != None
+            );
+        }
+    }
+
+    #[test]
+    fn commits_render_preserves_styled_spans_and_bounded_rows() {
+        let mut app = app(TaskState::Unavailable, activity_with_files(vec![]));
+        app.set_commit_emphasis("abc".into(), CommitEmphasisPhase::Hot);
+        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        terminal
+            .draw(|frame| render_commits(frame, frame.area(), &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(6, 1)].modifier.contains(Modifier::BOLD));
+        assert!(commits(app.activity(), 0, 80, |_| CommitEmphasisPhase::Hot).is_empty());
+        assert_eq!(
+            commits(app.activity(), 1, 80, |_| CommitEmphasisPhase::Hot).len(),
+            1
+        );
     }
 
     fn activity_with_files(files: Vec<GitChangedFile>) -> ActivityState {
