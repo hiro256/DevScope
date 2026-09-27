@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::app::{
-    ActivityState, App, CurrentWorkState, DetailTarget, EvidenceChangePhase, EvidenceSelection,
-    FocusedPanel, PlanState, RefreshSource, TaskState,
+    ActivityState, App, ChangedFileEmphasisPhase, CurrentWorkState, DetailTarget,
+    EvidenceChangePhase, EvidenceSelection, FocusedPanel, PlanState, RefreshSource, TaskState,
 };
 use devscope::progress::{
     BuildTestFreshness, BuildTestKind, BuildTestOutcome, BuildTestState, GitChangeCounts,
@@ -696,14 +696,12 @@ fn artifact_selector_status(status: &devscope::progress::ArtifactStatus) -> &'st
 
 fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
-        Paragraph::new(fit_navigation_lines(
-            changed_files(
-                app.activity(),
-                app.selected_changed_file(),
-                inner_height(area),
-                inner_width(area),
-            ),
+        Paragraph::new(changed_files(
+            app.activity(),
+            app.selected_changed_file(),
+            inner_height(area),
             inner_width(area),
+            |path| app.changed_file_emphasis(path),
         ))
         .block(navigation_block(
             "Changed Files",
@@ -1482,6 +1480,7 @@ fn changed_files(
     selected: Option<usize>,
     rows: usize,
     width: usize,
+    phase_for: impl Fn(&std::path::Path) -> ChangedFileEmphasisPhase,
 ) -> Vec<Line<'static>> {
     if rows == 0 {
         return vec![];
@@ -1489,7 +1488,7 @@ fn changed_files(
 
     match activity {
         ActivityState::Available(summary) if summary.changed_files() == 0 => {
-            vec![Line::from("No changed files")]
+            vec![Line::from(truncate_text("No changed files", width))]
         }
         ActivityState::Available(summary) => {
             let files = summary.changed_file_items();
@@ -1509,16 +1508,25 @@ fn changed_files(
                 .iter()
                 .enumerate()
                 .map(|(offset, file)| {
-                    changed_file_line(file, start + offset == selected, width, counts_column)
+                    changed_file_line(
+                        file,
+                        start + offset == selected,
+                        width,
+                        counts_column,
+                        phase_for(&file.path),
+                    )
                 })
                 .collect::<Vec<_>>();
             if end < files.len() && lines.len() < rows {
-                lines.push(Line::from(format!("... and {} more", files.len() - end)));
+                lines.push(Line::from(truncate_text(
+                    &format!("... and {} more", files.len() - end),
+                    width,
+                )));
             }
             lines
         }
         ActivityState::NotRepository | ActivityState::Unavailable => {
-            vec![Line::from("Unavailable")]
+            vec![Line::from(truncate_text("Unavailable", width))]
         }
     }
 }
@@ -1542,22 +1550,73 @@ fn changed_file_line(
     selected: bool,
     width: usize,
     counts_column: usize,
+    phase: ChangedFileEmphasisPhase,
 ) -> Line<'static> {
     let path = changed_file_prefix(file, selected);
-    let Some(counts) = change_counts_summary(file.changes) else {
-        return Line::from(path);
-    };
     let path_width = Line::from(path.clone()).width();
-    let counts_width = Line::from(counts.clone()).width();
-    if path_width.saturating_add(CHANGE_COUNTS_GAP) > counts_column
-        || counts_column.saturating_add(counts_width) > width
-    {
-        return Line::from(path);
+    let counts = change_counts_summary(file.changes).filter(|counts| {
+        path_width.saturating_add(CHANGE_COUNTS_GAP) <= counts_column
+            && counts_column.saturating_add(Line::from(counts.clone()).width()) <= width
+    });
+    let has_counts = counts.is_some();
+    let mut visible_path = file.path.display().to_string();
+    if has_counts {
+        visible_path.push_str(&" ".repeat(counts_column - path_width));
     }
-    Line::from(format!(
-        "{path}{}{counts}",
-        " ".repeat(counts_column - path_width)
-    ))
+    let columns = [
+        (
+            if selected {
+                "> ".to_owned()
+            } else {
+                "  ".to_owned()
+            },
+            false,
+        ),
+        (
+            format!("{}  ", git_file_status(&file.status)),
+            phase == ChangedFileEmphasisPhase::Hot,
+        ),
+        (
+            visible_path,
+            matches!(
+                phase,
+                ChangedFileEmphasisPhase::Hot
+                    | ChangedFileEmphasisPhase::Warm
+                    | ChangedFileEmphasisPhase::Settling
+            ) || (phase == ChangedFileEmphasisPhase::Cooling && !has_counts),
+        ),
+        (
+            counts.unwrap_or_default(),
+            phase != ChangedFileEmphasisPhase::None,
+        ),
+    ];
+    let content: String = columns.iter().map(|(text, _)| text.as_str()).collect();
+    let clipped = truncate_text(&content, width);
+    let truncated = clipped != content;
+    let prefix = if truncated {
+        clipped.strip_suffix('…').unwrap_or(&clipped)
+    } else {
+        &clipped
+    };
+    let mut remaining = prefix.chars().count();
+    let mut spans = Vec::new();
+    for (column, bold) in columns {
+        let mut text: String = column.chars().take(remaining).collect();
+        remaining = remaining.saturating_sub(column.chars().count());
+        if remaining == 0 && truncated && clipped.ends_with('…') {
+            text.push('…');
+        }
+        let style = if bold {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(text, style));
+        if remaining == 0 {
+            break;
+        }
+    }
+    Line::from(spans)
 }
 
 fn changed_file_prefix(file: &devscope::progress::GitChangedFile, selected: bool) -> String {
@@ -3435,6 +3494,82 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn changed_file_emphasis_preserves_unicode_text_and_cell_width() {
+        use ChangedFileEmphasisPhase::*;
+        let file = GitChangedFile {
+            path: "src/日本語.rs".into(),
+            status: GitFileStatus::Modified,
+            changes: GitChangeCounts {
+                additions: Some(12),
+                deletions: Some(3),
+            },
+        };
+        for width in 0..=80 {
+            let column = change_counts_column(std::slice::from_ref(&file), width);
+            let baseline = changed_file_line(&file, true, width, column, None);
+            for phase in [None, Hot, Warm, Settling, Cooling] {
+                let line = changed_file_line(&file, true, width, column, phase);
+                assert_eq!(line.to_string(), baseline.to_string());
+                assert_eq!(line.width(), baseline.width());
+                assert!(line.width() <= width);
+                assert!(!line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+            }
+        }
+        let column = change_counts_column(std::slice::from_ref(&file), 80);
+        for (phase, expected) in [
+            (None, vec![false, false, false, false]),
+            (Hot, vec![false, true, true, true]),
+            (Warm, vec![false, false, true, true]),
+            (Settling, vec![false, false, true, true]),
+            (Cooling, vec![false, false, false, true]),
+        ] {
+            let line = changed_file_line(&file, true, 80, column, phase);
+            assert_eq!(
+                line.spans
+                    .iter()
+                    .map(|span| span.style.add_modifier.contains(Modifier::BOLD))
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        let narrow = changed_file_line(&file, true, 12, 12, Cooling);
+        assert!(narrow.to_string().ends_with('…'));
+        assert!(
+            narrow
+                .spans
+                .last()
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn changed_files_render_keeps_row_emphasis_not_selection() {
+        let file = GitChangedFile {
+            path: "src/日本語.rs".into(),
+            status: GitFileStatus::Modified,
+            changes: GitChangeCounts {
+                additions: Some(1),
+                deletions: Some(0),
+            },
+        };
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![file.clone()]),
+        );
+        app.set_changed_file_emphasis(file.path, ChangedFileEmphasisPhase::Hot);
+        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        terminal
+            .draw(|frame| render_changed_files_list(frame, frame.area(), &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(!buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+        assert!(buffer[(3, 1)].modifier.contains(Modifier::BOLD));
+    }
+
     fn preview_task(
         path: &str,
         line: usize,
@@ -4024,7 +4159,9 @@ mod tests {
             file("unknown.bin", None, None),
         ];
         let activity = activity_with_files(files.clone());
-        let wide = changed_files(&activity, Some(1), 3, 80);
+        let wide = changed_files(&activity, Some(1), 3, 80, |_| {
+            ChangedFileEmphasisPhase::None
+        });
         let first_counts = wide[0].to_string().find("+1 -1").unwrap();
         let second_counts = wide[1].to_string().find("+2 -3").unwrap();
         assert_eq!(first_counts, second_counts);
@@ -4039,7 +4176,9 @@ mod tests {
             unicode_prefix + CHANGE_COUNTS_GAP
         );
 
-        let narrow = changed_files(&activity, Some(1), 3, 18);
+        let narrow = changed_files(&activity, Some(1), 3, 18, |_| {
+            ChangedFileEmphasisPhase::None
+        });
         assert!(narrow[0].to_string().contains("M  short.rs"));
         assert!(!narrow[0].to_string().contains("+1 -1"));
         assert!(narrow[1].to_string().starts_with("> M  longer.rs"));
@@ -4062,7 +4201,9 @@ mod tests {
             "offscreen-path-that-must-not-move-the-counts-column.rs",
         ));
         all_files.push(file("another-offscreen-path.rs"));
-        let visible_lines = changed_files(&activity_with_files(all_files), Some(0), 4, 80);
+        let visible_lines = changed_files(&activity_with_files(all_files), Some(0), 4, 80, |_| {
+            ChangedFileEmphasisPhase::None
+        });
         let expected_column =
             Line::from(changed_file_prefix(&visible[1], false)).width() + CHANGE_COUNTS_GAP;
         assert_eq!(
@@ -4072,7 +4213,10 @@ mod tests {
         assert!(visible_lines[3].to_string().contains("... and 2 more"));
 
         let capped = vec![file("short.rs"), file(&"very-long-path-".repeat(8))];
-        let capped_lines = changed_files(&activity_with_files(capped.clone()), Some(0), 2, 80);
+        let capped_lines =
+            changed_files(&activity_with_files(capped.clone()), Some(0), 2, 80, |_| {
+                ChangedFileEmphasisPhase::None
+            });
         assert_eq!(change_counts_column(&capped, 80), MAX_CHANGE_COUNTS_COLUMN);
         assert_eq!(
             capped_lines[0].to_string().find("+1 -1"),

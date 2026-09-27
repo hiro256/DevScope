@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -114,6 +115,15 @@ pub enum EvidenceChangePhase {
     Cooling,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangedFileEmphasisPhase {
+    None,
+    Hot,
+    Warm,
+    Settling,
+    Cooling,
+}
+
 pub struct App {
     project_name: String,
     view: AppView,
@@ -121,6 +131,7 @@ pub struct App {
     running: bool,
     plan: PlanState,
     activity: ActivityState,
+    changed_file_emphasis: BTreeMap<PathBuf, ChangedFileEmphasisPhase>,
     tasks: TaskState,
     build_test_build: BuildTestState,
     build_test_release: BuildTestState,
@@ -151,6 +162,7 @@ impl App {
             running: true,
             plan: PlanState::Unavailable,
             activity: ActivityState::Unavailable,
+            changed_file_emphasis: BTreeMap::new(),
             tasks: TaskState::Unavailable,
             build_test_build: BuildTestState::Unavailable,
             build_test_release: BuildTestState::Unavailable,
@@ -316,6 +328,21 @@ impl App {
 
     pub const fn plan(&self) -> PlanState {
         self.plan
+    }
+
+    pub fn changed_file_emphasis(&self, path: &Path) -> ChangedFileEmphasisPhase {
+        self.changed_file_emphasis
+            .get(path)
+            .copied()
+            .unwrap_or(ChangedFileEmphasisPhase::None)
+    }
+
+    pub fn set_changed_file_emphasis(&mut self, path: PathBuf, phase: ChangedFileEmphasisPhase) {
+        if phase == ChangedFileEmphasisPhase::None {
+            self.changed_file_emphasis.remove(&path);
+        } else {
+            self.changed_file_emphasis.insert(path, phase);
+        }
     }
 
     pub fn activity(&self) -> &ActivityState {

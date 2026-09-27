@@ -133,6 +133,8 @@
 The follow-up narrows width-free bold emphasis from full content to state columns,
 state text without its symbol, freshness (or visible status text), then normal over three seconds.
 Windows Terminal dogfood accepted this five-phase refinement, including the return to normal.
+Windows Terminal dogfood also accepted path-keyed shrinking emphasis for changed/new Git
+rows, without changing Activity semantics, ordering, layout, or the Evidence runtime.
 
 Keyboard refinement is complete after user-confirmed Windows Terminal dogfood in the
 real DevScope repository. Left/Right and Tab/Shift+Tab panel navigation, local Up/Down/j/k

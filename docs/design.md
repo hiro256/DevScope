@@ -111,6 +111,17 @@ before truncating target and primary status. Artifact, Project Progress's compac
 and Evidence Preview remain unchanged. Windows Terminal dogfood accepted the five-phase
 shrinking bold emphasis, including the return to normal, without extra symbols or width.
 
+Changed Files navigation uses independent, session-local emphasis keyed by project-relative
+path when Git status or change counts change, or a path first appears after the initial
+quiet snapshot. Over three seconds, bold contracts from status/path/counts to path/counts
+(Warm and Settling), then visible counts, or the visible path when counts are absent.
+The five phases use the same 750 ms boundaries as Evidence; selection stays unstyled.
+Reordering and unchanged observations do not restart it; removed paths and unavailable
+Activity clear it. A private event-loop runtime owns timing, App holds only display phases,
+and rendering preserves row text, Unicode cell width, and truncation. This is a presentation
+cue, not Activity history or Evidence; Preview and Full View are unchanged.
+User-confirmed Windows Terminal dogfood accepted the Changed Files emphasis.
+
 When the selected Task matches the parent Task recorded in Current Work, the Task Detail Pane may include the recorded Current Work breakdown. Current Work remains subordinate to Plan and is shown as working context, not as Evidence or proof of completion.
 
 The Tasks list may mark the Task referenced by Current Work with a lightweight `[Work parent]` indicator. The indicator denotes recorded Current Work association only; it does not imply active execution, completion, priority, or Evidence.

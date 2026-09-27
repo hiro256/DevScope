@@ -1,4 +1,6 @@
+mod changed_files;
 mod verification;
+use changed_files::ChangedFilesRuntime;
 use verification::{
     BuildTestRuntime, check_build_test_freshness, observe_active_build_test_inputs,
     poll_build_test_execution, start_manual_build_test,
@@ -559,6 +561,7 @@ pub fn run(
     let mut config_changes = project_root.map(ConfigChangeDetector::new);
     let mut current_work_changes = project_root.map(CurrentWorkChangeDetector::new);
     let mut requests = RefreshRequest::default();
+    let mut changed_files_runtime = ChangedFilesRuntime::new(app.activity());
     let mut build_test_runtime = BuildTestRuntime::new(config.clone());
     build_test_runtime.initialize(project_root, app);
     let initial_size = terminal.size()?;
@@ -589,6 +592,7 @@ pub fn run(
                         match try_collect_project_snapshot(root) {
                             Ok(snapshot) => {
                                 app.apply_snapshot(snapshot);
+                                changed_files_runtime.observe(app, Instant::now());
                                 app.clear_refresh_error();
                                 if let Err(error) = reload_activity_excludes(
                                     root,
@@ -667,6 +671,7 @@ pub fn run(
 
         needs_render |= poll_build_test_execution(project_root, app, &mut build_test_runtime);
         needs_render |= build_test_runtime.advance_emphasis(app, Instant::now());
+        needs_render |= changed_files_runtime.advance(app, Instant::now());
 
         if scheduler.is_due(Instant::now()) {
             observe_active_build_test_inputs(project_root, &mut build_test_runtime);
@@ -697,6 +702,9 @@ pub fn run(
             }
             if let Some(root) = project_root {
                 let outcome = apply_pending_refreshes(root, app, &mut None, &mut requests);
+                if outcome.git {
+                    needs_render |= changed_files_runtime.observe(app, Instant::now());
+                }
                 reconcile_worktree_worker(
                     project_root,
                     app,
