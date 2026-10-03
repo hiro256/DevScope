@@ -23,6 +23,7 @@ const CHANGE_COUNTS_GAP: usize = 2;
 const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
 const MIN_NAVIGATION_PANE_WIDTH: u16 = 35;
 const MIN_PREVIEW_PANE_WIDTH: u16 = 43;
+const MUTED_AUXILIARY_COLOR: Color = Color::Rgb(99, 119, 119);
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -301,7 +302,9 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
     let panes = browser_panes(outer[1]);
     let list_area = if split { panes[0] } else { outer[1] };
     // Unlike stacked Overview sections, this list needs no bottom separator.
-    let list_block = navigation_block("Files", true).padding(Padding::new(1, 1, 0, 0));
+    let list_block = navigation_block("Files", true)
+        .title_style(Style::default().add_modifier(Modifier::BOLD))
+        .padding(Padding::new(1, 1, 0, 0));
     let list_inner = list_block.inner(list_area);
     let rows = usize::from(list_inner.height);
     let start = browser
@@ -1307,7 +1310,9 @@ fn navigation_block(title: &str, focused: bool) -> Block<'static> {
         .padding(Padding::new(1, 1, 0, 1))
         .title(format!("{} {title} ", if focused { "▌" } else { " " }))
         .title_style(if focused {
-            Style::default().add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         })
@@ -1433,19 +1438,27 @@ fn padded_title(title: impl AsRef<str>) -> String {
 
 fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(vec![
-        Line::from(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
-        Line::from(work_line(
+        project_progress_line(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
+        project_progress_line(work_line(
             app.current_work(),
             usize::from(width.saturating_sub(2)),
         )),
-        Line::from(format!("Activity   {}", activity(app.activity()))),
-        Line::from(format!("Evidence   {}", evidence(app))),
+        project_progress_line(format!("Activity   {}", activity(app.activity()))),
+        project_progress_line(format!("Evidence   {}", evidence(app))),
     ])
     .block(
         Block::default()
             .borders(Borders::ALL)
             .title(padded_title("Project Progress")),
     )
+}
+
+fn project_progress_line(text: String) -> Line<'static> {
+    let (label, value) = text.split_once(' ').expect("progress row contains a label");
+    Line::from(vec![
+        Span::styled(label.to_owned(), Style::default().fg(MUTED_AUXILIARY_COLOR)),
+        Span::raw(format!(" {value}")),
+    ])
 }
 
 fn plan_line(plan_state: PlanState, width: usize) -> String {
@@ -1924,14 +1937,17 @@ fn commit_line(
     };
     let mut remaining = prefix.chars().count();
     let mut spans = Vec::new();
-    for (column, bold) in [
+    for (index, (column, bold)) in [
         (commit.id.as_str(), phase == TransientEmphasisPhase::Hot),
         ("  ", false),
         (
             commit.summary.as_str(),
             phase != TransientEmphasisPhase::None,
         ),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let mut text: String = column.chars().take(remaining).collect();
         remaining = remaining.saturating_sub(column.chars().count());
         if remaining == 0 && truncated && clipped.ends_with('…') {
@@ -1941,6 +1957,8 @@ fn commit_line(
             text,
             if bold {
                 Style::default().add_modifier(Modifier::BOLD)
+            } else if index == 0 {
+                Style::default().fg(MUTED_AUXILIARY_COLOR)
             } else {
                 Style::default()
             },
@@ -2628,6 +2646,8 @@ mod tests {
                 let output = text(&terminal);
                 assert!(output.contains("▌ Files"));
                 assert!(buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
+                assert_eq!(buffer[(0, outer[1].y)].fg, Color::Reset);
+                assert_eq!(buffer[(2, outer[1].y)].fg, Color::Reset);
                 assert!(!output.contains('┏'));
                 assert_eq!(
                     output.contains("┌ Preview "),
@@ -3195,6 +3215,7 @@ mod tests {
                 assert_eq!(row.spans.len(), 5);
                 assert_eq!(row.spans[4].content, expected);
                 assert!(row.spans[4].style.add_modifier.contains(Modifier::BOLD));
+                assert!(!row.spans[4].style.add_modifier.contains(Modifier::DIM));
                 assert!(
                     row.spans[..4]
                         .iter()
@@ -3221,6 +3242,15 @@ mod tests {
                 assert!(narrow.to_string().ends_with(outcome_text));
                 assert!(!narrow.to_string().contains('!'));
                 assert!(narrow.width() < threshold);
+                app.set_evidence_change_phase(kind, TransientEmphasisPhase::None);
+                let settled = evidence_selector_lines(&app, 45);
+                assert_eq!(settled[0].spans[4].content, expected);
+                assert_eq!(settled[0].spans[4].style, Style::default());
+                assert!(
+                    settled[0].spans[..4]
+                        .iter()
+                        .all(|span| !span.style.add_modifier.contains(Modifier::DIM))
+                );
             }
         }
     }
@@ -4216,6 +4246,25 @@ mod tests {
         for phase in [None, Hot, Warm, Settling, Cooling] {
             let row = commit_line(&commit, 100, phase);
             assert_eq!(
+                row.spans[0].style.fg,
+                if phase == Hot {
+                    Option::None
+                } else {
+                    Some(Color::Rgb(99, 119, 119))
+                }
+            );
+            assert!(
+                row.spans
+                    .iter()
+                    .all(|span| !span.style.add_modifier.contains(Modifier::DIM))
+            );
+            assert!(row.spans[1..].iter().all(|span| span.style.fg.is_none()));
+            assert!(
+                row.spans[1..]
+                    .iter()
+                    .all(|span| !span.style.add_modifier.contains(Modifier::DIM))
+            );
+            assert_eq!(
                 row.spans[0].style.add_modifier.contains(Modifier::BOLD),
                 phase == Hot
             );
@@ -4286,6 +4335,11 @@ mod tests {
             (Cooling, vec![false, false, false, true]),
         ] {
             let line = changed_file_line(&file, true, 80, column, phase);
+            assert!(!line.spans[1].style.add_modifier.contains(Modifier::DIM));
+            assert!(line.spans.iter().all(|span| span.style.fg.is_none()));
+            for index in [0, 2, 3] {
+                assert!(!line.spans[index].style.add_modifier.contains(Modifier::DIM));
+            }
             assert_eq!(
                 line.spans
                     .iter()
@@ -4305,6 +4359,22 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::BOLD)
         );
+        for status in [
+            GitFileStatus::Modified,
+            GitFileStatus::Added,
+            GitFileStatus::Deleted,
+            GitFileStatus::Renamed,
+        ] {
+            let file = GitChangedFile {
+                status,
+                ..file.clone()
+            };
+            for (phase, expected) in [(None, Modifier::empty()), (Hot, Modifier::BOLD)] {
+                let row = changed_file_line(&file, true, 80, column, phase);
+                assert_eq!(row.spans[1].style.add_modifier, expected);
+                assert!(row.spans[1].style.fg.is_none());
+            }
+        }
     }
 
     #[test]
@@ -5249,15 +5319,30 @@ mod tests {
     }
 
     #[test]
-    fn only_focused_navigation_title_is_bold() {
-        for focused in [false, true] {
+    fn only_focused_navigation_title_is_blue_and_bold() {
+        for (title, focused) in [
+            ("Tasks", true),
+            ("Evidence", true),
+            ("Changed Files", true),
+            ("Tasks", false),
+            ("Evidence", false),
+            ("Changed Files", false),
+            ("Recent Commits", false),
+        ] {
             let mut terminal = Terminal::new(TestBackend::new(30, 5)).unwrap();
             terminal
-                .draw(|frame| frame.render_widget(navigation_block("Tasks", focused), frame.area()))
+                .draw(|frame| frame.render_widget(navigation_block(title, focused), frame.area()))
                 .unwrap();
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(0, 0)].symbol(), if focused { "▌" } else { " " });
             assert_eq!(buffer[(2, 0)].modifier.contains(Modifier::BOLD), focused);
+            for x in 0..(title.len() + 3) as u16 {
+                assert_eq!(
+                    buffer[(x, 0)].fg,
+                    if focused { Color::Blue } else { Color::Reset }
+                );
+                assert_eq!(buffer[(x, 0)].modifier.contains(Modifier::BOLD), focused);
+            }
             assert!(!text(&terminal).contains('─'));
         }
     }
@@ -5289,7 +5374,7 @@ mod tests {
     }
 
     #[test]
-    fn overview_hierarchy_remains_monochrome_across_layouts_and_preview_toggle() {
+    fn overview_hierarchy_only_mutes_auxiliary_labels_across_layouts_and_preview_toggle() {
         let mut app = app(
             TaskState::Available(TaskSummary::new(1, task_items(1))),
             ActivityState::Unavailable,
@@ -5323,9 +5408,43 @@ mod tests {
                     let buffer = terminal.backend().buffer();
                     assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
                     assert!(!buffer[(0, height - 1)].modifier.contains(Modifier::BOLD));
-                    for cell in buffer.content() {
-                        assert_eq!(cell.fg, ratatui::style::Color::Reset);
-                        assert_eq!(cell.bg, ratatui::style::Color::Reset);
+                    let progress = overview_areas(Rect::new(0, 0, width, height))[1];
+                    let focused_y = (0..height)
+                        .find(|y| buffer[(0, *y)].symbol() == "▌")
+                        .unwrap();
+                    let focused_title = match panel {
+                        FocusedPanel::Tasks => "Tasks",
+                        FocusedPanel::Evidence => "Evidence",
+                        FocusedPanel::ChangedFiles => "Changed Files",
+                    };
+                    for y in 0..height {
+                        for x in 0..width {
+                            let cell = &buffer[(x, y)];
+                            let muted_label = ["Plan", "Work", "Activity", "Evidence"]
+                                .iter()
+                                .enumerate()
+                                .any(|(index, label)| {
+                                    y == progress.y + 1 + index as u16
+                                        && x > progress.x
+                                        && x <= progress.x + label.len() as u16
+                                });
+                            assert_eq!(
+                                cell.fg,
+                                if y == focused_y && usize::from(x) < focused_title.len() + 3 {
+                                    Color::Blue
+                                } else if muted_label {
+                                    Color::Rgb(99, 119, 119)
+                                } else {
+                                    Color::Reset
+                                },
+                                "{width}x{height} ({x}, {y})"
+                            );
+                            assert_eq!(cell.bg, Color::Reset);
+                            assert!(!cell.modifier.contains(Modifier::DIM));
+                            if cell.symbol() == ">" {
+                                assert_eq!(cell.fg, Color::Reset);
+                            }
+                        }
                     }
                 }
             }
@@ -5383,6 +5502,47 @@ mod tests {
             "Work       1/2"
         );
     }
+    #[test]
+    fn project_progress_mutes_only_labels_without_changing_values_or_alignment() {
+        let app = app(
+            TaskState::Available(TaskSummary::new(1, task_items(1))),
+            ActivityState::Unavailable,
+        );
+        let expected = [
+            ("Plan", plan_line(app.plan(), 78)),
+            ("Work", work_line(app.current_work(), 78)),
+            (
+                "Activity",
+                format!("Activity   {}", activity(app.activity())),
+            ),
+            ("Evidence", format!("Evidence   {}", evidence(&app))),
+        ];
+        let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(project_progress(&app, 80), frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        for (index, (label, expected)) in expected.iter().enumerate() {
+            let y = index as u16 + 1;
+            let rendered = (1..79).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+            assert_eq!(rendered.trim_end(), expected.trim_end());
+            for x in 1..79 {
+                let cell = &buffer[(x, y)];
+                assert!(!cell.modifier.contains(Modifier::DIM));
+                assert!(!cell.modifier.contains(Modifier::BOLD));
+                assert_eq!(
+                    cell.fg,
+                    if usize::from(x) <= label.len() {
+                        Color::Rgb(99, 119, 119)
+                    } else {
+                        Color::Reset
+                    }
+                );
+            }
+        }
+        assert!(!buffer[(0, 0)].modifier.contains(Modifier::DIM));
+    }
+
     #[test]
     fn project_progress_keeps_overview_states_visible_across_layouts_and_preview() {
         let mut app = App::new(ProjectSnapshot::new(
