@@ -1211,14 +1211,16 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         .to_string()
         .len();
     lines.extend(rows.into_iter().map(|(line, numbers)| {
-        let color = if line.starts_with("@@") {
-            Some(Color::Cyan)
+        let style = if line.starts_with("@@") {
+            Style::default().add_modifier(Modifier::BOLD)
         } else if line.starts_with('+') && !line.starts_with("+++ ") {
-            Some(Color::Green)
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD)
         } else if line.starts_with('-') && !line.starts_with("--- ") {
-            Some(Color::Red)
+            Style::default().fg(Color::Blue).add_modifier(Modifier::DIM)
         } else {
-            None
+            Style::default()
         };
         let text = match numbers {
             Some((old, new)) => format!(
@@ -1228,10 +1230,7 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
             ),
             None => line.to_owned(),
         };
-        Line::from(text).style(match color {
-            Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
-            None => Style::default(),
-        })
+        Line::from(text).style(style)
     }));
     if diff.truncated {
         lines.push(Line::from("... diff truncated ..."));
@@ -2150,14 +2149,14 @@ mod tests {
             ("--- /dev/null", false, None),
             ("+++ /dev/null", false, None),
             (" context", false, None),
-            ("@@ -1,3 +1,4 @@", true, Some(Color::Cyan)),
-            ("-old", true, Some(Color::Red)),
-            ("+new", true, Some(Color::Green)),
+            ("@@ -1,3 +1,4 @@", true, None),
+            ("-old", false, Some(Color::Blue)),
+            ("+new", true, Some(Color::Blue)),
             // Repeated diff markers in source content are not file headers.
-            ("++++counter;", true, Some(Color::Green)),
-            ("----value;", true, Some(Color::Red)),
-            ("+追加された日本語", true, Some(Color::Green)),
-            ("-削除された日本語", true, Some(Color::Red)),
+            ("++++counter;", true, Some(Color::Blue)),
+            ("----value;", false, Some(Color::Blue)),
+            ("+追加された日本語", true, Some(Color::Blue)),
+            ("-削除された日本語", false, Some(Color::Blue)),
         ];
         let source = source_cases
             .iter()
@@ -2195,6 +2194,11 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(line.style.fg, color, "{text}");
+            assert_eq!(
+                line.style.add_modifier.contains(Modifier::DIM),
+                text.starts_with('-') && !text.starts_with("--- "),
+                "{text}"
+            );
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::BOLD),
                 bold,
@@ -2270,10 +2274,12 @@ mod tests {
             if text == "\\ No newline at end of file" {
                 assert_eq!(row.style.fg, None);
             }
-            let bold = text == "Unstaged"
-                || text.starts_with("@@")
-                || text.contains("│ -")
-                || text.contains("│ +");
+            let bold = text == "Unstaged" || text.starts_with("@@") || text.contains("│ +");
+            assert_eq!(
+                row.style.add_modifier.contains(Modifier::DIM),
+                text.contains("│ -"),
+                "{text}"
+            );
             assert_eq!(
                 row.style.add_modifier.contains(Modifier::BOLD),
                 bold,
@@ -2302,8 +2308,10 @@ mod tests {
         assert!(rows[3].to_string().starts_with(" 100      │ -削除"));
         assert!(rows[4].to_string().starts_with("     1000 │ +追加"));
         assert_eq!(rows[2].style.fg, None);
-        assert_eq!(rows[3].style.fg, Some(Color::Red));
-        assert_eq!(rows[4].style.fg, Some(Color::Green));
+        assert_eq!(rows[3].style.fg, Some(Color::Blue));
+        assert_eq!(rows[3].style.add_modifier, Modifier::DIM);
+        assert_eq!(rows[4].style.fg, Some(Color::Blue));
+        assert_eq!(rows[4].style.add_modifier, Modifier::BOLD);
         for width in [0, 1, 8, 13, 20, 40] {
             let fitted = fit_inspection_lines(rows.clone(), width, true);
             assert_eq!(fitted.len(), if width == 0 { 0 } else { rows.len() });
@@ -2421,7 +2429,8 @@ mod tests {
         assert!(output.contains("Ctrl+"));
         let last = &terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)];
         assert!(last.modifier.contains(Modifier::BOLD));
-        assert_eq!(last.fg, Color::Green);
+        assert_eq!(last.fg, Color::Blue);
+        assert!(!last.modifier.contains(Modifier::DIM));
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         app.apply_detail_inspection(inspection);
         let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
@@ -2442,7 +2451,12 @@ mod tests {
         );
         assert_eq!(
             terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)].fg,
-            Color::Green
+            Color::Blue
+        );
+        assert!(
+            !terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)]
+                .modifier
+                .contains(Modifier::DIM)
         );
     }
 
