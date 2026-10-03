@@ -189,24 +189,12 @@ fn browser_preview_lines(app: &App) -> Vec<Line<'static>> {
     if entry.kind == BrowserEntryKind::File {
         match &browser.preview {
             Some(Ok((text, truncated))) => {
-                return browser_file_content_lines(&entry.path, text, *truncated);
+                return browser_full_view_content_lines(text, *truncated);
             }
             Some(Err(error)) => lines.extend(preview_field("Error", file_error_text(*error))),
             None => lines.push(Line::from("Unavailable")),
         }
     }
-    lines
-}
-
-fn browser_file_content_lines(
-    path: &std::path::Path,
-    text: &str,
-    truncated: bool,
-) -> Vec<Line<'static>> {
-    let mut lines = preview_field("File", &browser_path(path));
-    lines.extend(preview_field("Mode", "File content"));
-    lines.push(Line::from(""));
-    lines.extend(browser_full_view_content_lines(text, truncated));
     lines
 }
 
@@ -1082,7 +1070,7 @@ fn detail_areas(app: &App, area: Rect) -> [Rect; 3] {
     let header_height = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
         1
     } else {
-        10
+        5
     };
     let areas = Layout::vertical([
         Constraint::Length(header_height),
@@ -1119,19 +1107,18 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         changes,
     }) = app.detail_target()
     {
-        frame.render_widget(
-            Paragraph::new(format!(
-                "File\n  {}\n\nStatus\n  {}\n\nChanges\n  {}",
-                path.display(),
-                git_file_status_name(status),
-                change_summary(*changes),
-            ))
-            .block(
-                panel_block("Changed File Detail", false)
-                    .title_style(Style::default().add_modifier(Modifier::BOLD)),
-            ),
-            areas[0],
-        );
+        let block = panel_block("Changed File Detail", false)
+            .title_style(Style::default().add_modifier(Modifier::BOLD));
+        let width = usize::from(block.inner(areas[0]).width);
+        let lines = [
+            format!("File:    {}", browser_path(path)),
+            format!("Status:  {}", git_file_status_name(status)),
+            format!("Changes: {}", change_summary(*changes)),
+        ]
+        .into_iter()
+        .map(|line| Line::from(truncate_text(&line, width)))
+        .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines).block(block), areas[0]);
     }
     let title = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
         "File Content"
@@ -1142,8 +1129,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
             _ => "Inspection",
         }
     };
-    let block =
-        panel_block(title, false).title_style(Style::default().add_modifier(Modifier::BOLD));
+    let block = panel_block("", false).title(active_panel_title(title));
     let viewport = block.inner(areas[1]);
     let lines = fit_inspection_lines(
         full_view_lines(app),
@@ -1414,15 +1400,30 @@ fn navigation_block(title: &str, state: NavigationState) -> Block<'static> {
         ]))
 }
 
+fn active_panel_title(title: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled("▌", Style::default().fg(Color::Blue)),
+        Span::styled(
+            format!(" {title} "),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
 fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
-    Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_type(if focused {
             BorderType::Thick
         } else {
             BorderType::Plain
-        })
-        .title(padded_title(title))
+        });
+    if title.as_ref().is_empty() {
+        block
+    } else {
+        block.title(padded_title(title))
+    }
 }
 fn render_compact(frame: &mut Frame, area: Rect) {
     frame.render_widget(
@@ -2342,19 +2343,19 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
             terminal.draw(|frame| render(frame, &app)).unwrap();
             let pane = browser_panes(browser_areas(&app, Rect::new(0, 0, 120, 30))[1])[1];
+            for x in pane.x..pane.right() {
+                assert_ne!(terminal.backend().buffer()[(x, pane.y)].symbol(), "▌");
+                assert_eq!(terminal.backend().buffer()[(x, pane.y)].fg, Color::Reset);
+            }
             for x in pane.x + 2..pane.x + 9 {
                 let cell = &terminal.backend().buffer()[(x, pane.y)];
                 assert_eq!(cell.fg, Color::Reset);
                 assert!(cell.modifier.contains(Modifier::BOLD));
             }
-            assert!(
-                browser_preview_lines(&app)[0]
-                    .to_string()
-                    .starts_with("File: ")
-            );
+            assert_eq!(browser_preview_lines(&app)[0].to_string(), "first content");
             assert_eq!(
-                browser_preview_lines(&app)[1].to_string(),
-                "Mode: File content"
+                browser_preview_lines(&app),
+                browser_full_view_content_lines(&content, true)
             );
             app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
             assert!(app.has_detail_view());
@@ -2453,7 +2454,15 @@ mod tests {
                 logical[0].to_string()
             );
             app.file_browser.preview_scroll = path_rows.len().saturating_sub(1);
-            assert!(draw(&app, width, 25).contains(&path_rows.last().unwrap().to_string()));
+            let expected = ratatui::buffer::Buffer::with_lines([path_rows.last().unwrap().clone()]);
+            let mut terminal = Terminal::new(TestBackend::new(width, 25)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            assert!((viewport.y..viewport.bottom()).any(|y| {
+                (0..expected.area.width).all(|x| {
+                    terminal.backend().buffer()[(viewport.x + x, y)].symbol()
+                        == expected[(x, 0)].symbol()
+                })
+            }));
             let limit = browser_preview_scroll_limit(&app, area);
             assert_eq!(limit, wrapped.len() - usize::from(viewport.height));
             app.file_browser.preview_scroll = limit;
@@ -3045,24 +3054,19 @@ mod tests {
         app.file_browser.preview = Some(Ok(("text body".into(), false)));
         assert_eq!(
             browser_preview_lines(&app),
-            [
-                "File: docs/AGENTS.md",
-                "Mode: File content",
-                "",
-                "text body"
-            ]
-            .map(Line::from)
-            .to_vec()
+            ["text body"].map(Line::from).to_vec()
         );
         let output = draw(&app, 80, 30);
-        assert!(output.contains("File: docs/AGENTS.md"));
-        assert!(output.contains("Mode: File content"));
+        assert!(output.contains("text body"));
+        assert!(!output.contains("File: docs/AGENTS.md"));
+        assert!(!output.contains("Mode: File content"));
         assert!(!output.contains("Ctrl+↑/↓:Scroll"));
 
         let name = "日本語の非常に長いファイル名を省略しても元の識別情報は維持する.txt";
         let path = std::path::PathBuf::from("docs").join(name);
         app.file_browser.entries[0].name = name.into();
         app.file_browser.entries[0].path = path.clone();
+        app.file_browser.preview = None;
         assert_eq!(
             browser_preview_lines(&app)[0],
             Line::from(format!("File: {}", browser_path(&path)))
@@ -3105,11 +3109,11 @@ mod tests {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(lines.contains("File content"));
+        assert!(!lines.contains("File content"));
         assert!(lines.contains("hello\n\\u{1b}[2J\\tcontrol"));
         assert!(!lines.chars().any(|c| c.is_control() && c != '\n'));
         assert_eq!(app.file_browser.preview, Some(Ok((text.into(), false))));
-        assert!(draw(&app, 80, 30).contains("File content"));
+        assert!(draw(&app, 80, 30).contains("hello"));
     }
 
     #[test]
@@ -3140,8 +3144,8 @@ mod tests {
         assert!(first.contains("browser line 00"));
         assert!(first.contains("Ctrl+↑/↓:Scroll"));
         let limit = browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30));
-        assert_eq!(browser_preview_lines(&app).len(), 64); // Two fields, gap, 60 lines, truncation.
-        assert_eq!(limit, 64 - 23); // Actual Preview viewport excludes frame and action row.
+        assert_eq!(browser_preview_lines(&app).len(), 61); // 60 content lines and truncation.
+        assert_eq!(limit, 61 - 23); // Actual Preview viewport excludes frame and action row.
         app.file_browser.scroll(isize::MAX, limit);
         let last = draw(&app, 80, 30);
         assert!(last.contains("browser line 59"));
@@ -4558,6 +4562,10 @@ mod tests {
         pane.x += preview_pane_widths(area.width).0;
         pane.width = preview_pane_widths(area.width).1;
         let buffer = terminal.backend().buffer();
+        for x in pane.x..pane.right() {
+            assert_ne!(buffer[(x, pane.y)].symbol(), "▌");
+            assert_eq!(buffer[(x, pane.y)].fg, Color::Reset);
+        }
         for x in pane.x + 2..pane.x + 14 {
             assert!(buffer[(x, pane.y)].modifier.contains(Modifier::BOLD));
             assert_eq!(buffer[(x, pane.y)].fg, Color::Reset);
@@ -5539,6 +5547,15 @@ mod tests {
                 let row = (0..width)
                     .map(|x| buffer[(x, *y)].symbol())
                     .collect::<String>();
+                if *title == "Changed File Detail" {
+                    assert!(!row.contains('▌'));
+                    assert!((0..width).all(|x| buffer[(x, *y)].fg == Color::Reset));
+                } else {
+                    assert!(row.starts_with(&format!("┌ ▌ {title} ")));
+                    assert_eq!(buffer[(2, *y)].symbol(), "▌");
+                    assert_eq!(buffer[(2, *y)].fg, Color::Blue);
+                    assert!(!buffer[(2, *y)].modifier.contains(Modifier::DIM));
+                }
                 let start = Line::from(&row[..row.find(title).unwrap()]).width() as u16;
                 for x in start..start + title.len() as u16 {
                     assert_eq!(buffer[(x, *y)].fg, Color::Reset);
@@ -5613,6 +5630,45 @@ mod tests {
     }
 
     #[test]
+    fn active_inspection_title_keeps_marker_and_text_styles_separate() {
+        for title in ["Diff", "File content", "Inspection", "File Content"] {
+            let line = active_panel_title(title);
+            assert_eq!(line.to_string(), format!(" ▌ {title} "));
+            assert_eq!(line.spans[1].style.fg, Some(Color::Blue));
+            assert!(!line.spans[1].style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(line.spans[2].style.fg, None);
+            assert!(line.spans[2].style.add_modifier.contains(Modifier::BOLD));
+        }
+    }
+
+    #[test]
+    fn changed_file_metadata_is_three_compact_rows_with_a_larger_body() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "src/control\x1b.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        let area = Rect::new(0, 0, 80, 30);
+        let areas = detail_areas(&app, area);
+        assert_eq!(areas[0].height, 5);
+        assert_eq!(panel_block("", false).inner(areas[1]).height, 22);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("File:    src/control\\u{1b}.rs"));
+        assert!(output.contains("Status:  Modified"));
+        assert!(output.contains("Changes: unavailable"));
+        assert!(!output.contains("▌ Changed File Detail"));
+        for width in [1, 20, 40, 80] {
+            let output = draw(&app, width, 30);
+            assert!(!output.contains('\x1b'));
+        }
+    }
+
+    #[test]
     fn renders_changed_file_detail_with_path_status_and_small_terminal_safety() {
         let mut app = app(
             TaskState::Unavailable,
@@ -5653,7 +5709,7 @@ mod tests {
         assert!(output.contains("Changed File Detail"));
         assert!(output.contains("src/ui.rs"));
         assert!(output.contains("Modified"));
-        assert!(output.contains("+12 -4"));
+        assert!(output.contains("Changes: +12 -4"));
         assert!(!output.contains("Git diff"));
         assert!(output.contains("Unstaged"));
         assert!(output.contains("-old"));
