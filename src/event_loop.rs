@@ -867,6 +867,7 @@ mod tests {
     #[test]
     fn maps_manual_build_and_test_keys_only_on_press() {
         let mut app = App::new(ProjectSnapshot::unavailable());
+        app.toggle_preview();
         app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
         app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
@@ -898,6 +899,7 @@ mod tests {
     fn contextual_run_requires_visible_evidence_and_runnable_selected_target() {
         use crate::app::FocusedPanel;
         let mut app = App::new(ProjectSnapshot::unavailable());
+        app.toggle_preview();
         let area = ratatui::layout::Rect::new(0, 0, 120, 30);
         let space = key(KeyCode::Char(' '));
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
@@ -985,6 +987,7 @@ mod tests {
         for kind in BuildTestKind::ALL {
             let mut app = App::new(ProjectSnapshot::unavailable());
             let mut runtime = BuildTestRuntime::new(load_project_config(&root).unwrap());
+            app.toggle_preview();
             runtime.initialize(Some(&root), &mut app);
             app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
             app.select_evidence_detail(kind);
@@ -2067,7 +2070,7 @@ mod tests {
         for visible in [false, true] {
             let mut app = App::new(collect_project_snapshot(&root));
             handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
-            if !visible {
+            if app.preview_visible() != visible {
                 app.toggle_preview();
             }
             app.scroll_preview(2, 5);
@@ -2109,6 +2112,7 @@ mod tests {
         let initial: String = (0..40).map(|i| format!("first {i}\n")).collect();
         fs::write(root.join("tracked.txt"), initial).unwrap();
         let mut app = App::new(collect_project_snapshot(&root));
+        app.toggle_preview();
         let area = ratatui::layout::Rect::new(0, 0, 80, 25);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
         assert_eq!(app.focused_panel(), crate::app::FocusedPanel::ChangedFiles);
@@ -2415,6 +2419,7 @@ mod tests {
         let root = git_root();
         fs::write(root.join("a-new.txt"), "before").unwrap();
         let mut app = App::new(collect_project_snapshot(&root));
+        app.toggle_preview();
         let area = ratatui::layout::Rect::new(0, 0, 80, 30);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
         let selected = app.selected_changed_file();
@@ -2446,6 +2451,7 @@ mod tests {
         fs::write(root.join("a-new.txt"), &text).unwrap();
         fs::write(root.join("b-new.txt"), "second untracked file\n").unwrap();
         let mut app = App::new(collect_project_snapshot(&root));
+        app.toggle_preview();
         let area = ratatui::layout::Rect::new(0, 0, 80, 30);
         handle_navigation_key(Some(&root), &mut app, key(KeyCode::Left), area);
         let initial = GitFileInspection::FileContent {
@@ -2584,7 +2590,6 @@ mod tests {
         ];
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), &panels);
-        app.handle_key_with_focusable_panels(key(KeyCode::Char('p')), &panels);
         assert!(!app.preview_visible());
         assert!(!changed_file_preview_active(120, 30, &app));
         let mut requests = RefreshRequest {

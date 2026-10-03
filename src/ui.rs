@@ -92,11 +92,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let outer = overview_areas(area);
 
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(header_title(app, usize::from(area.width))),
-            Line::from(now_label(app.current_work(), usize::from(area.width)))
-                .style(Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Paragraph::new(header_title(app, usize::from(area.width))),
         outer[0],
     );
     frame.render_widget(project_progress(app, outer[1].width), outer[1]);
@@ -118,7 +114,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 fn overview_areas(area: Rect) -> [Rect; 4] {
     let areas = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Length(6),
         Constraint::Min(1),
         Constraint::Length(1),
@@ -387,20 +383,29 @@ fn browser_footer_text(width: u16) -> &'static str {
     .unwrap_or("")
 }
 
-fn header_title(app: &App, width: usize) -> String {
-    const TITLE: &str = "DevScope";
-    let identity = format!("{TITLE} · {}", app.project_name());
+fn header_title(app: &App, width: usize) -> Line<'static> {
+    let now = now_label(app.current_work(), width);
     if let Some(error) = app.refresh_error() {
         let error = safe_display_text(error).replace('\n', " ");
         let status = format!("Refresh error: {error}");
-        if let Some(full) = aligned_header(&identity, &status, width) {
+        if let Some(full) = aligned_header(&now, &status, width) {
             return full;
         }
-        // Errors remain explicit even when ordinary identity/status fields would be dropped.
-        if let Some(full) = aligned_header(TITLE, &status, width) {
-            return full;
+        // Keep NOW first, but reserve explicit error text before ordinary metadata.
+        let now_width = Line::from(now.as_str()).width().min(
+            width
+                .saturating_sub(2 + "Refresh error:".len())
+                .max(7.min(width)),
+        );
+        let now = truncate_text(&now, now_width);
+        let remaining = width.saturating_sub(Line::from(now.as_str()).width() + 2);
+        if remaining == 0 {
+            return Line::from(now).style(Style::default().add_modifier(Modifier::BOLD));
         }
-        return truncate_text(&format!("{TITLE}  Refresh error: {error}"), width);
+        return Line::from(vec![
+            Span::styled(now, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!("  {}", truncate_text(&status, remaining))),
+        ]);
     }
     let status = app.refresh_status();
     let watching = if status.retry_pending() {
@@ -414,23 +419,28 @@ fn header_title(app: &App, width: usize) -> String {
         watching.to_owned(),
     ]
     .into_iter()
-    .find_map(|status| aligned_header(&identity, &status, width))
-    .unwrap_or_else(|| {
-        if width >= Line::from("DevScope · …").width() {
-            truncate_text(&identity, width)
-        } else {
-            truncate_text(TITLE, width)
-        }
-    })
+    .find_map(|status| aligned_header(&now, &status, width))
+    .unwrap_or_else(|| Line::from(now).style(Style::default().add_modifier(Modifier::BOLD)))
 }
 
-fn aligned_header(identity: &str, status: &str, width: usize) -> Option<String> {
-    let used = Line::from(identity).width() + Line::from(status).width();
-    (used + 2 <= width).then(|| format!("{identity}{}{status}", " ".repeat(width - used)))
+fn aligned_header(now: &str, status: &str, width: usize) -> Option<Line<'static>> {
+    let used = Line::from(now).width() + Line::from(status).width();
+    (used + 2 <= width).then(|| {
+        Line::from(vec![
+            Span::styled(
+                now.to_owned(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("{}{status}", " ".repeat(width - used))),
+        ])
+    })
 }
 
 fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
     const PREFIX: &str = "● NOW  ";
+    if width < Line::from(PREFIX).width() {
+        return truncate_text(PREFIX, width);
+    }
     let value = match current_work {
         CurrentWorkState::Available(work) => {
             work.active_item().map_or("Not set", |item| item.text())
@@ -589,10 +599,7 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 _ => "",
             };
             let base = format!("{marker}{:<13}  {status}", detail_kind(kind));
-            let full = format!(
-                "{marker}{:<13}  {status:<9}  {freshness:<5}",
-                detail_kind(kind)
-            );
+            let full = format!("{base} {freshness}");
             let full_visible = Line::from(full.trim_end()).width() <= width;
             let freshness_visible = full_visible && !freshness.is_empty();
             let target = if full_visible || Line::from(base.as_str()).width() <= width {
@@ -600,16 +607,16 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             } else {
                 format!("{} ", detail_kind(kind))
             };
-            let (symbol, status_name) =
-                status.split_once(' ').expect("process status has a symbol");
+            let (symbol, status_name) = status.split_once(' ').unwrap_or((&status, ""));
+            let completed = matches!(state, BuildTestState::Completed(_));
             let columns = [
                 target,
-                format!("{symbol} "),
-                if freshness_visible {
-                    format!("{status_name:<7}  ")
+                if !status_name.is_empty() || freshness_visible {
+                    format!("{symbol} ")
                 } else {
-                    status_name.to_owned()
+                    symbol.to_owned()
                 },
+                status_name.to_owned(),
                 if freshness_visible {
                     freshness.to_owned()
                 } else {
@@ -620,10 +627,13 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             let bold = match phase {
                 TransientEmphasisPhase::Hot => [true; 4],
                 TransientEmphasisPhase::Warm => [false, true, true, true],
-                TransientEmphasisPhase::Settling => [false, false, true, true],
-                TransientEmphasisPhase::Cooling => {
-                    [false, false, !freshness_visible, freshness_visible]
-                }
+                TransientEmphasisPhase::Settling => [false, completed, true, true],
+                TransientEmphasisPhase::Cooling => [
+                    false,
+                    completed && !freshness_visible,
+                    !freshness_visible,
+                    freshness_visible,
+                ],
                 TransientEmphasisPhase::None => [false; 4],
             };
             let content = columns.concat();
@@ -638,7 +648,11 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             let mut spans = vec![Span::raw(
                 marker.chars().take(width.min(2)).collect::<String>(),
             )];
-            for (column, bold) in columns.iter().zip(bold) {
+            for (column, bold) in columns
+                .iter()
+                .zip(bold)
+                .filter(|(column, _)| !column.is_empty())
+            {
                 let length = column.len().min(visible.len());
                 let mut text = visible[..length].to_owned();
                 visible = &visible[length..];
@@ -674,11 +688,9 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 }
 fn evidence_selector_status(state: &BuildTestState) -> String {
     match state {
-        BuildTestState::Completed(result) => match (result.outcome(), result.freshness()) {
-            (BuildTestOutcome::Passed, BuildTestFreshness::Fresh) => "✓ Passed".into(),
-            (BuildTestOutcome::Passed, BuildTestFreshness::Stale) => "✓ Passed".into(),
-            (BuildTestOutcome::Failed, BuildTestFreshness::Fresh) => "✕ Failed".into(),
-            (BuildTestOutcome::Failed, BuildTestFreshness::Stale) => "✕ Failed".into(),
+        BuildTestState::Completed(result) => match result.outcome() {
+            BuildTestOutcome::Passed => "✓".into(),
+            BuildTestOutcome::Failed => "✕".into(),
         },
         BuildTestState::Unavailable => "? Unavailable".into(),
         BuildTestState::NotRun => "· Not run".into(),
@@ -739,7 +751,10 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     );
     let limit = lines.len().saturating_sub(inner[0].height as usize);
     let scroll = app.preview_scroll().min(limit).min(u16::MAX as usize) as u16;
-    frame.render_widget(panel_block(title, false), area);
+    frame.render_widget(
+        panel_block(title, false).title_style(Style::default().add_modifier(Modifier::BOLD)),
+        area,
+    );
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner[0]);
     frame.render_widget(
         Paragraph::new(preview_action_text(app, limit, inner[1].width)),
@@ -1162,7 +1177,7 @@ fn detail_inspection_lines(diff: Option<&GitFileInspection>) -> Vec<Line<'static
             lines
         }
         Some(GitFileInspection::Diff { unstaged, staged }) => {
-            let mut lines = vec![Line::from("Mode"), Line::from("  Git diff")];
+            let mut lines = Vec::new();
             append_diff_section(&mut lines, "Unstaged", unstaged.as_ref());
             append_diff_section(&mut lines, "Staged", staged.as_ref());
             lines
@@ -1447,7 +1462,10 @@ fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(padded_title("Project Progress")),
+            .title(padded_title(format!(
+                "Project Progress · {}",
+                app.project_name()
+            ))),
     )
 }
 
@@ -1998,11 +2016,14 @@ mod tests {
         CurrentWorkState::Available(work)
     }
     fn app(tasks: TaskState, activity: ActivityState) -> App {
-        App::new(ProjectSnapshot::new(
+        let mut app = App::new(ProjectSnapshot::new(
             PlanState::Available(PlanSummary::new(3, 5)),
             activity,
             tasks,
-        ))
+        ));
+        // Preview-specific fixtures explicitly opt in; production starts hidden.
+        app.toggle_preview();
+        app
     }
 
     fn task_items(count: usize) -> Vec<TaskSummaryItem> {
@@ -2179,11 +2200,15 @@ mod tests {
             }),
         };
         let lines = detail_inspection_lines(Some(&inspection));
+        assert_eq!(lines[0].to_string(), "Unstaged");
+        assert!(
+            !lines
+                .iter()
+                .any(|line| matches!(line.to_string().as_str(), "Mode" | "  Git diff"))
+        );
         for (text, bold, color) in source_cases.into_iter().chain([
             ("Unstaged", true, None),
             ("Staged", true, None),
-            ("Mode", false, None),
-            ("  Git diff", false, None),
             ("... diff truncated ...", false, None),
         ]) {
             let line = lines
@@ -3067,9 +3092,9 @@ mod tests {
         let stale = draw(&app, 80, 30);
         assert!(stale.contains("Passed"));
         assert!(stale.contains("Stale"));
-        assert!(stale.contains("> Build Debug    ✓ Passed"));
-        assert!(!stale.contains("> Build Debug    ✓ Passed   ! Stale"));
-        assert!(draw(&app, 100, 30).contains("> Build Debug    ✓ Passed   ! Stale"));
+        assert!(stale.contains("> Build Debug    ✓"));
+        assert!(stale.contains("> Build Debug    ✓ ! Stale"));
+        assert!(draw(&app, 100, 30).contains("> Build Debug    ✓ ! Stale"));
 
         app.handle_key_with_focusable_panels(
             KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
@@ -3097,9 +3122,9 @@ mod tests {
         assert!(failed.contains("Detail: Test"));
         assert!(failed.contains("Failed"));
         assert!(failed.contains("1 failed"));
-        assert!(failed.contains("  Build Debug    ✓ Passed"));
-        assert!(draw(&app, 100, 30).contains("  Build Debug    ✓ Passed   ! Stale"));
-        assert!(failed.contains("> Test           ✕ Failed"));
+        assert!(failed.contains("  Build Debug    ✓"));
+        assert!(draw(&app, 100, 30).contains("  Build Debug    ✓ ! Stale"));
+        assert!(failed.contains("> Test           ✕"));
 
         app.apply_build_test_state(
             BuildTestKind::Test,
@@ -3162,24 +3187,45 @@ mod tests {
         ] {
             let completed = matches!(state, BuildTestState::Completed(_));
             app.apply_build_test_state(kind, state);
-            for width in [32, 45] {
+            for width in [23, 45] {
                 let freshness_visible = completed && width == 45;
                 let text = evidence_selector_lines(&app, width)[0].to_string();
                 for (phase, expected) in [
                     (TransientEmphasisPhase::Hot, [true; 4]),
                     (TransientEmphasisPhase::Warm, [false, true, true, true]),
-                    (TransientEmphasisPhase::Settling, [false, false, true, true]),
+                    (
+                        TransientEmphasisPhase::Settling,
+                        [false, completed, true, true],
+                    ),
                     (
                         TransientEmphasisPhase::Cooling,
-                        [false, false, !freshness_visible, freshness_visible],
+                        [
+                            false,
+                            completed && !freshness_visible,
+                            !freshness_visible,
+                            freshness_visible,
+                        ],
                     ),
                     (TransientEmphasisPhase::None, [false; 4]),
                 ] {
                     app.set_evidence_change_phase(kind, phase);
                     let row = &evidence_selector_lines(&app, width)[0];
                     assert_eq!(row.to_string(), text);
-                    assert_eq!(row.spans.len(), if freshness_visible { 5 } else { 4 });
+                    assert_eq!(
+                        row.spans.len(),
+                        if freshness_visible {
+                            4
+                        } else if completed {
+                            3
+                        } else {
+                            4
+                        }
+                    );
                     assert_eq!(row.spans[0].style, Style::default());
+                    let expected = expected
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, bold)| (!(completed && index == 2)).then_some(bold));
                     for (span, bold) in row.spans.iter().skip(1).zip(expected) {
                         assert_eq!(
                             span.style,
@@ -3212,25 +3258,25 @@ mod tests {
                 } else {
                     "Fresh"
                 };
-                assert_eq!(row.spans.len(), 5);
-                assert_eq!(row.spans[4].content, expected);
-                assert!(row.spans[4].style.add_modifier.contains(Modifier::BOLD));
-                assert!(!row.spans[4].style.add_modifier.contains(Modifier::DIM));
+                assert_eq!(row.spans.len(), 4);
+                assert_eq!(row.spans[3].content, expected);
+                assert!(row.spans[3].style.add_modifier.contains(Modifier::BOLD));
+                assert!(!row.spans[3].style.add_modifier.contains(Modifier::DIM));
                 assert!(
-                    row.spans[..4]
+                    row.spans[..3]
                         .iter()
                         .all(|span| !span.style.add_modifier.contains(Modifier::BOLD))
                 );
                 let outcome_text = if outcome == BuildTestOutcome::Passed {
-                    "✓ Passed"
+                    "✓"
                 } else {
-                    "✕ Failed"
+                    "✕"
                 };
                 assert!(row.to_string().contains(outcome_text));
                 let threshold = if freshness == BuildTestFreshness::Stale {
-                    35
+                    26
                 } else {
-                    33
+                    24
                 };
                 assert!(
                     evidence_selector_lines(&app, threshold)[0]
@@ -3238,16 +3284,16 @@ mod tests {
                         .ends_with(expected)
                 );
                 let narrow = &evidence_selector_lines(&app, threshold - 1)[0];
-                assert_eq!(narrow.spans.len(), 4);
+                assert_eq!(narrow.spans.len(), 3);
                 assert!(narrow.to_string().ends_with(outcome_text));
                 assert!(!narrow.to_string().contains('!'));
                 assert!(narrow.width() < threshold);
                 app.set_evidence_change_phase(kind, TransientEmphasisPhase::None);
                 let settled = evidence_selector_lines(&app, 45);
-                assert_eq!(settled[0].spans[4].content, expected);
-                assert_eq!(settled[0].spans[4].style, Style::default());
+                assert_eq!(settled[0].spans[3].content, expected);
+                assert_eq!(settled[0].spans[3].style, Style::default());
                 assert!(
-                    settled[0].spans[..4]
+                    settled[0].spans[..3]
                         .iter()
                         .all(|span| !span.style.add_modifier.contains(Modifier::DIM))
                 );
@@ -3288,9 +3334,9 @@ mod tests {
                 }
                 let rows = evidence_selector_lines(&app, 45);
                 let outcome_text = if outcome == BuildTestOutcome::Passed {
-                    "✓ Passed"
+                    "✓"
                 } else {
-                    "✕ Failed"
+                    "✕"
                 };
                 let freshness_text = if freshness == BuildTestFreshness::Fresh {
                     "Fresh"
@@ -3302,7 +3348,7 @@ mod tests {
                     let prefix = row.split(outcome_text).next().unwrap();
                     assert_eq!(Line::from(prefix).width(), 17);
                     let prefix = row.split(freshness_text).next().unwrap();
-                    assert_eq!(Line::from(prefix).width(), 28);
+                    assert_eq!(Line::from(prefix).width(), 19);
                     assert!(!row.contains('*'));
                 }
             }
@@ -3313,12 +3359,12 @@ mod tests {
         }
         assert_eq!(evidence(&app), summary);
         app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
-        let full = evidence_selector_lines(&app, 36)[0].to_string();
+        let full = evidence_selector_lines(&app, 27)[0].to_string();
         assert!(full.ends_with("! Stale"));
-        let exact_fit = evidence_selector_lines(&app, 35)[0].to_string();
+        let exact_fit = evidence_selector_lines(&app, 26)[0].to_string();
         assert!(exact_fit.ends_with("! Stale"));
-        let no_freshness = evidence_selector_lines(&app, 34)[0].to_string();
-        assert!(no_freshness.ends_with("✕ Failed"));
+        let no_freshness = evidence_selector_lines(&app, 25)[0].to_string();
+        assert!(no_freshness.ends_with("✕"));
         assert!(!no_freshness.contains("Stale"));
         assert!(!no_freshness.contains('!'));
         for width in 2..=80 {
@@ -3350,7 +3396,7 @@ mod tests {
                 BuildTestOutcome::Passed,
                 BuildTestFreshness::Fresh,
             )),
-            "✓ Passed"
+            "✓"
         );
         assert_eq!(
             evidence_selector_status(&completed_state(
@@ -3358,7 +3404,7 @@ mod tests {
                 BuildTestOutcome::Passed,
                 BuildTestFreshness::Stale,
             )),
-            "✓ Passed"
+            "✓"
         );
         assert_eq!(
             evidence_selector_status(&completed_state(
@@ -3366,7 +3412,7 @@ mod tests {
                 BuildTestOutcome::Failed,
                 BuildTestFreshness::Fresh,
             )),
-            "✕ Failed"
+            "✕"
         );
         assert_eq!(
             evidence_selector_status(&BuildTestState::Running(BuildTestRun::new(
@@ -3598,7 +3644,7 @@ mod tests {
             )),
         );
         let passed = draw(&app, 120, 30);
-        assert!(passed.contains("Build Debug    ✓ Passed"));
+        assert!(passed.contains("Build Debug    ✓"));
         assert!(passed.contains("cargo check passed"));
     }
 
@@ -3627,7 +3673,7 @@ mod tests {
             )),
         );
         let failed = draw(&app, 120, 30);
-        assert!(failed.contains("Test           ✕ Failed"));
+        assert!(failed.contains("Test           ✕"));
         assert!(failed.contains("Evidence"));
         assert!(failed.contains("cargo test failed"));
         assert!(failed.contains("Result"));
@@ -3639,7 +3685,7 @@ mod tests {
                 BuildTestFreshness::Stale,
             ),
         );
-        assert!(draw(&app, 120, 30).contains("Test           ✕ Failed   ! Stale"));
+        assert!(draw(&app, 120, 30).contains("Test           ✕ ! Stale"));
         app.apply_build_test_state(
             BuildTestKind::Test,
             execution_error_state(BuildTestKind::Test),
@@ -3704,13 +3750,13 @@ mod tests {
         assert_eq!(evidence(&app), "Debug ✓! | Release ✕ | Test ✓");
         assert!(draw(&app, 80, 30).contains("Evidence   Debug ✓! | Release ✕ | Test ✓"));
         let rows = evidence_selector_lines(&app, usize::MAX);
-        assert!(rows.iter().any(|line| {
-            line.to_string()
-                .contains("Build Debug    ✓ Passed   ! Stale")
-        }));
         assert!(
             rows.iter()
-                .any(|line| line.to_string().contains("Build Release  ✕ Failed"))
+                .any(|line| { line.to_string().contains("Build Debug    ✓ ! Stale") })
+        );
+        assert!(
+            rows.iter()
+                .any(|line| line.to_string().contains("Build Release  ✕"))
         );
         app.apply_build_test_state(
             BuildTestKind::Test,
@@ -3908,7 +3954,7 @@ mod tests {
         let output = draw(&app, 70, 30);
         assert!(output.contains("Task 0"));
         assert!(output.contains("Task 6"));
-        assert!(output.contains("... and 13 more"));
+        assert!(output.contains("... and 12 more"));
     }
 
     #[test]
@@ -4064,9 +4110,12 @@ mod tests {
         );
         for width in [80, 100, 120] {
             let header = header_title(&app, width);
-            assert!(header.starts_with("DevScope · 顧客ポータル"));
-            assert!(header.ends_with("Watching · Git 09:42"));
-            assert_eq!(Line::from(header).width(), width);
+            assert!(header.to_string().starts_with("● NOW  Not set"));
+            assert!(!header.to_string().contains("DevScope"));
+            assert!(header.to_string().ends_with("Watching · Git 09:42"));
+            assert_eq!(header.width(), width);
+            assert!(header.spans[0].style.add_modifier.contains(Modifier::BOLD));
+            assert_eq!(header.spans[1].style, Style::default());
             let mut terminal = Terminal::new(TestBackend::new(width as u16, 30)).unwrap();
             terminal.draw(|frame| render(frame, &app)).unwrap();
             assert_eq!(
@@ -4075,12 +4124,16 @@ mod tests {
             );
         }
         app.set_refresh_pending(true);
-        assert!(header_title(&app, 80).ends_with("Retry pending · Git 09:42"));
+        assert!(
+            header_title(&app, 80)
+                .to_string()
+                .ends_with("Retry pending · Git 09:42")
+        );
         app.set_refresh_error("Read failed");
         let error = header_title(&app, 80);
-        assert_eq!(Line::from(error.clone()).width(), 80);
-        assert!(error.ends_with("Refresh error: Read failed"));
-        assert!(!error.contains("Watching"));
+        assert_eq!(error.width(), 80);
+        assert!(error.to_string().ends_with("Refresh error: Read failed"));
+        assert!(!error.to_string().contains("Watching"));
     }
 
     #[test]
@@ -4093,28 +4146,34 @@ mod tests {
             Some(time::macros::time!(09:42)),
         );
         for expected in [
-            "DevScope · Portal  Watching · Git 09:42",
-            "DevScope · Portal  Watching · Git",
-            "DevScope · Portal  Watching",
-            "DevScope · Portal",
-            "DevScope",
+            "● NOW  Not set  Watching · Git 09:42",
+            "● NOW  Not set  Watching · Git",
+            "● NOW  Not set  Watching",
+            "● NOW  Not set",
         ] {
-            assert_eq!(header_title(&app, Line::from(expected).width()), expected);
+            assert_eq!(
+                header_title(&app, Line::from(expected).width()).to_string(),
+                expected
+            );
         }
         app.set_refresh_pending(true);
-        assert!(header_title(&app, 80).contains("Retry pending · Git 09:42"));
+        assert!(
+            header_title(&app, 80)
+                .to_string()
+                .contains("Retry pending · Git 09:42")
+        );
         app.set_project_root(Some(std::path::Path::new(
             "C:/dev/日本語の長いプロジェクト名",
         )));
         for width in 0..160 {
-            assert!(Line::from(header_title(&app, width)).width() <= width);
+            assert!(header_title(&app, width).width() <= width);
         }
-        assert!(!header_title(&app, 25).contains("Watching"));
+        assert!(!header_title(&app, 20).to_string().contains("Watching"));
         app.set_refresh_error("Unable to refresh");
-        assert!(header_title(&app, 40).contains("Refresh error"));
-        assert!(!header_title(&app, 80).contains("Watching"));
+        assert!(header_title(&app, 40).to_string().contains("Refresh error"));
+        assert!(!header_title(&app, 80).to_string().contains("Watching"));
         for width in 0..160 {
-            assert!(Line::from(header_title(&app, width)).width() <= width);
+            assert!(header_title(&app, width).width() <= width);
         }
     }
     #[test]
@@ -4133,6 +4192,43 @@ mod tests {
         for (width, height) in [(80, 30), (40, 15), (30, 10), (20, 5), (10, 3), (1, 1)] {
             let _ = draw(&app, width, height);
         }
+    }
+
+    #[test]
+    fn overview_starts_with_one_now_row_and_an_opt_in_bold_preview() {
+        let mut app = App::new(ProjectSnapshot::unavailable());
+        app.set_project_root(Some(std::path::Path::new("C:/dev/Portal")));
+        let area = Rect::new(0, 0, 100, 30);
+        let areas = overview_areas(area);
+        assert_eq!(areas[0].height, 1);
+        assert_eq!(areas[1].height, 6);
+        let initial = draw(&app, area.width, area.height);
+        assert!(initial.starts_with("● NOW"));
+        assert!(initial.contains("Project Progress · Portal"));
+        assert!(!initial.contains("DevScope ·"));
+        assert!(!initial.contains("Detail: Task"));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut pane = areas[2];
+        pane.x += preview_pane_widths(area.width).0;
+        pane.width = preview_pane_widths(area.width).1;
+        let buffer = terminal.backend().buffer();
+        for x in pane.x + 2..pane.x + 14 {
+            assert!(buffer[(x, pane.y)].modifier.contains(Modifier::BOLD));
+            assert_eq!(buffer[(x, pane.y)].fg, Color::Reset);
+        }
+        assert!(!buffer[(pane.x, pane.y)].modifier.contains(Modifier::BOLD));
+        terminal
+            .draw(|frame| frame.render_widget(panel_block("Preview", false), frame.area()))
+            .unwrap();
+        assert!(
+            !terminal.backend().buffer()[(2, 0)]
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert!(!app.preview_visible());
     }
 
     #[test]
@@ -4963,7 +5059,7 @@ mod tests {
         assert!(output.contains("src/ui.rs"));
         assert!(output.contains("Modified"));
         assert!(output.contains("+12 -4"));
-        assert!(output.contains("Git diff"));
+        assert!(!output.contains("Git diff"));
         assert!(output.contains("Unstaged"));
         assert!(output.contains("-old"));
         assert!(output.contains("+new"));
@@ -5102,7 +5198,7 @@ mod tests {
         assert!(output.contains("M  src/file-0.rs"));
         assert!(output.contains("M  src/file-2.rs"));
         assert!(output.contains("M  src/file-6.rs"));
-        assert!(output.contains("... and 13 more"));
+        assert!(output.contains("... and 12 more"));
     }
 
     #[test]
@@ -5131,17 +5227,13 @@ mod tests {
             if app.preview_visible() != preview {
                 app.toggle_preview();
             }
-            for (height, visible) in [(31, 3), (43, 9), (70, 20)] {
+            for (height, tasks_visible, files_visible) in [(31, 4, 3), (43, 10, 9), (70, 20, 20)] {
                 let output = draw(&app, 80, height);
-                assert_eq!(output.matches("□ Task ").count(), visible);
-                assert_eq!(output.matches("M  src/file-").count(), visible);
-                if visible < 20 {
-                    assert_eq!(
-                        output
-                            .matches(&format!("... and {} more", 20 - visible))
-                            .count(),
-                        2
-                    );
+                assert_eq!(output.matches("□ Task ").count(), tasks_visible);
+                assert_eq!(output.matches("M  src/file-").count(), files_visible);
+                if tasks_visible < 20 {
+                    assert!(output.contains(&format!("... and {} more", 20 - tasks_visible)));
+                    assert!(output.contains(&format!("... and {} more", 20 - files_visible)));
                 } else {
                     assert!(!output.contains(" more"));
                     assert!(output.contains("commit-4"));
@@ -5278,7 +5370,7 @@ mod tests {
         for text in [
             "> M  src/日本語のとても長いファイル名.rs",
             "abcdef0 Very long commit message to inspect",
-            "> Build Debug    ✓ Passed   ! Stale",
+            "> Build Debug    ✓ ! Stale",
         ] {
             let row = fit_navigation_lines(vec![Line::from(text)], 18).remove(0);
             assert!(row.width() <= 18);
@@ -5391,7 +5483,7 @@ mod tests {
                     terminal.draw(|frame| render(frame, &app)).unwrap();
                     let output = text(&terminal);
                     assert!(output.contains("● NOW"));
-                    assert!(output.contains("┌ Project Progress "));
+                    assert!(output.contains("┌ Project Progress ·"));
                     assert_eq!(output.matches('▌').count(), 1);
                     assert!(!output.contains('┏'));
                     assert_eq!(
@@ -5399,7 +5491,7 @@ mod tests {
                         has_global_preview(width, height, visible)
                     );
                     let buffer = terminal.backend().buffer();
-                    assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
+                    assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
                     assert!(!buffer[(0, height - 1)].modifier.contains(Modifier::BOLD));
                     let focused_y = (0..height)
                         .find(|y| buffer[(0, *y)].symbol() == "▌")

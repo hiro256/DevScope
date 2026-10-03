@@ -50,14 +50,16 @@ Agent integrations are adapters. They may enrich the observed state, but must no
 become a dependency of the core model.
 ## TUI interaction model
 
-Overview identifies the observed root's final directory component beside DevScope on
-the left; it is a directory label, not a configured title or Git repository identity.
+Overview begins with one bold NOW row; refresh metadata remains normal-weight and
+right-aligned on that row when space permits. The Project Progress title identifies
+the observed root's final directory component as `Project Progress · <name>`;
+it is a directory label, not a configured title or Git repository identity.
 An unusable component falls back to `Project`, without exposing the absolute path.
 Refresh metadata is right-aligned as status, source, and recorded local `HH:mm`.
 The clock is captured when a refresh is recorded, never recomputed during rendering;
 `--:--` means local time was unavailable. It is not data age, duration, or watcher health.
-Narrow headers drop time, source, and ordinary status before truncating project identity;
-DevScope remains the final fallback. Actual refresh errors retain explicit error text.
+Narrow headers prioritize NOW, dropping time, source, and ordinary status.
+Actual refresh errors retain explicit error text alongside NOW where space permits.
 
 The TUI supports human-oriented project understanding, while the CLI remains the
 precise interface for AI and automation. A focused panel identifies the visible
@@ -97,14 +99,15 @@ The Overview Evidence selector aligns process targets, Outcome, and Freshness in
 separate columns. Evidence, Changed Files, Tasks, and Recent Commits share one five-phase
 type and pure elapsed-time calculation; detection, identity, baselines, cleanup, redraw,
 and rendering remain independent for each cue.
-Completed results retain Passed/Failed independently of Fresh/Stale;
-non-completed states and Artifact have no freshness value. Runtime process-state changes
+Completed selector rows show `✓` or `✕` with `Fresh` or `! Stale`, without redundant
+Passed/Failed words; outcome and freshness remain independent.
+Non-completed states and Artifact have no freshness value. Runtime process-state changes
 use session-local bold emphasis, independently per target: full content for 750 ms,
-state columns until 1.5 seconds, state text (without its symbol) and freshness until
+state columns until 1.5 seconds, state text (or the completed outcome symbol) and freshness until
 2.25 seconds, then visible freshness until expiry at three seconds. Including normal
 text after expiry, this gives five display phases without changing row content.
 When freshness is absent or omitted at narrow widths, the last phase emphasizes the
-visible primary status text without its symbol instead. A new change restarts the full-content emphasis.
+visible primary status text, or the completed outcome symbol, instead. A new change restarts the full-content emphasis.
 Underlining is not used. The selection prefix is unstyled; row text and cell width never
 change. There is no extra symbol, color, or animation framework.
 Verification runtime owns time and advances App's display phase only at phase boundaries;
@@ -185,9 +188,11 @@ explicit truncation marker; missing, binary/invalid UTF-8, unsupported, and unre
 files have concise reasons. These filesystem checks are an observation boundary, not a
 sandbox against concurrent hostile path replacement. Existing selection, Git refresh,
 Preview scrolling, and Full Detail navigation also apply to current-content inspection.
+Git diff inspection starts directly with its available Unstaged/Staged sections,
+omitting the redundant Mode/Git diff preamble; current file content retains its Mode label.
 The primary overview keeps Project Progress full-width. Large and Medium layouts may expose a
 passive right-side Detail Pane beside the navigation panels. It follows the focused panel and
-selection, can be hidden without changing project state, and carries richer context while left
+selection, starts hidden and can be toggled without changing project state, and carries richer context while left
 panels favor selection and concise state. Full Detail remains the explicitly opened deeper
 inspection mode.
 Detail Pane availability is based on minimum usable navigation and detail widths rather than a
@@ -201,7 +206,8 @@ when omitted, broad discovery remains the default, while an explicit empty list 
 Existing `[plan].exclude` and mandatory exclusions always win. This source policy is shared by
 Plan totals and Tasks through shared Markdown collection; it does not classify individual checkboxes.
 Evidence Detail Pane surfaces the selected observed Build/Test state and its available execution
-details. Freshness is shown separately from the underlying outcome.
+details. Freshness is shown separately from the underlying outcome. Its execution-detail
+contents remain provisional; this presentation cleanup does not redesign them.
 
 ## Detail View experiment closure
 
@@ -226,7 +232,9 @@ Recent Commits overview-only
 Navigation uses Left/Right for previous/next visible panel focus, with Tab / Shift+Tab
 retained as compatible navigation. Up/Down and j/k move selection within the focused panel.
 Preview remains a passive common detail area, never a focus target. Plain Enter and `p`
-toggle the same visibility preference; responsive layouts may still hide Preview.
+toggle the same visibility preference, initially off; responsive layouts may still hide Preview.
+The framed Overview Preview title is bold in the default foreground, without changing
+the title styling of File Browser Preview or Full View.
 Ctrl+Up/Down scroll visible Preview one line without moving focus or selection. The scroll
 offset resets when its focused panel or selected target changes; hiding and showing the same
 target preserves it, and rendering clamps it to the current content and viewport.

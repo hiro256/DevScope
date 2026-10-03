@@ -181,7 +181,7 @@ impl App {
             detail_inspection: None,
             detail_scroll: 0,
             preview_inspection: None,
-            preview_visible: true,
+            preview_visible: false,
             preview_scroll: 0,
             current_work: CurrentWorkState::NotSet,
             refresh_status: RefreshStatus::initial(),
@@ -978,6 +978,9 @@ mod tests {
     #[test]
     fn preview_keys_are_modifier_aware_and_enter_never_opens_detail() {
         let mut app = app(3);
+        assert!(!app.preview_visible());
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.preview_visible());
         app.apply_activity_state(activity_with_files(3));
         for panel in ALL_PANELS {
             app.reconcile_focus(&[*panel]);
@@ -1504,6 +1507,7 @@ mod tests {
     #[test]
     fn preview_toggle_does_not_change_changed_file_detail_behavior() {
         let mut app = app(1);
+        app.toggle_preview();
         app.apply_activity_state(activity_with_files(1));
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
         app.handle_key_with_focusable_panels(key(KeyCode::Tab), ALL_PANELS);
@@ -1664,7 +1668,7 @@ mod tests {
                 app.apply_activity_state(activity_with_files(2));
                 app.handle_key_with_focusable_panels(key(KeyCode::Left), ALL_PANELS);
                 app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
-                if !visible {
+                if app.preview_visible() != visible {
                     app.toggle_preview();
                 }
                 app.scroll_preview(2, 5);
