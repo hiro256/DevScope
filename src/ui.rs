@@ -364,7 +364,12 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
             browser_preview_scroll_limit(app, area),
             inner[1].width,
         );
-        frame.render_widget(Paragraph::new(hint).alignment(Alignment::Right), inner[1]);
+        frame.render_widget(
+            Paragraph::new(hint)
+                .alignment(Alignment::Right)
+                .style(Style::default().add_modifier(Modifier::DIM)),
+            inner[1],
+        );
     }
     frame.render_widget(Paragraph::new(browser_footer_text(area.width)), outer[2]);
 }
@@ -779,7 +784,9 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     );
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner[0]);
     frame.render_widget(
-        Paragraph::new(preview_action_text(app, limit, inner[1].width)).alignment(Alignment::Right),
+        Paragraph::new(preview_action_text(app, limit, inner[1].width))
+            .alignment(Alignment::Right)
+            .style(Style::default().add_modifier(Modifier::DIM)),
         inner[1],
     );
 }
@@ -1104,7 +1111,10 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
                 git_file_status_name(status),
                 change_summary(*changes),
             ))
-            .block(panel_block("Changed File Detail", false)),
+            .block(
+                panel_block("Changed File Detail", false)
+                    .title_style(Style::default().add_modifier(Modifier::BOLD)),
+            ),
             areas[0],
         );
     }
@@ -1117,7 +1127,8 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
             _ => "Inspection",
         }
     };
-    let block = panel_block(title, false);
+    let block =
+        panel_block(title, false).title_style(Style::default().add_modifier(Modifier::BOLD));
     let viewport = block.inner(areas[1]);
     let lines = fit_inspection_lines(
         full_view_lines(app),
@@ -1136,7 +1147,12 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         )),
         areas[1],
     );
-    frame.render_widget(Paragraph::new(full_view_footer_text(area.width)), areas[2]);
+    frame.render_widget(
+        Paragraph::new(full_view_footer_text(area.width))
+            .alignment(Alignment::Right)
+            .style(Style::default().add_modifier(Modifier::DIM)),
+        areas[2],
+    );
 }
 
 fn full_view_footer_text(width: u16) -> &'static str {
@@ -1251,7 +1267,7 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         .len();
     lines.extend(rows.into_iter().map(|(line, numbers)| {
         let style = if line.starts_with("@@") {
-            Style::default().add_modifier(Modifier::BOLD)
+            Style::default().add_modifier(Modifier::UNDERLINED)
         } else if line.starts_with('+') && !line.starts_with("+++ ") {
             Style::default()
                 .fg(Color::Blue)
@@ -1606,6 +1622,14 @@ fn activity(activity: &ActivityState, width: usize) -> String {
                 .iter()
                 .filter(|file| file.status == GitFileStatus::Deleted)
                 .count();
+            let modified = files
+                .iter()
+                .filter(|file| file.status == GitFileStatus::Modified)
+                .count();
+            let renamed = files
+                .iter()
+                .filter(|file| file.status == GitFileStatus::Renamed)
+                .count();
             let observed_total = |additions: bool| {
                 let mut values = files
                     .iter()
@@ -1628,16 +1652,18 @@ fn activity(activity: &ActivityState, width: usize) -> String {
             .flatten()
             .collect::<Vec<_>>()
             .join(" ");
-            let counts = format!("{base}  A{added} D{deleted}");
+            let counts = format!("{base}  A:{added} M:{modified} D:{deleted} R:{renamed}");
             let full = if line_totals.is_empty() {
-                counts
+                counts.clone()
             } else {
-                format!("{counts}  {line_totals}")
+                format!("{counts}  ({line_totals})")
             };
             if Line::from(full.as_str()).width() <= width {
                 full
+            } else if Line::from(counts.as_str()).width() <= width {
+                counts
             } else if !line_totals.is_empty() {
-                let lines = format!("{base}  {line_totals}");
+                let lines = format!("{base}  ({line_totals})");
                 if Line::from(lines.as_str()).width() <= width {
                     lines
                 } else {
@@ -2206,6 +2232,11 @@ mod tests {
             assert_eq!(text.trim_start(), hint);
             assert!(text.ends_with(hint));
             assert!(Line::from(hint).width() <= usize::from(row.width));
+            for x in row.x..row.right() {
+                let cell = &terminal.backend().buffer()[(x, row.y)];
+                assert_eq!(cell.fg, Color::Reset);
+                assert!(cell.modifier.contains(Modifier::DIM));
+            }
         };
         let mut app = app(
             TaskState::Unavailable,
@@ -2336,7 +2367,7 @@ mod tests {
             ("--- /dev/null", false, None),
             ("+++ /dev/null", false, None),
             (" context", false, None),
-            ("@@ -1,3 +1,4 @@", true, None),
+            ("@@ -1,3 +1,4 @@", false, None),
             ("-old", false, Some(Color::Blue)),
             ("+new", true, Some(Color::Blue)),
             // Repeated diff markers in source content are not file headers.
@@ -2387,7 +2418,7 @@ mod tests {
             assert_eq!(line.style.fg, color, "{text}");
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::UNDERLINED),
-                matches!(text, "Unstaged" | "Staged")
+                matches!(text, "Unstaged" | "Staged") || text.starts_with("@@")
             );
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::DIM),
@@ -2469,10 +2500,10 @@ mod tests {
             if text == "\\ No newline at end of file" {
                 assert_eq!(row.style.fg, None);
             }
-            let bold = text.starts_with("@@") || text.contains("│ +");
+            let bold = text.contains("│ +");
             assert_eq!(
                 row.style.add_modifier.contains(Modifier::UNDERLINED),
-                text == "Unstaged"
+                text == "Unstaged" || text.starts_with("@@")
             );
             assert_eq!(
                 row.style.add_modifier.contains(Modifier::DIM),
@@ -4591,29 +4622,41 @@ mod tests {
             file(GitFileStatus::Modified, Some(0), Some(0)),
             file(GitFileStatus::Renamed, Some(0), Some(0)),
         ]);
-        assert_eq!(activity(&observed, 80), "6 files  A2 D1  +220 -128");
-        assert_eq!(activity(&observed, 18), "6 files  +220 -128");
+        assert_eq!(
+            activity(&observed, 80),
+            "6 files  A:2 M:2 D:1 R:1  (+220 -128)"
+        );
+        assert_eq!(activity(&observed, 20), "6 files  (+220 -128)");
+        assert_eq!(activity(&observed, 25), "6 files  A:2 M:2 D:1 R:1");
         assert_eq!(activity(&observed, 17), "6 files");
         for width in 0..=160 {
             assert!(Line::from(activity(&observed, width)).width() <= width);
         }
         let single = activity_with_files(vec![file(GitFileStatus::Added, Some(12), Some(0))]);
-        assert_eq!(activity(&single, 80), "1 file  A1 D0  +12 -0");
+        assert_eq!(activity(&single, 80), "1 file  A:1 M:0 D:0 R:0  (+12 -0)");
         let partial = activity_with_files(vec![
             file(GitFileStatus::Added, None, None),
             file(GitFileStatus::Added, None, None),
             file(GitFileStatus::Modified, Some(227), Some(48)),
         ]);
-        assert_eq!(activity(&partial, 80), "3 files  A2 D0  +227 -48");
-        assert_eq!(activity(&partial, 17), "3 files  +227 -48");
+        assert_eq!(
+            activity(&partial, 80),
+            "3 files  A:2 M:1 D:0 R:0  (+227 -48)"
+        );
+        assert_eq!(activity(&partial, 19), "3 files  (+227 -48)");
         assert_eq!(activity(&partial, 7), "3 files");
         let independent = activity_with_files(vec![
             file(GitFileStatus::Added, Some(10), None),
             file(GitFileStatus::Deleted, None, Some(5)),
         ]);
-        assert_eq!(activity(&independent, 80), "2 files  A1 D1  +10 -5");
+        assert_eq!(
+            activity(&independent, 80),
+            "2 files  A:1 M:0 D:1 R:0  (+10 -5)"
+        );
         let unknown = activity_with_files(vec![file(GitFileStatus::Added, None, None)]);
-        assert_eq!(activity(&unknown, 80), "1 file  A1 D0");
+        assert_eq!(activity(&unknown, 80), "1 file  A:1 M:0 D:0 R:0");
+        let zero = activity_with_files(vec![file(GitFileStatus::Modified, Some(0), Some(0))]);
+        assert_eq!(activity(&zero, 80), "1 file  A:0 M:1 D:0 R:0  (+0 -0)");
         for width in 0..=160 {
             for state in [&partial, &independent, &unknown] {
                 assert!(Line::from(activity(state, width)).width() <= width);
@@ -4625,9 +4668,9 @@ mod tests {
             assert_eq!(
                 activity(&unknown, 80),
                 if additions.is_some() {
-                    "1 file  A1 D0  +1"
+                    "1 file  A:1 M:0 D:0 R:0  (+1)"
                 } else {
-                    "1 file  A1 D0  -1"
+                    "1 file  A:1 M:0 D:0 R:0  (-1)"
                 }
             );
             assert_eq!(activity(&unknown, 6), "1 file");
@@ -4644,9 +4687,9 @@ mod tests {
             assert_eq!(
                 activity(&overflow, 80),
                 if overflow_additions {
-                    "2 files  A0 D0  -1"
+                    "2 files  A:0 M:2 D:0 R:0  (-1)"
                 } else {
-                    "2 files  A0 D0  +1"
+                    "2 files  A:0 M:2 D:0 R:0  (+1)"
                 }
             );
         }
@@ -5353,6 +5396,90 @@ mod tests {
     }
 
     #[test]
+    fn full_detail_titles_are_bold_and_contextual_footer_is_dim_right_aligned() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let assert_view = |app: &App, titles: &[(&str, u16)], width: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal.draw(|frame| render(frame, app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            for (title, y) in titles {
+                let row = (0..width)
+                    .map(|x| buffer[(x, *y)].symbol())
+                    .collect::<String>();
+                let start = Line::from(&row[..row.find(title).unwrap()]).width() as u16;
+                for x in start..start + title.len() as u16 {
+                    assert_eq!(buffer[(x, *y)].fg, Color::Reset);
+                    assert!(
+                        buffer[(x, *y)].modifier.contains(Modifier::BOLD),
+                        "title={title}, width={width}, ({x}, {y}), symbol={}",
+                        buffer[(x, *y)].symbol()
+                    );
+                }
+            }
+            let footer = full_view_footer_text(width);
+            let row = (0..width)
+                .map(|x| buffer[(x, 29)].symbol())
+                .collect::<String>();
+            assert_eq!(row.trim_start(), footer);
+            for x in 0..width {
+                assert_eq!(buffer[(x, 29)].fg, Color::Reset);
+                assert!(buffer[(x, 29)].modifier.contains(Modifier::DIM));
+            }
+        };
+        let mut changed = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "file.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        changed.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        changed.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        for (inspection, title) in [
+            (
+                GitFileInspection::Diff {
+                    unstaged: None,
+                    staged: None,
+                },
+                "Diff",
+            ),
+            (
+                GitFileInspection::FileContent {
+                    text: "text".into(),
+                    truncated: false,
+                },
+                "File content",
+            ),
+            (
+                GitFileInspection::Unavailable(GitFileInspectionUnavailable::Binary),
+                "Inspection",
+            ),
+        ] {
+            changed.apply_detail_inspection(inspection);
+            let areas = detail_areas(&changed, Rect::new(0, 0, 80, 30));
+            assert_view(
+                &changed,
+                &[("Changed File Detail", areas[0].y), (title, areas[1].y)],
+                80,
+            );
+        }
+        let mut browser = app(TaskState::Unavailable, ActivityState::Unavailable);
+        browser.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        browser.file_browser.entries = vec![BrowserEntry {
+            path: "file.txt".into(),
+            name: "file.txt".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        browser.file_browser.selected = Some(0);
+        browser.file_browser.preview = Some(Ok(("text".into(), false)));
+        browser.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        for width in [40, 80, 120] {
+            assert_view(&browser, &[("File Detail", 0)], width);
+        }
+    }
+
+    #[test]
     fn renders_changed_file_detail_with_path_status_and_small_terminal_safety() {
         let mut app = app(
             TaskState::Unavailable,
@@ -5862,6 +5989,15 @@ mod tests {
                                 || row.trim_end() == focused_title
                         })
                         .unwrap();
+                    let actions = has_global_preview(width, height, visible).then(|| {
+                        let main = overview_areas(Rect::new(0, 0, width, height))[2];
+                        let panes = Layout::horizontal([
+                            Constraint::Percentage(45),
+                            Constraint::Percentage(55),
+                        ])
+                        .split(main);
+                        preview_inner_areas(panes[1])[1]
+                    });
                     for y in 0..height {
                         for x in 0..width {
                             let cell = &buffer[(x, y)];
@@ -5879,7 +6015,8 @@ mod tests {
                             assert_eq!(cell.bg, Color::Reset);
                             assert_eq!(
                                 cell.modifier.contains(Modifier::DIM),
-                                x == 0 && (y == 0 || (cell.symbol() == "▌" && y != focused_y))
+                                (x == 0 && (y == 0 || (cell.symbol() == "▌" && y != focused_y)))
+                                    || actions.is_some_and(|row| row.contains((x, y).into()))
                             );
                             if cell.symbol() == ">" {
                                 assert_eq!(cell.fg, Color::Reset);
