@@ -1178,8 +1178,8 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
     lines.push(Line::from(title.to_owned()).style(Style::default().add_modifier(Modifier::BOLD)));
     lines.extend(safe_display_text(&diff.text).lines().map(|line| {
         let emphasized = line.starts_with("@@")
-            || (line.starts_with('+') && !line.starts_with("+++"))
-            || (line.starts_with('-') && !line.starts_with("---"));
+            || (line.starts_with('+') && !line.starts_with("+++ "))
+            || (line.starts_with('-') && !line.starts_with("--- "));
         Line::from(line.to_owned()).style(if emphasized {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
@@ -2028,10 +2028,31 @@ mod tests {
 
     #[test]
     fn diff_rows_preserve_hierarchy_and_truncate_without_continuations() {
-        let source = "diff --git a/a.rs b/a.rs\nindex 111..222 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,4 @@\n context\n-old\n+new\n+追加された日本語";
+        let source_cases = [
+            ("diff --git a/a.rs b/a.rs", false),
+            ("index 111..222 100644", false),
+            ("--- a/a.rs", false),
+            ("+++ b/a.rs", false),
+            ("--- /dev/null", false),
+            ("+++ /dev/null", false),
+            (" context", false),
+            ("@@ -1,3 +1,4 @@", true),
+            ("-old", true),
+            ("+new", true),
+            // Repeated diff markers in source content are not file headers.
+            ("++++counter;", true),
+            ("----value;", true),
+            ("+追加された日本語", true),
+            ("-削除された日本語", true),
+        ];
+        let source = source_cases
+            .iter()
+            .map(|(text, _)| *text)
+            .collect::<Vec<_>>()
+            .join("\n");
         let inspection = GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
-                text: source.into(),
+                text: source,
                 truncated: false,
             }),
             staged: Some(GitDiffText {
@@ -2045,12 +2066,12 @@ mod tests {
             }),
         };
         let lines = detail_inspection_lines(Some(&inspection));
-        for line in &lines {
-            let text = line.to_string();
-            let bold = matches!(text.as_str(), "Unstaged" | "Staged")
-                || text.starts_with("@@")
-                || (text.starts_with('+') && !text.starts_with("+++"))
-                || (text.starts_with('-') && !text.starts_with("---"));
+        for (text, bold) in source_cases.into_iter().chain([
+            ("Unstaged", true),
+            ("Staged", true),
+            ("... diff truncated ...", false),
+        ]) {
+            let line = lines.iter().find(|line| line.to_string() == text).unwrap();
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::BOLD),
                 bold,
