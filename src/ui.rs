@@ -11,7 +11,7 @@ use devscope::progress::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
@@ -273,9 +273,9 @@ pub fn browser_preview_scroll_limit(app: &App, area: Rect) -> usize {
 fn browser_preview_action_text(app: &App, limit: usize, width: u16) -> String {
     let full = app.can_open_browser_file_detail();
     let text = match (full, limit > 0) {
-        (true, true) => "Ctrl+Enter Full View   Ctrl+↑/↓ Scroll",
-        (true, false) => "Ctrl+Enter Full View",
-        (false, true) => "Ctrl+↑/↓ Scroll",
+        (true, true) => "Ctrl+Enter:Full View   Ctrl+↑/↓:Scroll",
+        (true, false) => "Ctrl+Enter:Full View",
+        (false, true) => "Ctrl+↑/↓:Scroll",
         (false, false) => "",
     };
     truncate_text(text, usize::from(width))
@@ -364,7 +364,7 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
             browser_preview_scroll_limit(app, area),
             inner[1].width,
         );
-        frame.render_widget(Paragraph::new(hint), inner[1]);
+        frame.render_widget(Paragraph::new(hint).alignment(Alignment::Right), inner[1]);
     }
     frame.render_widget(Paragraph::new(browser_footer_text(area.width)), outer[2]);
 }
@@ -779,7 +779,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     );
     frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner[0]);
     frame.render_widget(
-        Paragraph::new(preview_action_text(app, limit, inner[1].width)),
+        Paragraph::new(preview_action_text(app, limit, inner[1].width)).alignment(Alignment::Right),
         inner[1],
     );
 }
@@ -804,7 +804,7 @@ pub fn contextual_verification_target(app: &App, area: Rect) -> Option<BuildTest
 
 fn preview_action_text(app: &App, limit: usize, width: u16) -> String {
     let primary = match app.focused_panel() {
-        FocusedPanel::Evidence if app.runnable_evidence_kind().is_some() => "Space Run",
+        FocusedPanel::Evidence if app.runnable_evidence_kind().is_some() => "Space:Run",
         FocusedPanel::Evidence
             if app.evidence_detail_kind().is_some_and(|kind| {
                 matches!(app.build_test_state(kind), BuildTestState::Running(_))
@@ -813,13 +813,13 @@ fn preview_action_text(app: &App, limit: usize, width: u16) -> String {
             "Running..."
         }
         FocusedPanel::ChangedFiles if app.selected_changed_file().is_some() => {
-            "Ctrl+Enter Full Detail"
+            "Ctrl+Enter:Full Detail"
         }
         _ => "",
     };
     let hint = match (primary.is_empty(), limit > 0) {
-        (false, true) => format!("{primary}   Ctrl+↑/↓ Scroll"),
-        (true, true) => "Ctrl+↑/↓ Scroll".into(),
+        (false, true) => format!("{primary}   Ctrl+↑/↓:Scroll"),
+        (true, true) => "Ctrl+↑/↓:Scroll".into(),
         _ => primary.into(),
     };
     truncate_text(&hint, width as usize)
@@ -1214,7 +1214,9 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
-    lines.push(Line::from(title.to_owned()).style(Style::default().add_modifier(Modifier::BOLD)));
+    lines.push(
+        Line::from(title.to_owned()).style(Style::default().add_modifier(Modifier::UNDERLINED)),
+    );
     let text = safe_display_text(&diff.text);
     let mut hunk = None;
     let rows: Vec<_> = text
@@ -1370,7 +1372,14 @@ fn navigation_block(title: &str, state: NavigationState) -> Block<'static> {
         .padding(Padding::new(1, 1, 0, 1))
         .title(Line::from(vec![
             Span::styled(marker, style),
-            Span::raw(format!(" {title} ")),
+            Span::styled(
+                format!(" {title} "),
+                if matches!(state, NavigationState::Focused) {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
         ]))
 }
 
@@ -1597,23 +1606,38 @@ fn activity(activity: &ActivityState, width: usize) -> String {
                 .iter()
                 .filter(|file| file.status == GitFileStatus::Deleted)
                 .count();
-            let totals = files
-                .iter()
-                .try_fold((0_u64, 0_u64), |(added, deleted), file| {
-                    Some((
-                        added.checked_add(file.changes.additions?)?,
-                        deleted.checked_add(file.changes.deletions?)?,
-                    ))
-                });
+            let observed_total = |additions: bool| {
+                let mut values = files
+                    .iter()
+                    .filter_map(|file| {
+                        if additions {
+                            file.changes.additions
+                        } else {
+                            file.changes.deletions
+                        }
+                    })
+                    .peekable();
+                values.peek()?;
+                values.try_fold(0_u64, u64::checked_add)
+            };
+            let line_totals = [
+                observed_total(true).map(|total| format!("+{total}")),
+                observed_total(false).map(|total| format!("-{total}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
             let counts = format!("{base}  A{added} D{deleted}");
-            let full = totals.map_or_else(
-                || counts.clone(),
-                |(added, deleted)| format!("{counts}  +{added} -{deleted}"),
-            );
+            let full = if line_totals.is_empty() {
+                counts
+            } else {
+                format!("{counts}  {line_totals}")
+            };
             if Line::from(full.as_str()).width() <= width {
                 full
-            } else if let Some((added, deleted)) = totals {
-                let lines = format!("{base}  +{added} -{deleted}");
+            } else if !line_totals.is_empty() {
+                let lines = format!("{base}  {line_totals}");
                 if Line::from(lines.as_str()).width() <= width {
                     lines
                 } else {
@@ -2146,14 +2170,14 @@ mod tests {
         app.file_browser.preview = Some(Ok(("text".into(), false)));
         assert_eq!(
             browser_preview_action_text(&app, 0, 60),
-            "Ctrl+Enter Full View"
+            "Ctrl+Enter:Full View"
         );
         assert_eq!(
             browser_preview_action_text(&app, 1, 60),
-            "Ctrl+Enter Full View   Ctrl+↑/↓ Scroll"
+            "Ctrl+Enter:Full View   Ctrl+↑/↓:Scroll"
         );
-        assert!(draw(&app, 80, 30).contains("Ctrl+Enter Full View"));
-        assert!(!draw(&app, 40, 20).contains("Ctrl+Enter Full View"));
+        assert!(draw(&app, 80, 30).contains("Ctrl+Enter:Full View"));
+        assert!(!draw(&app, 40, 20).contains("Ctrl+Enter:Full View"));
         for kind in [
             BrowserEntryKind::Directory,
             BrowserEntryKind::Parent,
@@ -2163,12 +2187,66 @@ mod tests {
         ] {
             app.file_browser.entries[0].kind = kind;
             assert_eq!(browser_preview_action_text(&app, 0, 60), "");
-            assert_eq!(browser_preview_action_text(&app, 1, 60), "Ctrl+↑/↓ Scroll");
+            assert_eq!(browser_preview_action_text(&app, 1, 60), "Ctrl+↑/↓:Scroll");
         }
         app.file_browser.entries[0].kind = BrowserEntryKind::File;
         for preview in [None, Some(Err(SafeTextError::ReadError))] {
             app.file_browser.preview = preview;
             assert_eq!(browser_preview_action_text(&app, 0, 60), "");
+        }
+    }
+
+    #[test]
+    fn contextual_action_rows_are_right_aligned_inside_preview_frames() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let assert_row = |terminal: &Terminal<TestBackend>, row: Rect, hint: &str| {
+            let text = (row.x..row.right())
+                .map(|x| terminal.backend().buffer()[(x, row.y)].symbol())
+                .collect::<String>();
+            assert_eq!(text.trim_start(), hint);
+            assert!(text.ends_with(hint));
+            assert!(Line::from(hint).width() <= usize::from(row.width));
+        };
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "sample.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        for width in [20, 40, 60] {
+            let pane = Rect::new(0, 0, width, 10);
+            let mut terminal = Terminal::new(TestBackend::new(width, 10)).unwrap();
+            terminal
+                .draw(|frame| render_preview(frame, pane, &app))
+                .unwrap();
+            let row = preview_inner_areas(pane)[1];
+            let hint = preview_action_text(&app, preview_scroll_limit(&app, pane), row.width);
+            assert_row(&terminal, row, &hint);
+        }
+        app.reconcile_focus(&[FocusedPanel::Tasks]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        app.file_browser.entries = vec![BrowserEntry {
+            path: "long.txt".into(),
+            name: "long.txt".into(),
+            kind: BrowserEntryKind::File,
+        }];
+        app.file_browser.selected = Some(0);
+        app.file_browser.preview = Some(Ok(("content\n".repeat(60), false)));
+        for width in [80, 120] {
+            let area = Rect::new(0, 0, width, 30);
+            let pane = browser_panes(browser_areas(&app, area)[1])[1];
+            let row = preview_inner_areas(pane)[1];
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let hint = browser_preview_action_text(
+                &app,
+                browser_preview_scroll_limit(&app, area),
+                row.width,
+            );
+            assert_row(&terminal, row, &hint);
         }
     }
 
@@ -2217,8 +2295,8 @@ mod tests {
             app.file_browser.preview_scroll = limit;
             let output = draw(&app, width, 25);
             assert!(output.contains("TAIL"));
-            assert!(output.contains("Ctrl+Enter Full View"));
-            assert!(output.contains("Ctrl+↑/↓ Scroll"));
+            assert!(output.contains("Ctrl+Enter:Full View"));
+            assert!(output.contains("Ctrl+↑/↓:Scroll"));
         }
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(app.has_detail_view());
@@ -2295,8 +2373,8 @@ mod tests {
                 .any(|line| matches!(line.to_string().as_str(), "Mode" | "  Git diff"))
         );
         for (text, bold, color) in source_cases.into_iter().chain([
-            ("Unstaged", true, None),
-            ("Staged", true, None),
+            ("Unstaged", false, None),
+            ("Staged", false, None),
             ("... diff truncated ...", false, None),
         ]) {
             let line = lines
@@ -2307,6 +2385,10 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(line.style.fg, color, "{text}");
+            assert_eq!(
+                line.style.add_modifier.contains(Modifier::UNDERLINED),
+                matches!(text, "Unstaged" | "Staged")
+            );
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::DIM),
                 text.starts_with('-') && !text.starts_with("--- "),
@@ -2387,7 +2469,11 @@ mod tests {
             if text == "\\ No newline at end of file" {
                 assert_eq!(row.style.fg, None);
             }
-            let bold = text == "Unstaged" || text.starts_with("@@") || text.contains("│ +");
+            let bold = text.starts_with("@@") || text.contains("│ +");
+            assert_eq!(
+                row.style.add_modifier.contains(Modifier::UNDERLINED),
+                text == "Unstaged"
+            );
             assert_eq!(
                 row.style.add_modifier.contains(Modifier::DIM),
                 text.contains("│ -"),
@@ -2758,7 +2844,7 @@ mod tests {
                 let buffer = terminal.backend().buffer();
                 let output = text(&terminal);
                 assert!(output.contains("▌ Files"));
-                assert!(!buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
+                assert!(buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
                 assert_eq!(buffer[(0, outer[1].y)].fg, Color::Blue);
                 assert!(!buffer[(0, outer[1].y)].modifier.contains(Modifier::DIM));
                 assert_eq!(buffer[(2, outer[1].y)].fg, Color::Reset);
@@ -2807,7 +2893,7 @@ mod tests {
         let output = draw(&app, 80, 30);
         assert!(output.contains("File: docs/AGENTS.md"));
         assert!(output.contains("Mode: File content"));
-        assert!(!output.contains("Ctrl+↑/↓ Scroll"));
+        assert!(!output.contains("Ctrl+↑/↓:Scroll"));
 
         let name = "日本語の非常に長いファイル名を省略しても元の識別情報は維持する.txt";
         let path = std::path::PathBuf::from("docs").join(name);
@@ -2888,7 +2974,7 @@ mod tests {
         assert!(first.contains("Listing incomplete"));
         assert!(first.contains("Read error"));
         assert!(first.contains("browser line 00"));
-        assert!(first.contains("Ctrl+↑/↓ Scroll"));
+        assert!(first.contains("Ctrl+↑/↓:Scroll"));
         let limit = browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30));
         assert_eq!(browser_preview_lines(&app).len(), 64); // Two fields, gap, 60 lines, truncation.
         assert_eq!(limit, 64 - 23); // Actual Preview viewport excludes frame and action row.
@@ -2896,13 +2982,13 @@ mod tests {
         let last = draw(&app, 80, 30);
         assert!(last.contains("browser line 59"));
         assert!(last.contains("file content truncated"));
-        assert!(last.contains("Ctrl+↑/↓ Scroll"));
+        assert!(last.contains("Ctrl+↑/↓:Scroll"));
         let offset = app.file_browser.preview_scroll;
         for (width, height) in [(160, 40), (80, 25), (77, 30), (80, 24), (40, 18), (1, 1)] {
             let output = draw(&app, width, height);
             if !preview_layout_available(width, height) {
                 assert!(!output.contains("browser line"));
-                assert!(!output.contains("Ctrl+↑/↓ Scroll"));
+                assert!(!output.contains("Ctrl+↑/↓:Scroll"));
             }
         }
         assert_eq!(app.file_browser.preview_scroll, offset);
@@ -2912,7 +2998,7 @@ mod tests {
             browser_preview_scroll_limit(&app, Rect::new(0, 0, 80, 30)),
             0
         );
-        assert!(!draw(&app, 80, 30).contains("Ctrl+↑/↓ Scroll"));
+        assert!(!draw(&app, 80, 30).contains("Ctrl+↑/↓:Scroll"));
     }
 
     #[test]
@@ -3132,7 +3218,7 @@ mod tests {
         assert!(not_run.contains("Detail: Build"));
         assert!(not_run.contains("Status"));
         assert!(not_run.contains("Not run"));
-        assert!(not_run.contains("Space Run"));
+        assert!(not_run.contains("Space:Run"));
         assert!(!not_run.contains("Press b"));
         assert!(not_run.contains("> Build Debug    · Not run"));
         assert!(not_run.contains("  Test           · Not run"));
@@ -3962,10 +4048,10 @@ mod tests {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         let area = Rect::new(0, 0, 120, 30);
         assert_eq!(preview_action_text(&app, 0, 60), "");
-        assert_eq!(preview_action_text(&app, 1, 60), "Ctrl+↑/↓ Scroll");
+        assert_eq!(preview_action_text(&app, 1, 60), "Ctrl+↑/↓:Scroll");
         app.reconcile_focus(&[FocusedPanel::Evidence]);
         app.apply_build_test_state(BuildTestKind::BuildDebug, BuildTestState::NotRun);
-        assert_eq!(preview_action_text(&app, 0, 60), "Space Run");
+        assert_eq!(preview_action_text(&app, 0, 60), "Space:Run");
         assert_eq!(
             contextual_verification_target(&app, area),
             Some(BuildTestKind::BuildDebug)
@@ -3995,7 +4081,7 @@ mod tests {
             BuildTestKind::BuildDebug,
             execution_error_state(BuildTestKind::BuildDebug),
         );
-        assert_eq!(preview_action_text(&app, 0, 60), "Space Run");
+        assert_eq!(preview_action_text(&app, 0, 60), "Space:Run");
         app.apply_build_test_state(
             BuildTestKind::BuildDebug,
             completed_state(
@@ -4020,8 +4106,8 @@ mod tests {
             .unwrap();
         let after = text(&terminal);
         assert_ne!(before, after);
-        assert!(before.contains("Space Run   Ctrl+↑/↓ Scroll"));
-        assert!(after.contains("Space Run   Ctrl+↑/↓ Scroll"));
+        assert!(before.contains("Space:Run   Ctrl+↑/↓:Scroll"));
+        assert!(after.contains("Space:Run   Ctrl+↑/↓:Scroll"));
         app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
         assert_eq!(preview_action_text(&app, 0, 60), "");
         app.apply_activity_state(activity_with_files(vec![GitChangedFile {
@@ -4029,7 +4115,7 @@ mod tests {
             status: GitFileStatus::Added,
             changes: Default::default(),
         }]));
-        assert_eq!(preview_action_text(&app, 0, 60), "Ctrl+Enter Full Detail");
+        assert_eq!(preview_action_text(&app, 0, 60), "Ctrl+Enter:Full Detail");
         assert!(preview_action_text(&app, 1, 60).contains("Scroll"));
         for width in 0..=160 {
             assert!(Line::from(preview_action_text(&app, 1, width)).width() <= width as usize);
@@ -4513,10 +4599,37 @@ mod tests {
         }
         let single = activity_with_files(vec![file(GitFileStatus::Added, Some(12), Some(0))]);
         assert_eq!(activity(&single, 80), "1 file  A1 D0  +12 -0");
+        let partial = activity_with_files(vec![
+            file(GitFileStatus::Added, None, None),
+            file(GitFileStatus::Added, None, None),
+            file(GitFileStatus::Modified, Some(227), Some(48)),
+        ]);
+        assert_eq!(activity(&partial, 80), "3 files  A2 D0  +227 -48");
+        assert_eq!(activity(&partial, 17), "3 files  +227 -48");
+        assert_eq!(activity(&partial, 7), "3 files");
+        let independent = activity_with_files(vec![
+            file(GitFileStatus::Added, Some(10), None),
+            file(GitFileStatus::Deleted, None, Some(5)),
+        ]);
+        assert_eq!(activity(&independent, 80), "2 files  A1 D1  +10 -5");
+        let unknown = activity_with_files(vec![file(GitFileStatus::Added, None, None)]);
+        assert_eq!(activity(&unknown, 80), "1 file  A1 D0");
+        for width in 0..=160 {
+            for state in [&partial, &independent, &unknown] {
+                assert!(Line::from(activity(state, width)).width() <= width);
+            }
+        }
         for (additions, deletions) in [(None, Some(1)), (Some(1), None)] {
             let unknown =
                 activity_with_files(vec![file(GitFileStatus::Added, additions, deletions)]);
-            assert_eq!(activity(&unknown, 80), "1 file  A1 D0");
+            assert_eq!(
+                activity(&unknown, 80),
+                if additions.is_some() {
+                    "1 file  A1 D0  +1"
+                } else {
+                    "1 file  A1 D0  -1"
+                }
+            );
             assert_eq!(activity(&unknown, 6), "1 file");
         }
         for overflow_additions in [true, false] {
@@ -4528,7 +4641,14 @@ mod tests {
                 ),
                 file(GitFileStatus::Modified, Some(1), Some(1)),
             ]);
-            assert_eq!(activity(&overflow, 80), "2 files  A0 D0");
+            assert_eq!(
+                activity(&overflow, 80),
+                if overflow_additions {
+                    "2 files  A0 D0  -1"
+                } else {
+                    "2 files  A0 D0  +1"
+                }
+            );
         }
         assert_eq!(activity(&activity_with_files(vec![]), 80), "Clean");
         assert_eq!(
@@ -4998,8 +5118,8 @@ mod tests {
         app.scroll_preview(isize::MAX, limit);
         let output = draw(&app, 80, 30);
         assert!(output.contains("FINAL-ERROR"));
-        assert!(output.contains("Space Run"));
-        assert!(output.contains("Ctrl+↑/↓ Scroll"));
+        assert!(output.contains("Space:Run"));
+        assert!(output.contains("Ctrl+↑/↓:Scroll"));
     }
     #[test]
     fn renders_global_preview_for_each_focused_panel_and_preserves_toggle_state() {
@@ -5646,7 +5766,14 @@ mod tests {
             );
             for x in 1..(title.len() + 3) as u16 {
                 assert_eq!(buffer[(x, 0)].fg, Color::Reset);
-                assert_eq!(buffer[(x, 0)].modifier, Modifier::empty());
+                assert_eq!(
+                    buffer[(x, 0)].modifier,
+                    if matches!(state, NavigationState::Focused) {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }
+                );
             }
             assert!(!text(&terminal).contains('─'));
         }
