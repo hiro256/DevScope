@@ -226,7 +226,7 @@ fn browser_panes(area: Rect) -> [Rect; 2] {
 fn browser_header_lines(app: &App) -> Vec<Line<'static>> {
     let browser = &app.file_browser;
     let mut lines = vec![Line::from(format!(
-        "File Browser  {}",
+        "Path: {}",
         browser_path(&browser.current_dir)
     ))];
     let status = [
@@ -475,14 +475,14 @@ fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
 fn footer_text(width: u16, height: u16) -> &'static str {
     if preview_layout_available(width, height) {
         if width >= 96 {
-            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+F:Files  r:Reload  q/Esc:Quit"
+            "←/→:Panel  ↑/↓:Move  Enter:Preview  Ctrl+f:Files  r:Reload  q/Esc:Quit"
         } else {
-            "←/→:Panel ↑/↓:Move Enter:Preview Ctrl+F:Files r:Reload q:Quit"
+            "←/→:Panel ↑/↓:Move Enter:Preview Ctrl+f:Files r:Reload q:Quit"
         }
     } else if width >= 65 {
-        "←/→:Panel  ↑/↓:Move  Ctrl+F:Files  r:Reload  q/Esc:Quit"
+        "←/→:Panel  ↑/↓:Move  Ctrl+f:Files  r:Reload  q/Esc:Quit"
     } else if width >= 40 {
-        "←/→:Panel  ↑/↓:Move  Ctrl+F:Files  q"
+        "←/→:Panel  ↑/↓:Move  Ctrl+f:Files  q"
     } else {
         "←/→:Panel ↑/↓:Move q"
     }
@@ -2171,6 +2171,28 @@ mod tests {
     }
 
     #[test]
+    fn browser_path_header_and_overview_files_hint_use_concise_labels() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        for (directory, expected) in [("", "Path: /"), ("dir/subdir", "Path: dir/subdir")] {
+            app.file_browser.current_dir = directory.into();
+            let lines = browser_header_lines(&app);
+            assert_eq!(lines[0].to_string(), expected);
+            assert_eq!(lines[0].style, Style::default());
+            assert!(!lines[0].to_string().contains("File Browser"));
+        }
+        for width in 1..=160 {
+            for height in [18, 25, 30] {
+                let footer = footer_text(width, height);
+                assert!(!footer.contains("Ctrl+F:Files"));
+                if footer.contains("Files") {
+                    assert!(footer.contains("Ctrl+f:Files"));
+                }
+            }
+        }
+        assert!(footer_text(120, 30).contains("Ctrl+f:Files"));
+    }
+
+    #[test]
     fn browser_footer_and_full_view_hints_match_context() {
         use devscope::progress::{BrowserEntry, BrowserEntryKind, SafeTextError};
         for width in 20..=160 {
@@ -3001,7 +3023,7 @@ mod tests {
         app.file_browser.listing_incomplete = true;
         app.file_browser.error = Some(SafeTextError::ReadError);
         let first = draw(&app, 80, 30);
-        assert!(first.contains("File Browser"));
+        assert!(first.contains("Path: /"));
         assert!(first.contains("Listing incomplete"));
         assert!(first.contains("Read error"));
         assert!(first.contains("browser line 00"));

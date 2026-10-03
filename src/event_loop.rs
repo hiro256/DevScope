@@ -769,6 +769,7 @@ fn handle_navigation_key(
             && key.code == KeyCode::Char('f')
             && key.modifiers == KeyModifiers::CONTROL)
     {
+        let target = app.file_browser_open_target();
         app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
         if app.has_detail_view() {
             return;
@@ -780,7 +781,11 @@ fn handle_navigation_key(
             return;
         }
         if !was_browser {
-            app.file_browser.refresh(project_root, true);
+            if let Some(path) = target {
+                app.file_browser.open_at_file(project_root, &path);
+            } else {
+                app.file_browser.refresh(project_root, true);
+            }
         } else if key.modifiers == KeyModifiers::NONE {
             match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -2289,6 +2294,76 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn changed_file_browser_open_jumps_to_target_and_other_panels_reopen_normally() {
+        use crate::app::FocusedPanel;
+        use devscope::progress::{
+            ActivitySummary, BrowserEntryKind, GitActivity, GitChangedFile, GitFileStatus,
+        };
+        let root = temp_root();
+        fs::create_dir_all(root.join("dir")).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("dir/a.txt"), "sibling").unwrap();
+        fs::write(root.join("dir/b.txt"), "target").unwrap();
+        fs::write(root.join("README.md"), "root target").unwrap();
+        let mut app = App::new(collect_project_snapshot(&root));
+        app.apply_activity_state(ActivityState::Available(ActivitySummary::from(
+            &GitActivity {
+                changed_files: ["dir/b.txt", "README.md"]
+                    .into_iter()
+                    .map(|path| GitChangedFile {
+                        path: path.into(),
+                        status: GitFileStatus::Modified,
+                        changes: Default::default(),
+                    })
+                    .collect(),
+                recent_commits: vec![],
+            },
+        )));
+        let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+        let open = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        app.file_browser.current_dir = "other".into();
+        app.file_browser.preview_scroll = 9;
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert!(app.is_file_browser_open());
+        assert_eq!(app.file_browser.current_dir, Path::new("dir"));
+        let selected = app.file_browser.selected_entry().unwrap();
+        assert_eq!(selected.path, Path::new("dir/b.txt"));
+        assert_eq!(selected.kind, BrowserEntryKind::File);
+        assert_eq!(app.file_browser.preview, Some(Ok(("target".into(), false))));
+        assert_eq!(app.file_browser.preview_scroll, 0);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        for panel in [FocusedPanel::Tasks, FocusedPanel::Evidence] {
+            app.reconcile_focus(&[panel]);
+            handle_navigation_key(Some(&root), &mut app, open, area);
+            assert_eq!(app.file_browser.current_dir, Path::new("dir"));
+            assert_eq!(
+                app.file_browser.selected_entry().unwrap().path,
+                Path::new("dir/b.txt")
+            );
+            handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        }
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Down), area);
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert!(app.file_browser.current_dir.as_os_str().is_empty());
+        assert_eq!(
+            app.file_browser.selected_entry().unwrap().path,
+            Path::new("README.md")
+        );
+        handle_navigation_key(Some(&root), &mut app, key(KeyCode::Esc), area);
+        fs::remove_file(root.join("README.md")).unwrap();
+        handle_navigation_key(Some(&root), &mut app, open, area);
+        assert!(app.is_file_browser_open());
+        assert!(
+            app.file_browser
+                .selected
+                .is_none_or(|index| index < app.file_browser.entries.len())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn browser_navigation_refresh_scroll_and_reopen_are_view_local() {
         let root = git_root();

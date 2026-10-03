@@ -24,6 +24,35 @@ impl FileBrowserState {
         self.selected_entry()
             .map(|entry| (entry.path.clone(), entry.kind))
     }
+
+    pub fn open_at_file(&mut self, root: Option<&Path>, path: &Path) {
+        if path.as_os_str().is_empty()
+            || !path
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            self.refresh(root, true);
+            return;
+        }
+        let before_dir = self.current_dir.clone();
+        let before = self.identity();
+        let before_scroll = self.preview_scroll;
+        self.current_dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        self.refresh(root, true);
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.path == path && entry.kind == BrowserEntryKind::File)
+        {
+            self.selected = Some(index);
+            self.preview_scroll = if self.current_dir == before_dir && self.identity() == before {
+                before_scroll
+            } else {
+                0
+            };
+            self.observe_selected(root);
+        }
+    }
     pub fn refresh(&mut self, root: Option<&Path>, reopening: bool) {
         let before = self.identity();
         self.notice = None;
@@ -152,6 +181,51 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn open_at_file_selects_exact_target_and_preserves_safe_fallbacks() {
+        let p = Project::new();
+        let root = Some(p.0.as_path());
+        let mut browser = FileBrowserState::default();
+        browser.open_at_file(root, Path::new("dir/b"));
+        assert_eq!(browser.current_dir, Path::new("dir"));
+        assert_eq!(browser.selected_entry().unwrap().path, Path::new("dir/b"));
+        assert_eq!(browser.preview, Some(Ok(("second".into(), false))));
+        browser.preview_scroll = 4;
+        browser.open_at_file(root, Path::new("dir/b"));
+        assert_eq!(browser.preview_scroll, 4);
+        browser.open_at_file(root, Path::new("dir/a"));
+        assert_eq!(browser.preview_scroll, 0);
+        assert_eq!(browser.preview, Some(Ok(("first".into(), false))));
+        fs::write(p.0.join("README.md"), "root text").unwrap();
+        browser.open_at_file(root, Path::new("README.md"));
+        assert!(browser.current_dir.as_os_str().is_empty());
+        assert_eq!(
+            browser.selected_entry().unwrap().path,
+            Path::new("README.md")
+        );
+        assert_eq!(browser.preview, Some(Ok(("root text".into(), false))));
+        browser.open_at_file(root, Path::new("dir/missing"));
+        assert_eq!(browser.current_dir, Path::new("dir"));
+        assert_eq!(browser.selected_entry().unwrap().path, Path::new("dir/a"));
+        for path in [
+            "../outside",
+            "/outside",
+            "C:\\outside",
+            "",
+            "dir/../README.md",
+        ] {
+            browser.open_at_file(root, Path::new(path));
+            assert_eq!(browser.current_dir, Path::new("dir"));
+            assert!(browser.selected_entry().is_some());
+        }
+        browser.open_at_file(root, Path::new("missing/a"));
+        assert!(browser.current_dir.as_os_str().is_empty());
+        assert!(browser.notice.is_some());
+        browser.open_at_file(root, Path::new("target/a"));
+        assert!(browser.current_dir.as_os_str().is_empty());
+        assert!(browser.notice.is_some());
     }
 
     #[test]

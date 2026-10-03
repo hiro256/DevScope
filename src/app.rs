@@ -567,6 +567,16 @@ impl App {
         matches!(self.view, AppView::FileBrowser)
     }
 
+    pub fn file_browser_open_target(&self) -> Option<PathBuf> {
+        if self.is_file_browser_open()
+            || self.has_detail_view()
+            || self.focused_panel != FocusedPanel::ChangedFiles
+        {
+            return None;
+        }
+        self.selected_changed_file_request().map(|(path, _)| path)
+    }
+
     pub fn can_open_browser_file_detail(&self) -> bool {
         self.is_file_browser_open()
             && !self.has_detail_view()
@@ -813,6 +823,33 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn browser_open_target_is_only_requested_from_focused_changed_files() {
+        let mut app = app(2);
+        app.apply_activity_state(activity_with_files(2));
+        for panel in [
+            FocusedPanel::Tasks,
+            FocusedPanel::Evidence,
+            FocusedPanel::ChangedFiles,
+        ] {
+            app.reconcile_focus(&[panel]);
+            assert_eq!(
+                app.file_browser_open_target(),
+                (panel == FocusedPanel::ChangedFiles).then(|| PathBuf::from("file-0.rs"))
+            );
+        }
+        app.handle_key_with_focusable_panels(key(KeyCode::Down), ALL_PANELS);
+        assert_eq!(app.file_browser_open_target(), Some("file-1.rs".into()));
+        app.open_changed_file_detail();
+        assert!(app.file_browser_open_target().is_none());
+        app.handle_key(key(KeyCode::Esc));
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert!(app.file_browser_open_target().is_none());
+        app.handle_key_with_focusable_panels(key(KeyCode::Esc), ALL_PANELS);
+        app.apply_activity_state(activity_with_files(0));
+        assert!(app.file_browser_open_target().is_none());
     }
 
     #[test]
