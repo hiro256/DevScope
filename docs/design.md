@@ -326,7 +326,9 @@ non-diff inspection content, with scroll limits derived from their actual conten
 Git diff in Changed File Preview and Full View preserves one source line per visual row;
 wide rows use display-width-safe ellipsis truncation. Section titles, hunk headers, and
 added/removed content use bold; file-header metadata and context remain plain. Diff scroll
-limits use those same fitted rows. Diff colors and a line-number gutter remain unimplemented.
+limits use those same fitted rows. Hunk body rows show aligned old/new line-number gutters;
+metadata and hunk headers have no gutter. The one-source-line-per-row and bold-only hierarchy
+remain unchanged. Diff colors remain unimplemented.
 Windows Terminal dogfood accepted the wrapped inspection and Browser return behavior.
 Half-screen Windows Terminal dogfood
 accepted the denser layout without changing the interaction model.

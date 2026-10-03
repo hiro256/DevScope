@@ -1176,11 +1176,51 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         lines.push(Line::from(""));
     }
     lines.push(Line::from(title.to_owned()).style(Style::default().add_modifier(Modifier::BOLD)));
-    lines.extend(safe_display_text(&diff.text).lines().map(|line| {
+    let text = safe_display_text(&diff.text);
+    let mut hunk = None;
+    let rows: Vec<_> = text
+        .lines()
+        .map(|line| {
+            let numbers = if line.starts_with("@@") {
+                hunk = parse_diff_hunk(line);
+                None
+            } else if line.starts_with("\\ No newline at end of file") {
+                None
+            } else if line.starts_with("+++ ") || line.starts_with("--- ") {
+                hunk = None;
+                None
+            } else {
+                let numbers = hunk.as_mut().and_then(|hunk| hunk.row_numbers(line));
+                if numbers.is_none() {
+                    hunk = None;
+                }
+                numbers
+            };
+            (line, numbers)
+        })
+        .collect();
+    let digits = rows
+        .iter()
+        .filter_map(|(_, numbers)| *numbers)
+        .flat_map(|(old, new)| [old, new])
+        .flatten()
+        .max()
+        .unwrap_or(0)
+        .to_string()
+        .len();
+    lines.extend(rows.into_iter().map(|(line, numbers)| {
         let emphasized = line.starts_with("@@")
             || (line.starts_with('+') && !line.starts_with("+++ "))
             || (line.starts_with('-') && !line.starts_with("--- "));
-        Line::from(line.to_owned()).style(if emphasized {
+        let text = match numbers {
+            Some((old, new)) => format!(
+                "{:>digits$} {:>digits$} │ {line}",
+                old.map(|number| number.to_string()).unwrap_or_default(),
+                new.map(|number| number.to_string()).unwrap_or_default(),
+            ),
+            None => line.to_owned(),
+        };
+        Line::from(text).style(if emphasized {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
@@ -1189,6 +1229,71 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
     if diff.truncated {
         lines.push(Line::from("... diff truncated ..."));
     }
+}
+
+struct DiffHunk {
+    old: u64,
+    new: u64,
+    old_remaining: u64,
+    new_remaining: u64,
+}
+
+impl DiffHunk {
+    fn row_numbers(&mut self, line: &str) -> Option<(Option<u64>, Option<u64>)> {
+        let (use_old, use_new) = match line.as_bytes().first()? {
+            b' ' => (true, true),
+            b'-' => (true, false),
+            b'+' => (false, true),
+            _ => return None,
+        };
+        if (use_old && self.old_remaining == 0) || (use_new && self.new_remaining == 0) {
+            return None;
+        }
+        let numbers = (use_old.then_some(self.old), use_new.then_some(self.new));
+        if use_old {
+            self.old_remaining -= 1;
+            self.old = self.old.saturating_add(1);
+        }
+        if use_new {
+            self.new_remaining -= 1;
+            self.new = self.new.saturating_add(1);
+        }
+        Some(numbers)
+    }
+}
+
+fn parse_diff_hunk(line: &str) -> Option<DiffHunk> {
+    fn range(text: &str, marker: char) -> Option<(u64, u64)> {
+        let text = text.strip_prefix(marker)?;
+        let (start, count) = text.split_once(',').unwrap_or((text, "1"));
+        if start.is_empty()
+            || count.is_empty()
+            || !start.bytes().all(|byte| byte.is_ascii_digit())
+            || !count.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+        let start: u64 = start.parse().ok()?;
+        let count: u64 = count.parse().ok()?;
+        start.checked_add(count.saturating_sub(1))?;
+        Some((start, count))
+    }
+    let (locations, suffix) = line.strip_prefix("@@ ")?.split_once(" @@")?;
+    if !suffix.is_empty() && !suffix.starts_with(' ') {
+        return None;
+    }
+    let mut ranges = locations.split_whitespace();
+    let (old, old_remaining) = range(ranges.next()?, '-')?;
+    let (new, new_remaining) = range(ranges.next()?, '+')?;
+    if ranges.next().is_some() {
+        return None;
+    }
+    Some(DiffHunk {
+        old,
+        new,
+        old_remaining,
+        new_remaining,
+    })
 }
 fn navigation_block(title: &str, focused: bool) -> Block<'static> {
     // Title reserves the top row; padding preserves the former frame's content rectangle.
@@ -2071,7 +2176,13 @@ mod tests {
             ("Staged", true),
             ("... diff truncated ...", false),
         ]) {
-            let line = lines.iter().find(|line| line.to_string() == text).unwrap();
+            let line = lines
+                .iter()
+                .find(|line| {
+                    let rendered = line.to_string();
+                    rendered == text || rendered.ends_with(&format!("│ {text}"))
+                })
+                .unwrap();
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::BOLD),
                 bold,
@@ -2109,6 +2220,141 @@ mod tests {
     }
 
     #[test]
+    fn diff_gutter_tracks_context_additions_removals_and_hunk_resets() {
+        let source = "diff --git a/a.rs b/a.rs\nindex 111..222 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -10,3 +10,4 @@ fn example\n context\n-old\n+new\n+extra\n after\n\\ No newline at end of file\n@@ -7 +9 @@\n----value;\n\\ No newline at end of file\n++++counter;";
+        let mut rows = Vec::new();
+        append_diff_section(
+            &mut rows,
+            "Unstaged",
+            Some(&GitDiffText {
+                text: source.into(),
+                truncated: false,
+            }),
+        );
+        assert_eq!(
+            rows.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [
+                "Unstaged",
+                "diff --git a/a.rs b/a.rs",
+                "index 111..222 100644",
+                "--- a/a.rs",
+                "+++ b/a.rs",
+                "@@ -10,3 +10,4 @@ fn example",
+                "10 10 │  context",
+                "11    │ -old",
+                "   11 │ +new",
+                "   12 │ +extra",
+                "12 13 │  after",
+                "\\ No newline at end of file",
+                "@@ -7 +9 @@",
+                " 7    │ ----value;",
+                "\\ No newline at end of file",
+                "    9 │ ++++counter;",
+            ]
+        );
+        for row in &rows {
+            let text = row.to_string();
+            let bold = text == "Unstaged"
+                || text.starts_with("@@")
+                || text.contains("│ -")
+                || text.contains("│ +");
+            assert_eq!(
+                row.style.add_modifier.contains(Modifier::BOLD),
+                bold,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_gutter_aligns_large_numbers_and_truncates_unicode_without_wrapping() {
+        let source = format!(
+            "@@ -99,2 +999,2 @@\n 日本語\n-{}\n+{}",
+            "削除".repeat(30),
+            "追加".repeat(30)
+        );
+        let mut rows = Vec::new();
+        append_diff_section(
+            &mut rows,
+            "Staged",
+            Some(&GitDiffText {
+                text: source,
+                truncated: false,
+            }),
+        );
+        assert_eq!(rows[2].to_string(), "  99  999 │  日本語");
+        assert!(rows[3].to_string().starts_with(" 100      │ -削除"));
+        assert!(rows[4].to_string().starts_with("     1000 │ +追加"));
+        for width in [0, 1, 8, 13, 20, 40] {
+            let fitted = fit_inspection_lines(rows.clone(), width, true);
+            assert_eq!(fitted.len(), if width == 0 { 0 } else { rows.len() });
+            assert!(fitted.iter().all(|row| row.width() <= usize::from(width)));
+            if width > 0 {
+                assert!(fitted[3].to_string().ends_with('…'));
+                assert!(fitted[4].to_string().ends_with('…'));
+            }
+            if width >= 13 {
+                assert!(fitted[3].to_string().starts_with(" 100      │ "));
+                assert!(fitted[4].to_string().starts_with("     1000 │ "));
+            }
+            if width >= 14 {
+                assert!(fitted[3].to_string().starts_with(" 100      │ -"));
+                assert!(fitted[4].to_string().starts_with("     1000 │ +"));
+            }
+        }
+    }
+
+    #[test]
+    fn diff_gutter_does_not_invent_positions_outside_valid_hunks() {
+        let source = "--- /dev/null\n+++ /dev/null\n+outside\n@@ -1,2 +1,2 @@\n context\n@@ broken @@\n+unknown\n@@ -3 +4 @@\nunexpected\n-after unexpected\n@@ -0,0 +20,1 @@\n+created\n+past count\n@@ -30,1 +0,0 @@\n-deleted\n@@ -18446744073709551615,2 +1 @@\n+overflow";
+        let mut rows = Vec::new();
+        append_diff_section(
+            &mut rows,
+            "Unstaged",
+            Some(&GitDiffText {
+                text: source.into(),
+                truncated: false,
+            }),
+        );
+        let numbered: Vec<_> = rows
+            .iter()
+            .map(ToString::to_string)
+            .filter(|row| row.contains(" │ "))
+            .collect();
+        assert_eq!(
+            numbered,
+            [" 1  1 │  context", "   20 │ +created", "30    │ -deleted"]
+        );
+        for metadata in ["--- /dev/null", "+++ /dev/null"] {
+            let row = rows.iter().find(|row| row.to_string() == metadata).unwrap();
+            assert!(!row.style.add_modifier.contains(Modifier::BOLD));
+        }
+        for malformed in [
+            "@@ -x +1 @@",
+            "@@ -1 +1 @@@",
+            "@@ -1,-2 +1 @@",
+            "@@ -1 +1",
+            "@@@ -1 +1 @@@",
+            "@@ -1 +1 extra @@",
+            "@@ -+1 +1 @@",
+            "@@ -1, +1 @@",
+            "@@ -18446744073709551616 +1 @@",
+        ] {
+            assert!(parse_diff_hunk(malformed).is_none(), "{malformed}");
+        }
+        let mut rows = Vec::new();
+        append_diff_section(
+            &mut rows,
+            "Staged",
+            Some(&GitDiffText {
+                text: "+different section".into(),
+                truncated: false,
+            }),
+        );
+        assert_eq!(rows[1].to_string(), "+different section");
+    }
+
+    #[test]
     fn changed_diff_preview_and_full_view_limits_use_source_rows() {
         let mut app = app(
             TaskState::Unavailable,
@@ -2121,9 +2367,12 @@ mod tests {
         app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
         let inspection = GitFileInspection::Diff {
             unstaged: Some(GitDiffText {
-                text: (0..40)
-                    .map(|i| format!("+row {i} {}\n", "日本語".repeat(80)))
-                    .collect(),
+                text: format!(
+                    "@@ -0,0 +1,40 @@\n{}",
+                    (0..40)
+                        .map(|i| format!("+row {i} {}\n", "日本語".repeat(80)))
+                        .collect::<String>()
+                ),
                 truncated: false,
             }),
             staged: None,
