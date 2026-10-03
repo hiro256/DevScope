@@ -453,15 +453,15 @@ fn now_line(current_work: &CurrentWorkState, width: usize) -> Line<'static> {
 }
 
 fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
-    const PREFIX: &str = "● NOW  ";
+    const PREFIX: &str = "● ";
     if width < Line::from(PREFIX).width() {
         return truncate_text(PREFIX, width);
     }
     let value = match current_work {
         CurrentWorkState::Available(work) => work
             .active_item()
-            .map_or("Not processing", |item| item.text()),
-        CurrentWorkState::NotSet => "Not processing",
+            .map_or("No active work", |item| item.text()),
+        CurrentWorkState::NotSet => "No active work",
         CurrentWorkState::Unavailable => "Unavailable",
     };
     let available = width.saturating_sub(Line::from(PREFIX).width());
@@ -567,7 +567,8 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(tasks(
             app.tasks(),
-            app.selected_task(),
+            app.selected_task()
+                .filter(|_| app.focused_panel() == FocusedPanel::Tasks),
             inner_height(area),
             inner_width(area),
             app.current_work(),
@@ -600,7 +601,9 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 BuildTestKind::BuildRelease => EvidenceSelection::BuildRelease,
                 BuildTestKind::Test => EvidenceSelection::Test,
             };
-            let marker = if app.evidence_selection() == selection {
+            let marker = if app.focused_panel() == FocusedPanel::Evidence
+                && app.evidence_selection() == selection
+            {
                 "> "
             } else {
                 "  "
@@ -689,7 +692,9 @@ fn evidence_selector_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         })
         .collect::<Vec<_>>();
     if let Some(artifact) = app.artifact() {
-        let marker = if app.evidence_selection() == EvidenceSelection::Artifact {
+        let marker = if app.focused_panel() == FocusedPanel::Evidence
+            && app.evidence_selection() == EvidenceSelection::Artifact
+        {
             "> "
         } else {
             "  "
@@ -727,7 +732,8 @@ fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(changed_files(
             app.activity(),
-            app.selected_changed_file(),
+            app.selected_changed_file()
+                .filter(|_| app.focused_panel() == FocusedPanel::ChangedFiles),
             inner_height(area),
             inner_width(area),
             |path| app.changed_file_emphasis(path),
@@ -1358,7 +1364,7 @@ fn navigation_block(title: &str, state: NavigationState) -> Block<'static> {
             "▌",
             Style::default().fg(Color::Blue).add_modifier(Modifier::DIM),
         ),
-        NavigationState::Passive => ("·", Style::default().add_modifier(Modifier::DIM)),
+        NavigationState::Passive => ("•", Style::default()),
     };
     Block::default()
         .padding(Padding::new(1, 1, 0, 1))
@@ -1493,7 +1499,13 @@ fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
             app.current_work(),
             usize::from(width.saturating_sub(2)),
         )),
-        Line::from(format!("Activity   {}", activity(app.activity()))),
+        Line::from(format!(
+            "Activity   {}",
+            activity(
+                app.activity(),
+                usize::from(width.saturating_sub(2)).saturating_sub("Activity   ".len())
+            )
+        )),
         Line::from(format!("Evidence   {}", evidence(app))),
     ])
     .block(
@@ -1563,21 +1575,58 @@ fn progress_value(completed: usize, total: usize, width: usize) -> String {
     let bar = format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled));
     format!("{bar} {percentage} {count}")
 }
-fn activity(activity: &ActivityState) -> String {
-    match activity {
+fn activity(activity: &ActivityState, width: usize) -> String {
+    let value = match activity {
         ActivityState::Available(summary) if summary.changed_files() == 0 => "Clean".into(),
-        ActivityState::Available(summary) => format!(
-            "{} changed file{}",
-            summary.changed_files(),
-            if summary.changed_files() == 1 {
-                ""
+        ActivityState::Available(summary) => {
+            let files = summary.changed_file_items();
+            let base = format!(
+                "{} file{}",
+                summary.changed_files(),
+                if summary.changed_files() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            );
+            let added = files
+                .iter()
+                .filter(|file| file.status == GitFileStatus::Added)
+                .count();
+            let deleted = files
+                .iter()
+                .filter(|file| file.status == GitFileStatus::Deleted)
+                .count();
+            let totals = files
+                .iter()
+                .try_fold((0_u64, 0_u64), |(added, deleted), file| {
+                    Some((
+                        added.checked_add(file.changes.additions?)?,
+                        deleted.checked_add(file.changes.deletions?)?,
+                    ))
+                });
+            let counts = format!("{base}  A{added} D{deleted}");
+            let full = totals.map_or_else(
+                || counts.clone(),
+                |(added, deleted)| format!("{counts}  +{added} -{deleted}"),
+            );
+            if Line::from(full.as_str()).width() <= width {
+                full
+            } else if let Some((added, deleted)) = totals {
+                let lines = format!("{base}  +{added} -{deleted}");
+                if Line::from(lines.as_str()).width() <= width {
+                    lines
+                } else {
+                    base
+                }
             } else {
-                "s"
+                base
             }
-        ),
+        }
         ActivityState::NotRepository => "Not a Git repository".into(),
         ActivityState::Unavailable => "Unavailable".into(),
-    }
+    };
+    truncate_text(&value, width)
 }
 
 fn task_matches_current_work(
@@ -1628,6 +1677,7 @@ fn task_lines(
     phase_for: impl Fn(&devscope::progress::TaskSummaryItem) -> TransientEmphasisPhase,
 ) -> Vec<Line<'static>> {
     let total = summary.remaining();
+    let has_selection = selected.is_some();
     let selected = selected.unwrap_or(0).min(total - 1);
     let item_rows = if total > rows {
         rows.saturating_sub(1).max(1)
@@ -1645,7 +1695,7 @@ fn task_lines(
             let index = start + offset;
             task_line(
                 item,
-                index == selected,
+                has_selection && index == selected,
                 width,
                 task_matches_current_work(item, current_work),
                 phase_for(item),
@@ -1777,6 +1827,7 @@ fn changed_files(
         }
         ActivityState::Available(summary) => {
             let files = summary.changed_file_items();
+            let has_selection = selected.is_some();
             let selected = selected.unwrap_or(0).min(files.len() - 1);
             let file_rows = if files.len() > rows && rows > 1 {
                 rows - 1
@@ -1795,7 +1846,7 @@ fn changed_files(
                 .map(|(offset, file)| {
                     changed_file_line(
                         file,
-                        start + offset == selected,
+                        has_selection && start + offset == selected,
                         width,
                         counts_column,
                         phase_for(&file.path),
@@ -3342,6 +3393,7 @@ mod tests {
     #[test]
     fn evidence_emphasis_reaches_rendered_cells_without_styling_selection() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
         app.set_evidence_change_phase(BuildTestKind::BuildDebug, TransientEmphasisPhase::Hot);
         let mut terminal = Terminal::new(TestBackend::new(50, 8)).unwrap();
         terminal
@@ -3364,6 +3416,7 @@ mod tests {
     #[test]
     fn evidence_columns_and_optional_cues_fit_the_navigation_width() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
         for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
             for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
                 for kind in BuildTestKind::ALL {
@@ -4049,7 +4102,7 @@ mod tests {
             TaskState::Available(TaskSummary::new(0, vec![])),
             ActivityState::Available(ActivitySummary::from(&one_file)),
         );
-        assert!(draw(&one, 80, 30).contains("1 changed file"));
+        assert!(draw(&one, 80, 30).contains("Activity   1 file"));
 
         let many_files = GitActivity {
             changed_files: vec![
@@ -4070,7 +4123,7 @@ mod tests {
             TaskState::Available(TaskSummary::new(0, vec![])),
             ActivityState::Available(ActivitySummary::from(&many_files)),
         );
-        assert!(draw(&many, 80, 30).contains("2 changed files"));
+        assert!(draw(&many, 80, 30).contains("Activity   2 files"));
     }
 
     #[test]
@@ -4148,7 +4201,7 @@ mod tests {
         );
         for width in [80, 100, 120] {
             let header = header_title(&app, width);
-            assert!(header.to_string().starts_with("● NOW  Not processing"));
+            assert!(header.to_string().starts_with("● No active work"));
             assert!(!header.to_string().contains("DevScope"));
             assert!(header.to_string().ends_with("Watching · Git 09:42"));
             assert_eq!(header.width(), width);
@@ -4187,10 +4240,10 @@ mod tests {
             Some(time::macros::time!(09:42)),
         );
         for expected in [
-            "● NOW  Not processing  Watching · Git 09:42",
-            "● NOW  Not processing  Watching · Git",
-            "● NOW  Not processing  Watching",
-            "● NOW  Not processing",
+            "● No active work  Watching · Git 09:42",
+            "● No active work  Watching · Git",
+            "● No active work  Watching",
+            "● No active work",
         ] {
             assert_eq!(
                 header_title(&app, Line::from(expected).width()).to_string(),
@@ -4244,7 +4297,7 @@ mod tests {
         assert_eq!(areas[0].height, 1);
         assert_eq!(areas[1].height, 6);
         let initial = draw(&app, area.width, area.height);
-        assert!(initial.starts_with("● NOW"));
+        assert!(initial.starts_with("● No active work"));
         assert!(initial.contains("Project Progress · Portal"));
         assert!(!initial.contains("DevScope ·"));
         assert!(!initial.contains("Detail: Task"));
@@ -4432,6 +4485,127 @@ mod tests {
                 summary: "recent".into(),
             }],
         }))
+    }
+
+    #[test]
+    fn activity_summary_uses_observed_counts_and_width_fallbacks() {
+        let file = |status, additions, deletions| GitChangedFile {
+            path: "sample.rs".into(),
+            status,
+            changes: GitChangeCounts {
+                additions,
+                deletions,
+            },
+        };
+        let observed = activity_with_files(vec![
+            file(GitFileStatus::Added, Some(200), Some(0)),
+            file(GitFileStatus::Added, Some(12), Some(0)),
+            file(GitFileStatus::Deleted, Some(0), Some(120)),
+            file(GitFileStatus::Modified, Some(8), Some(8)),
+            file(GitFileStatus::Modified, Some(0), Some(0)),
+            file(GitFileStatus::Renamed, Some(0), Some(0)),
+        ]);
+        assert_eq!(activity(&observed, 80), "6 files  A2 D1  +220 -128");
+        assert_eq!(activity(&observed, 18), "6 files  +220 -128");
+        assert_eq!(activity(&observed, 17), "6 files");
+        for width in 0..=160 {
+            assert!(Line::from(activity(&observed, width)).width() <= width);
+        }
+        let single = activity_with_files(vec![file(GitFileStatus::Added, Some(12), Some(0))]);
+        assert_eq!(activity(&single, 80), "1 file  A1 D0  +12 -0");
+        for (additions, deletions) in [(None, Some(1)), (Some(1), None)] {
+            let unknown =
+                activity_with_files(vec![file(GitFileStatus::Added, additions, deletions)]);
+            assert_eq!(activity(&unknown, 80), "1 file  A1 D0");
+            assert_eq!(activity(&unknown, 6), "1 file");
+        }
+        for overflow_additions in [true, false] {
+            let overflow = activity_with_files(vec![
+                file(
+                    GitFileStatus::Modified,
+                    Some(if overflow_additions { u64::MAX } else { 0 }),
+                    Some(if overflow_additions { 0 } else { u64::MAX }),
+                ),
+                file(GitFileStatus::Modified, Some(1), Some(1)),
+            ]);
+            assert_eq!(activity(&overflow, 80), "2 files  A0 D0");
+        }
+        assert_eq!(activity(&activity_with_files(vec![]), 80), "Clean");
+        assert_eq!(
+            activity(&ActivityState::NotRepository, 80),
+            "Not a Git repository"
+        );
+        assert_eq!(activity(&ActivityState::Unavailable, 80), "Unavailable");
+    }
+
+    #[test]
+    fn overview_selection_markers_only_follow_focus_without_resetting_selection() {
+        let mut app = app(
+            TaskState::Available(TaskSummary::new(3, task_items(3))),
+            activity_with_files(vec![GitChangedFile {
+                path: "selected.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.select_evidence_detail(BuildTestKind::Test);
+        let task = app.selected_task();
+        let file = app.selected_changed_file();
+        let evidence = app.evidence_selection();
+        for preview in [true, false] {
+            if app.preview_visible() != preview {
+                app.toggle_preview();
+            }
+            for panel in [
+                FocusedPanel::Tasks,
+                FocusedPanel::Evidence,
+                FocusedPanel::ChangedFiles,
+            ] {
+                app.reconcile_focus(&[panel]);
+                let output = draw(&app, 120, 30);
+                assert_eq!(output.matches('>').count(), 1);
+                assert_eq!(output.contains("> □ Task 1"), panel == FocusedPanel::Tasks);
+                assert_eq!(output.contains("> Test"), panel == FocusedPanel::Evidence);
+                assert_eq!(
+                    output.contains("> M  selected.rs"),
+                    panel == FocusedPanel::ChangedFiles
+                );
+                assert_eq!(app.selected_task(), task);
+                assert_eq!(app.selected_changed_file(), file);
+                assert_eq!(app.evidence_selection(), evidence);
+            }
+        }
+    }
+
+    #[test]
+    fn artifact_selection_marker_is_hidden_and_restored_with_evidence_focus() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.apply_artifact(Some(
+            devscope::progress::ArtifactObservation::observation_error(
+                "artifact".into(),
+                "fixture",
+            ),
+        ));
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        for _ in 0..3 {
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        assert_eq!(app.evidence_selection(), EvidenceSelection::Artifact);
+        for panel in [
+            FocusedPanel::Tasks,
+            FocusedPanel::Evidence,
+            FocusedPanel::ChangedFiles,
+            FocusedPanel::Evidence,
+        ] {
+            app.reconcile_focus(&[panel]);
+            let rows = evidence_selector_lines(&app, 50);
+            assert_eq!(
+                rows[3].to_string().starts_with('>'),
+                panel == FocusedPanel::Evidence
+            );
+            assert_eq!(app.evidence_selection(), EvidenceSelection::Artifact);
+        }
     }
 
     #[test]
@@ -4659,7 +4833,7 @@ mod tests {
         let mut app = app(TaskState::Available(summary), ActivityState::Unavailable);
         app.apply_current_work(current_work);
         assert!(draw(&app, 70, 30).contains("[Work parent]"));
-        assert!(draw(&app, 70, 30).contains("NOW  Not processing"));
+        assert!(draw(&app, 70, 30).contains("No active work"));
 
         app.apply_current_work(CurrentWorkState::Unavailable);
         assert!(!draw(&app, 70, 30).contains("[Work parent]"));
@@ -5372,7 +5546,7 @@ mod tests {
         assert!(evidence_focused.contains("▌ Evidence "));
         assert!(evidence_focused.contains("▌ Tasks "));
         assert!(!evidence_focused.contains("┌ Tasks "));
-        assert!(evidence_focused.contains("> □ Task 0"));
+        assert!(!evidence_focused.contains("> □ Task 0"));
         assert_ne!(tasks_focused, evidence_focused);
     }
 
@@ -5461,14 +5635,14 @@ mod tests {
                 .unwrap();
             let buffer = terminal.backend().buffer();
             let passive = matches!(state, NavigationState::Passive);
-            assert_eq!(buffer[(0, 0)].symbol(), if passive { "·" } else { "▌" });
+            assert_eq!(buffer[(0, 0)].symbol(), if passive { "•" } else { "▌" });
             assert_eq!(
                 buffer[(0, 0)].fg,
                 if passive { Color::Reset } else { Color::Blue }
             );
             assert_eq!(
                 buffer[(0, 0)].modifier.contains(Modifier::DIM),
-                !matches!(state, NavigationState::Focused)
+                matches!(state, NavigationState::Unfocused)
             );
             for x in 1..(title.len() + 3) as u16 {
                 assert_eq!(buffer[(x, 0)].fg, Color::Reset);
@@ -5533,7 +5707,7 @@ mod tests {
                     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                     terminal.draw(|frame| render(frame, &app)).unwrap();
                     let output = text(&terminal);
-                    assert!(output.contains("● NOW"));
+                    assert!(output.contains("● No active work"));
                     assert!(output.contains("┌ Project Progress ·"));
                     assert_eq!(
                         output.matches('▌').count(),
@@ -5578,10 +5752,7 @@ mod tests {
                             assert_eq!(cell.bg, Color::Reset);
                             assert_eq!(
                                 cell.modifier.contains(Modifier::DIM),
-                                x == 0
-                                    && (y == 0
-                                        || (cell.symbol() == "▌" && y != focused_y)
-                                        || cell.symbol() == "·")
+                                x == 0 && (y == 0 || (cell.symbol() == "▌" && y != focused_y))
                             );
                             if cell.symbol() == ">" {
                                 assert_eq!(cell.fg, Color::Reset);
@@ -5596,15 +5767,23 @@ mod tests {
     fn now_uses_only_the_explicit_active_item() {
         let no_active = work_state("- [ ] Next candidate\n- [ ] Other item\n");
         let no_active_label = now_label(&no_active, 80);
-        assert!(no_active_label.contains("Not processing"));
+        assert_eq!(no_active_label, "● No active work");
+        assert!(!no_active_label.contains("NOW"));
+        assert!(!no_active_label.contains("Not processing"));
+        assert!(!no_active_label.contains("Not set"));
+        assert!(no_active_label.contains("No active work"));
         assert!(!no_active_label.contains("Next candidate"));
 
         let active = work_state("Active: 2\n- [ ] Next candidate\n- [ ] Explicit active item\n");
         let active_label = now_label(&active, 80);
+        assert_eq!(active_label, "● Explicit active item");
         assert!(active_label.contains("Explicit active item"));
         assert!(!active_label.contains("Next candidate"));
-        assert!(now_label(&CurrentWorkState::NotSet, 80).contains("Not processing"));
-        assert!(now_label(&CurrentWorkState::Unavailable, 80).contains("Unavailable"));
+        assert!(now_label(&CurrentWorkState::NotSet, 80).contains("No active work"));
+        assert_eq!(
+            now_label(&CurrentWorkState::Unavailable, 80),
+            "● Unavailable"
+        );
     }
 
     #[test]
@@ -5613,8 +5792,8 @@ mod tests {
         let inactive = work_state("- [ ] Next candidate\n");
         for (state, active, expected) in [
             (active, true, "日本語の明示的な作業"),
-            (inactive, false, "Not processing"),
-            (CurrentWorkState::NotSet, false, "Not processing"),
+            (inactive, false, "No active work"),
+            (CurrentWorkState::NotSet, false, "No active work"),
             (CurrentWorkState::Unavailable, false, "Unavailable"),
         ] {
             let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
@@ -5659,11 +5838,11 @@ mod tests {
 
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.apply_current_work(active);
-        assert!(draw(&app, 80, 30).contains("● NOW  A deliberately long"));
+        assert!(draw(&app, 80, 30).contains("● A deliberately long"));
         app.apply_current_work(work_state("- [ ] Next candidate\n"));
         let refreshed = draw(&app, 40, 18);
-        assert!(refreshed.contains("NOW"));
-        assert!(refreshed.contains("Not processing"));
+        assert!(refreshed.contains("●"));
+        assert!(refreshed.contains("No active work"));
         assert!(!refreshed.contains("Next candidate"));
     }
     #[test]
@@ -5695,7 +5874,7 @@ mod tests {
         let expected = [
             plan_line(app.plan(), 78),
             work_line(app.current_work(), 78),
-            format!("Activity   {}", activity(app.activity())),
+            format!("Activity   {}", activity(app.activity(), 67)),
             format!("Evidence   {}", evidence(&app)),
         ];
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
@@ -5752,7 +5931,7 @@ mod tests {
             assert!(output.contains("50% 2/4"));
             assert!(output.contains("Work"));
             assert!(output.contains("50% 1/2"));
-            assert!(output.contains("Activity   1 changed file"));
+            assert!(output.contains("Activity   1 file"));
             assert!(output.contains("Evidence"));
             assert!(output.contains("Debug ✓"));
             if width >= 80 {
