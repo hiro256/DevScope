@@ -297,9 +297,8 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
     let panes = browser_panes(outer[1]);
     let list_area = if split { panes[0] } else { outer[1] };
     // Unlike stacked Overview sections, this list needs no bottom separator.
-    let list_block = navigation_block("Files", true)
-        .title_style(Style::default().add_modifier(Modifier::BOLD))
-        .padding(Padding::new(1, 1, 0, 0));
+    let list_block =
+        navigation_block("Files", NavigationState::Focused).padding(Padding::new(1, 1, 0, 0));
     let list_inner = list_block.inner(list_area);
     let rows = usize::from(list_inner.height);
     let start = browser
@@ -384,7 +383,7 @@ fn browser_footer_text(width: u16) -> &'static str {
 }
 
 fn header_title(app: &App, width: usize) -> Line<'static> {
-    let now = now_label(app.current_work(), width);
+    let now = now_line(app.current_work(), width);
     if let Some(error) = app.refresh_error() {
         let error = safe_display_text(error).replace('\n', " ");
         let status = format!("Refresh error: {error}");
@@ -392,20 +391,21 @@ fn header_title(app: &App, width: usize) -> Line<'static> {
             return full;
         }
         // Keep NOW first, but reserve explicit error text before ordinary metadata.
-        let now_width = Line::from(now.as_str()).width().min(
+        let now_width = now.width().min(
             width
                 .saturating_sub(2 + "Refresh error:".len())
                 .max(7.min(width)),
         );
-        let now = truncate_text(&now, now_width);
-        let remaining = width.saturating_sub(Line::from(now.as_str()).width() + 2);
+        let mut now = now_line(app.current_work(), now_width);
+        let remaining = width.saturating_sub(now.width() + 2);
         if remaining == 0 {
-            return Line::from(now).style(Style::default().add_modifier(Modifier::BOLD));
+            return now;
         }
-        return Line::from(vec![
-            Span::styled(now, Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(format!("  {}", truncate_text(&status, remaining))),
-        ]);
+        now.spans.push(Span::raw(format!(
+            "  {}",
+            truncate_text(&status, remaining)
+        )));
+        return now;
     }
     let status = app.refresh_status();
     let watching = if status.retry_pending() {
@@ -420,20 +420,36 @@ fn header_title(app: &App, width: usize) -> Line<'static> {
     ]
     .into_iter()
     .find_map(|status| aligned_header(&now, &status, width))
-    .unwrap_or_else(|| Line::from(now).style(Style::default().add_modifier(Modifier::BOLD)))
+    .unwrap_or(now)
 }
 
-fn aligned_header(now: &str, status: &str, width: usize) -> Option<Line<'static>> {
-    let used = Line::from(now).width() + Line::from(status).width();
+fn aligned_header(now: &Line<'static>, status: &str, width: usize) -> Option<Line<'static>> {
+    let used = now.width() + Line::from(status).width();
     (used + 2 <= width).then(|| {
-        Line::from(vec![
-            Span::styled(
-                now.to_owned(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("{}{status}", " ".repeat(width - used))),
-        ])
+        let mut line = now.clone();
+        line.spans
+            .push(Span::raw(format!("{}{status}", " ".repeat(width - used))));
+        line
     })
+}
+
+fn now_line(current_work: &CurrentWorkState, width: usize) -> Line<'static> {
+    let text = now_label(current_work, width);
+    let emphasis = Style::default().add_modifier(Modifier::BOLD);
+    let Some(rest) = text.strip_prefix('●') else {
+        return Line::from(text).style(emphasis);
+    };
+    let active =
+        matches!(current_work, CurrentWorkState::Available(work) if work.active_item().is_some());
+    let marker = if active {
+        Style::default().fg(Color::Blue)
+    } else {
+        Style::default().fg(Color::Blue).add_modifier(Modifier::DIM)
+    };
+    Line::from(vec![
+        Span::styled("●", marker),
+        Span::styled(rest.to_owned(), emphasis),
+    ])
 }
 
 fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
@@ -442,10 +458,10 @@ fn now_label(current_work: &CurrentWorkState, width: usize) -> String {
         return truncate_text(PREFIX, width);
     }
     let value = match current_work {
-        CurrentWorkState::Available(work) => {
-            work.active_item().map_or("Not set", |item| item.text())
-        }
-        CurrentWorkState::NotSet => "Not set",
+        CurrentWorkState::Available(work) => work
+            .active_item()
+            .map_or("Not processing", |item| item.text()),
+        CurrentWorkState::NotSet => "Not processing",
         CurrentWorkState::Unavailable => "Unavailable",
     };
     let available = width.saturating_sub(Line::from(PREFIX).width());
@@ -559,7 +575,7 @@ fn render_tasks(frame: &mut Frame, area: Rect, app: &App) {
         ))
         .block(navigation_block(
             "Tasks",
-            app.focused_panel() == FocusedPanel::Tasks,
+            NavigationState::focus(app.focused_panel() == FocusedPanel::Tasks),
         )),
         area,
     );
@@ -569,7 +585,7 @@ fn render_evidence(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(evidence_selector_lines(app, inner_width(area))).block(navigation_block(
             "Evidence",
-            app.focused_panel() == FocusedPanel::Evidence,
+            NavigationState::focus(app.focused_panel() == FocusedPanel::Evidence),
         )),
         area,
     );
@@ -718,7 +734,7 @@ fn render_changed_files_list(frame: &mut Frame, area: Rect, app: &App) {
         ))
         .block(navigation_block(
             "Changed Files",
-            app.focused_panel() == FocusedPanel::ChangedFiles,
+            NavigationState::focus(app.focused_panel() == FocusedPanel::ChangedFiles),
         )),
         area,
     );
@@ -732,7 +748,7 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
             inner_width(area),
             |id| app.commit_emphasis(id),
         ))
-        .block(navigation_block("Recent Commits", false)),
+        .block(navigation_block("Recent Commits", NavigationState::Passive)),
         area,
     );
 }
@@ -1316,19 +1332,40 @@ fn parse_diff_hunk(line: &str) -> Option<DiffHunk> {
         new_remaining,
     })
 }
-fn navigation_block(title: &str, focused: bool) -> Block<'static> {
+#[derive(Clone, Copy)]
+enum NavigationState {
+    Focused,
+    Unfocused,
+    Passive,
+}
+
+impl NavigationState {
+    fn focus(focused: bool) -> Self {
+        if focused {
+            Self::Focused
+        } else {
+            Self::Unfocused
+        }
+    }
+}
+
+fn navigation_block(title: &str, state: NavigationState) -> Block<'static> {
     // Title reserves the top row; padding preserves the former frame's content rectangle.
     // The short thick stroke belongs to the section title, never to a selected item.
+    let (marker, style) = match state {
+        NavigationState::Focused => ("▌", Style::default().fg(Color::Blue)),
+        NavigationState::Unfocused => (
+            "▌",
+            Style::default().fg(Color::Blue).add_modifier(Modifier::DIM),
+        ),
+        NavigationState::Passive => ("·", Style::default().add_modifier(Modifier::DIM)),
+    };
     Block::default()
         .padding(Padding::new(1, 1, 0, 1))
-        .title(format!("{} {title} ", if focused { "▌" } else { " " }))
-        .title_style(if focused {
-            Style::default()
-                .fg(Color::Blue)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        })
+        .title(Line::from(vec![
+            Span::styled(marker, style),
+            Span::raw(format!(" {title} ")),
+        ]))
 }
 
 fn panel_block(title: impl AsRef<str>, focused: bool) -> Block<'static> {
@@ -2670,8 +2707,9 @@ mod tests {
                 let buffer = terminal.backend().buffer();
                 let output = text(&terminal);
                 assert!(output.contains("▌ Files"));
-                assert!(buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
-                assert_eq!(buffer[(0, outer[1].y)].fg, Color::Reset);
+                assert!(!buffer[(2, outer[1].y)].modifier.contains(Modifier::BOLD));
+                assert_eq!(buffer[(0, outer[1].y)].fg, Color::Blue);
+                assert!(!buffer[(0, outer[1].y)].modifier.contains(Modifier::DIM));
                 assert_eq!(buffer[(2, outer[1].y)].fg, Color::Reset);
                 assert!(!output.contains('┏'));
                 assert_eq!(
@@ -4110,12 +4148,15 @@ mod tests {
         );
         for width in [80, 100, 120] {
             let header = header_title(&app, width);
-            assert!(header.to_string().starts_with("● NOW  Not set"));
+            assert!(header.to_string().starts_with("● NOW  Not processing"));
             assert!(!header.to_string().contains("DevScope"));
             assert!(header.to_string().ends_with("Watching · Git 09:42"));
             assert_eq!(header.width(), width);
-            assert!(header.spans[0].style.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(header.spans[1].style, Style::default());
+            assert_eq!(header.spans[0].style.fg, Some(Color::Blue));
+            assert!(header.spans[0].style.add_modifier.contains(Modifier::DIM));
+            assert!(header.spans[1].style.add_modifier.contains(Modifier::BOLD));
+            assert_eq!(header.spans[1].style.fg, None);
+            assert_eq!(header.spans[2].style, Style::default());
             let mut terminal = Terminal::new(TestBackend::new(width as u16, 30)).unwrap();
             terminal.draw(|frame| render(frame, &app)).unwrap();
             assert_eq!(
@@ -4146,10 +4187,10 @@ mod tests {
             Some(time::macros::time!(09:42)),
         );
         for expected in [
-            "● NOW  Not set  Watching · Git 09:42",
-            "● NOW  Not set  Watching · Git",
-            "● NOW  Not set  Watching",
-            "● NOW  Not set",
+            "● NOW  Not processing  Watching · Git 09:42",
+            "● NOW  Not processing  Watching · Git",
+            "● NOW  Not processing  Watching",
+            "● NOW  Not processing",
         ] {
             assert_eq!(
                 header_title(&app, Line::from(expected).width()).to_string(),
@@ -4618,7 +4659,7 @@ mod tests {
         let mut app = app(TaskState::Available(summary), ActivityState::Unavailable);
         app.apply_current_work(current_work);
         assert!(draw(&app, 70, 30).contains("[Work parent]"));
-        assert!(draw(&app, 70, 30).contains("NOW  Not set"));
+        assert!(draw(&app, 70, 30).contains("NOW  Not processing"));
 
         app.apply_current_work(CurrentWorkState::Unavailable);
         assert!(!draw(&app, 70, 30).contains("[Work parent]"));
@@ -5320,7 +5361,7 @@ mod tests {
         assert!(tasks_focused.contains("Tasks"));
         assert!(tasks_focused.contains("Evidence"));
         assert!(tasks_focused.contains("▌ Tasks "));
-        assert!(!tasks_focused.contains("▌ Evidence "));
+        assert!(tasks_focused.contains("▌ Evidence "));
         assert!(!tasks_focused.contains("┌ Evidence "));
         assert!(tasks_focused.contains("> □ Task 0"));
 
@@ -5329,7 +5370,7 @@ mod tests {
         assert!(evidence_focused.contains("Tasks"));
         assert!(evidence_focused.contains("Evidence"));
         assert!(evidence_focused.contains("▌ Evidence "));
-        assert!(!evidence_focused.contains("▌ Tasks "));
+        assert!(evidence_focused.contains("▌ Tasks "));
         assert!(!evidence_focused.contains("┌ Tasks "));
         assert!(evidence_focused.contains("> □ Task 0"));
         assert_ne!(tasks_focused, evidence_focused);
@@ -5404,29 +5445,34 @@ mod tests {
     }
 
     #[test]
-    fn only_focused_navigation_title_is_blue_and_bold() {
-        for (title, focused) in [
-            ("Tasks", true),
-            ("Evidence", true),
-            ("Changed Files", true),
-            ("Tasks", false),
-            ("Evidence", false),
-            ("Changed Files", false),
-            ("Recent Commits", false),
+    fn navigation_markers_distinguish_focusable_and_passive_sections() {
+        for (title, state) in [
+            ("Tasks", NavigationState::Focused),
+            ("Evidence", NavigationState::Focused),
+            ("Changed Files", NavigationState::Focused),
+            ("Tasks", NavigationState::Unfocused),
+            ("Evidence", NavigationState::Unfocused),
+            ("Changed Files", NavigationState::Unfocused),
+            ("Recent Commits", NavigationState::Passive),
         ] {
             let mut terminal = Terminal::new(TestBackend::new(30, 5)).unwrap();
             terminal
-                .draw(|frame| frame.render_widget(navigation_block(title, focused), frame.area()))
+                .draw(|frame| frame.render_widget(navigation_block(title, state), frame.area()))
                 .unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(0, 0)].symbol(), if focused { "▌" } else { " " });
-            assert_eq!(buffer[(2, 0)].modifier.contains(Modifier::BOLD), focused);
-            for x in 0..(title.len() + 3) as u16 {
-                assert_eq!(
-                    buffer[(x, 0)].fg,
-                    if focused { Color::Blue } else { Color::Reset }
-                );
-                assert_eq!(buffer[(x, 0)].modifier.contains(Modifier::BOLD), focused);
+            let passive = matches!(state, NavigationState::Passive);
+            assert_eq!(buffer[(0, 0)].symbol(), if passive { "·" } else { "▌" });
+            assert_eq!(
+                buffer[(0, 0)].fg,
+                if passive { Color::Reset } else { Color::Blue }
+            );
+            assert_eq!(
+                buffer[(0, 0)].modifier.contains(Modifier::DIM),
+                !matches!(state, NavigationState::Focused)
+            );
+            for x in 1..(title.len() + 3) as u16 {
+                assert_eq!(buffer[(x, 0)].fg, Color::Reset);
+                assert_eq!(buffer[(x, 0)].modifier, Modifier::empty());
             }
             assert!(!text(&terminal).contains('─'));
         }
@@ -5438,18 +5484,23 @@ mod tests {
             for height in 3..=30 {
                 let area = Rect::new(0, 0, width, height);
                 assert_eq!(
-                    navigation_block("Tasks", false).inner(area),
+                    navigation_block("Tasks", NavigationState::Unfocused).inner(area),
                     panel_block("Tasks", false).inner(area)
                 );
                 assert_eq!(
-                    navigation_block("Tasks", true).inner(area),
+                    navigation_block("Tasks", NavigationState::Focused).inner(area),
                     panel_block("Tasks", true).inner(area)
                 );
             }
         }
         let mut terminal = Terminal::new(TestBackend::new(30, 5)).unwrap();
         terminal
-            .draw(|frame| frame.render_widget(navigation_block("Evidence", false), frame.area()))
+            .draw(|frame| {
+                frame.render_widget(
+                    navigation_block("Evidence", NavigationState::Unfocused),
+                    frame.area(),
+                )
+            })
             .unwrap();
         let buffer = terminal.backend().buffer();
         for y in 1..5 {
@@ -5484,29 +5535,40 @@ mod tests {
                     let output = text(&terminal);
                     assert!(output.contains("● NOW"));
                     assert!(output.contains("┌ Project Progress ·"));
-                    assert_eq!(output.matches('▌').count(), 1);
+                    assert_eq!(
+                        output.matches('▌').count(),
+                        focusable_panels(width, height).len()
+                    );
                     assert!(!output.contains('┏'));
                     assert_eq!(
                         output.contains("┌ Detail:"),
                         has_global_preview(width, height, visible)
                     );
                     let buffer = terminal.backend().buffer();
-                    assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+                    assert!(buffer[(2, 0)].modifier.contains(Modifier::BOLD));
                     assert!(!buffer[(0, height - 1)].modifier.contains(Modifier::BOLD));
-                    let focused_y = (0..height)
-                        .find(|y| buffer[(0, *y)].symbol() == "▌")
-                        .unwrap();
                     let focused_title = match panel {
                         FocusedPanel::Tasks => "Tasks",
                         FocusedPanel::Evidence => "Evidence",
                         FocusedPanel::ChangedFiles => "Changed Files",
                     };
+                    let focused_y = (0..height)
+                        .find(|y| {
+                            let row = (2..width)
+                                .map(|x| buffer[(x, *y)].symbol())
+                                .collect::<String>();
+                            row.starts_with(&format!("{focused_title} "))
+                                || row.trim_end() == focused_title
+                        })
+                        .unwrap();
                     for y in 0..height {
                         for x in 0..width {
                             let cell = &buffer[(x, y)];
                             assert_eq!(
                                 cell.fg,
-                                if y == focused_y && usize::from(x) < focused_title.len() + 3 {
+                                if x == 0
+                                    && (cell.symbol() == "▌" || (y == 0 && cell.symbol() == "●"))
+                                {
                                     Color::Blue
                                 } else {
                                     Color::Reset
@@ -5514,7 +5576,13 @@ mod tests {
                                 "{width}x{height} ({x}, {y})"
                             );
                             assert_eq!(cell.bg, Color::Reset);
-                            assert!(!cell.modifier.contains(Modifier::DIM));
+                            assert_eq!(
+                                cell.modifier.contains(Modifier::DIM),
+                                x == 0
+                                    && (y == 0
+                                        || (cell.symbol() == "▌" && y != focused_y)
+                                        || cell.symbol() == "·")
+                            );
                             if cell.symbol() == ">" {
                                 assert_eq!(cell.fg, Color::Reset);
                             }
@@ -5528,15 +5596,57 @@ mod tests {
     fn now_uses_only_the_explicit_active_item() {
         let no_active = work_state("- [ ] Next candidate\n- [ ] Other item\n");
         let no_active_label = now_label(&no_active, 80);
-        assert!(no_active_label.contains("Not set"));
+        assert!(no_active_label.contains("Not processing"));
         assert!(!no_active_label.contains("Next candidate"));
 
         let active = work_state("Active: 2\n- [ ] Next candidate\n- [ ] Explicit active item\n");
         let active_label = now_label(&active, 80);
         assert!(active_label.contains("Explicit active item"));
         assert!(!active_label.contains("Next candidate"));
-        assert!(now_label(&CurrentWorkState::NotSet, 80).contains("Not set"));
+        assert!(now_label(&CurrentWorkState::NotSet, 80).contains("Not processing"));
         assert!(now_label(&CurrentWorkState::Unavailable, 80).contains("Unavailable"));
+    }
+
+    #[test]
+    fn now_marker_uses_only_explicit_active_state_and_survives_header_truncation() {
+        let active = work_state("Active: 1\n- [ ] 日本語の明示的な作業\n");
+        let inactive = work_state("- [ ] Next candidate\n");
+        for (state, active, expected) in [
+            (active, true, "日本語の明示的な作業"),
+            (inactive, false, "Not processing"),
+            (CurrentWorkState::NotSet, false, "Not processing"),
+            (CurrentWorkState::Unavailable, false, "Unavailable"),
+        ] {
+            let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+            app.apply_current_work(state);
+            let line = header_title(&app, 100);
+            assert!(line.to_string().contains(expected));
+            assert!(!line.to_string().contains("Not set"));
+            assert_eq!(line.spans[0].content, "●");
+            assert_eq!(line.spans[0].style.fg, Some(Color::Blue));
+            assert_eq!(
+                line.spans[0].style.add_modifier.contains(Modifier::DIM),
+                !active
+            );
+            assert!(
+                line.spans[1..].iter().all(|span| span.style.fg.is_none()
+                    && !span.style.add_modifier.contains(Modifier::DIM))
+            );
+            app.set_refresh_error("Read failed");
+            assert!(header_title(&app, 40).to_string().contains("Refresh error"));
+            for width in 0..160 {
+                let header = header_title(&app, width);
+                assert!(header.width() <= width);
+                if header.to_string().starts_with('●') {
+                    assert_eq!(header.spans[0].style.fg, Some(Color::Blue));
+                    assert_eq!(
+                        header.spans[0].style.add_modifier.contains(Modifier::DIM),
+                        !active
+                    );
+                    assert!(header.spans[1..].iter().all(|span| span.style.fg.is_none()));
+                }
+            }
+        }
     }
 
     #[test]
@@ -5553,7 +5663,7 @@ mod tests {
         app.apply_current_work(work_state("- [ ] Next candidate\n"));
         let refreshed = draw(&app, 40, 18);
         assert!(refreshed.contains("NOW"));
-        assert!(refreshed.contains("Not set"));
+        assert!(refreshed.contains("Not processing"));
         assert!(!refreshed.contains("Next candidate"));
     }
     #[test]
