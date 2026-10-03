@@ -318,11 +318,15 @@ them. Recent Commits remains overview-only until a concrete selection or drill-d
 Overview Preview uses compact `Label: value` fields for task metadata and Evidence,
 keeping outcome and freshness separate. Matching Current Work and source Context remain
 source-grounded sections. Changed Files identifies its selected path in the Preview title,
-without a duplicate body field, and reuses the existing diff/current-content inspection. Long lines wrap at the actual
+without a duplicate body field, and reuses the existing diff/current-content inspection. Non-diff long lines wrap at the actual
 Preview width, preferring word boundaries and preserving graphemes in long tokens; scroll
 limits use these same rendered rows and exclude the fixed action row. Browser Preview,
 Browser Full View, and Changed File Full Detail use the same width-aware wrapping for
-inspection content, with scroll limits derived from their actual content viewport.
+non-diff inspection content, with scroll limits derived from their actual content viewport.
+Git diff in Changed File Preview and Full View preserves one source line per visual row;
+wide rows use display-width-safe ellipsis truncation. Section titles, hunk headers, and
+added/removed content use bold; file-header metadata and context remain plain. Diff scroll
+limits use those same fitted rows. Diff colors and a line-number gutter remain unimplemented.
 Windows Terminal dogfood accepted the wrapped inspection and Browser return behavior.
 Half-screen Windows Terminal dogfood
 accepted the denser layout without changing the interaction model.

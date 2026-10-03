@@ -726,7 +726,15 @@ fn render_commits(frame: &mut Frame, area: Rect, app: &App) {
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
     let (title, lines) = preview_content(app);
     let inner = preview_inner_areas(area);
-    let lines = wrap_preview_lines(lines, inner[0].width);
+    let lines = fit_inspection_lines(
+        lines,
+        inner[0].width,
+        app.focused_panel() == FocusedPanel::ChangedFiles
+            && matches!(
+                app.preview_inspection(),
+                Some(GitFileInspection::Diff { .. })
+            ),
+    );
     let limit = lines.len().saturating_sub(inner[0].height as usize);
     let scroll = app.preview_scroll().min(limit).min(u16::MAX as usize) as u16;
     frame.render_widget(panel_block(title, false), area);
@@ -788,9 +796,38 @@ pub fn preview_scroll_limit(app: &App, area: Rect) -> usize {
     let mut pane = overview_areas(area)[2];
     pane.width = preview_pane_widths(area.width).1;
     let viewport = preview_inner_areas(pane)[0];
-    wrap_preview_lines(preview_content(app).1, viewport.width)
-        .len()
-        .saturating_sub(viewport.height as usize)
+    fit_inspection_lines(
+        preview_content(app).1,
+        viewport.width,
+        app.focused_panel() == FocusedPanel::ChangedFiles
+            && matches!(
+                app.preview_inspection(),
+                Some(GitFileInspection::Diff { .. })
+            ),
+    )
+    .len()
+    .saturating_sub(viewport.height as usize)
+}
+
+// Diff rows retain their source-line structure; all other inspection keeps wrapping.
+fn fit_inspection_lines(
+    lines: Vec<Line<'static>>,
+    width: u16,
+    is_diff: bool,
+) -> Vec<Line<'static>> {
+    if !is_diff {
+        return wrap_preview_lines(lines, width);
+    }
+    if width == 0 {
+        return Vec::new();
+    }
+    lines
+        .into_iter()
+        .map(|line| {
+            let text = truncate_text(&line.to_string(), usize::from(width));
+            Line::from(text).style(line.style)
+        })
+        .collect()
 }
 
 fn wrap_preview_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
@@ -1043,7 +1080,15 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
     };
     let block = panel_block(title, false);
     let viewport = block.inner(areas[1]);
-    let lines = wrap_preview_lines(full_view_lines(app), viewport.width);
+    let lines = fit_inspection_lines(
+        full_view_lines(app),
+        viewport.width,
+        matches!(app.detail_target(), Some(DetailTarget::ChangedFile { .. }))
+            && matches!(
+                app.detail_inspection(),
+                Some(GitFileInspection::Diff { .. })
+            ),
+    );
     let limit = lines.len().saturating_sub(usize::from(viewport.height));
     frame.render_widget(
         Paragraph::new(lines).block(block).scroll((
@@ -1070,9 +1115,17 @@ fn full_view_footer_text(width: u16) -> &'static str {
 
 pub fn detail_scroll_limit(app: &App, area: Rect) -> usize {
     let viewport = panel_block("", false).inner(detail_areas(app, area)[1]);
-    wrap_preview_lines(full_view_lines(app), viewport.width)
-        .len()
-        .saturating_sub(usize::from(viewport.height))
+    fit_inspection_lines(
+        full_view_lines(app),
+        viewport.width,
+        matches!(app.detail_target(), Some(DetailTarget::ChangedFile { .. }))
+            && matches!(
+                app.detail_inspection(),
+                Some(GitFileInspection::Diff { .. })
+            ),
+    )
+    .len()
+    .saturating_sub(usize::from(viewport.height))
 }
 
 fn detail_inspection_lines(diff: Option<&GitFileInspection>) -> Vec<Line<'static>> {
@@ -1122,12 +1175,17 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
     if !lines.is_empty() {
         lines.push(Line::from(""));
     }
-    lines.push(Line::from(title.to_owned()));
-    lines.extend(
-        safe_display_text(&diff.text)
-            .lines()
-            .map(|line| Line::from(line.to_owned())),
-    );
+    lines.push(Line::from(title.to_owned()).style(Style::default().add_modifier(Modifier::BOLD)));
+    lines.extend(safe_display_text(&diff.text).lines().map(|line| {
+        let emphasized = line.starts_with("@@")
+            || (line.starts_with('+') && !line.starts_with("+++"))
+            || (line.starts_with('-') && !line.starts_with("---"));
+        Line::from(line.to_owned()).style(if emphasized {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        })
+    }));
     if diff.truncated {
         lines.push(Line::from("... diff truncated ..."));
     }
@@ -1969,7 +2027,130 @@ mod tests {
     }
 
     #[test]
-    fn changed_full_view_wraps_diff_and_current_content_with_matching_limits() {
+    fn diff_rows_preserve_hierarchy_and_truncate_without_continuations() {
+        let source = "diff --git a/a.rs b/a.rs\nindex 111..222 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,4 @@\n context\n-old\n+new\n+追加された日本語";
+        let inspection = GitFileInspection::Diff {
+            unstaged: Some(GitDiffText {
+                text: source.into(),
+                truncated: false,
+            }),
+            staged: Some(GitDiffText {
+                text: format!(
+                    "+{}\n-{}\n {}",
+                    "日本語".repeat(40),
+                    "removed".repeat(40),
+                    "context".repeat(40)
+                ),
+                truncated: true,
+            }),
+        };
+        let lines = detail_inspection_lines(Some(&inspection));
+        for line in &lines {
+            let text = line.to_string();
+            let bold = matches!(text.as_str(), "Unstaged" | "Staged")
+                || text.starts_with("@@")
+                || (text.starts_with('+') && !text.starts_with("+++"))
+                || (text.starts_with('-') && !text.starts_with("---"));
+            assert_eq!(
+                line.style.add_modifier.contains(Modifier::BOLD),
+                bold,
+                "{text}"
+            );
+        }
+        for width in [1, 12, 40] {
+            let fitted = fit_inspection_lines(lines.clone(), width, true);
+            assert_eq!(fitted.len(), lines.len());
+            for (original, row) in lines.iter().zip(&fitted) {
+                assert!(row.width() <= usize::from(width));
+                assert_eq!(row.style, original.style);
+                assert_eq!(
+                    row.to_string(),
+                    truncate_text(&original.to_string(), usize::from(width))
+                );
+                if original.width() > usize::from(width) {
+                    assert!(row.to_string().ends_with('…'));
+                }
+            }
+        }
+        assert_eq!(lines.last().unwrap().to_string(), "... diff truncated ...");
+        assert!(fit_inspection_lines(lines, 0, true).is_empty());
+        let content = GitFileInspection::FileContent {
+            text: format!("+{}\n-{}", "日本語".repeat(40), "context".repeat(40)),
+            truncated: false,
+        };
+        let lines = detail_inspection_lines(Some(&content));
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.style.add_modifier.contains(Modifier::BOLD))
+        );
+        assert!(fit_inspection_lines(lines.clone(), 12, false).len() > lines.len());
+    }
+
+    #[test]
+    fn changed_diff_preview_and_full_view_limits_use_source_rows() {
+        let mut app = app(
+            TaskState::Unavailable,
+            activity_with_files(vec![GitChangedFile {
+                path: "a.rs".into(),
+                status: GitFileStatus::Modified,
+                changes: Default::default(),
+            }]),
+        );
+        app.reconcile_focus(&[FocusedPanel::ChangedFiles]);
+        let inspection = GitFileInspection::Diff {
+            unstaged: Some(GitDiffText {
+                text: (0..40)
+                    .map(|i| format!("+row {i} {}\n", "日本語".repeat(80)))
+                    .collect(),
+                truncated: false,
+            }),
+            staged: None,
+        };
+        app.apply_preview_inspection(inspection.clone());
+        let area = Rect::new(0, 0, 80, 30);
+        let mut pane = overview_areas(area)[2];
+        pane.width = preview_pane_widths(area.width).1;
+        let viewport = preview_inner_areas(pane)[0];
+        let logical = preview_content(&app).1;
+        let limit = preview_scroll_limit(&app, area);
+        assert_eq!(
+            limit,
+            logical.len().saturating_sub(usize::from(viewport.height))
+        );
+        assert!(wrap_preview_lines(logical, viewport.width).len() > 44);
+        app.scroll_preview(isize::MAX, limit);
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        terminal
+            .draw(|frame| render_preview(frame, pane, &app))
+            .unwrap();
+        let output = text(&terminal);
+        assert!(output.contains("+row 39"));
+        assert!(output.contains("Ctrl+"));
+        let last = &terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)];
+        assert!(last.modifier.contains(Modifier::BOLD));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        app.apply_detail_inspection(inspection);
+        let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+        let limit = detail_scroll_limit(&app, area);
+        assert_eq!(
+            limit,
+            full_view_lines(&app)
+                .len()
+                .saturating_sub(usize::from(viewport.height))
+        );
+        app.scroll_detail(isize::MAX, limit);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert!(text(&terminal).contains("+row 39"));
+        assert!(
+            terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)]
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn changed_full_view_fits_diff_and_wraps_current_content_with_matching_limits() {
         let mut app = app(
             TaskState::Unavailable,
             activity_with_files(vec![GitChangedFile {
@@ -1998,36 +2179,49 @@ mod tests {
                 truncated: false,
             },
         ] {
+            let is_diff = matches!(inspection, GitFileInspection::Diff { .. });
             app.apply_detail_inspection(inspection);
             for width in [30, 80, 120] {
                 let area = Rect::new(0, 0, width, 25);
                 let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
                 let logical = full_view_lines(&app);
                 assert!(logical.iter().all(|row| !row.to_string().contains('\x1b')));
-                let rows = wrap_preview_lines(logical.clone(), viewport.width);
-                assert!(rows.len() > logical.len());
+                let rows = fit_inspection_lines(logical.clone(), viewport.width, is_diff);
+                if is_diff {
+                    assert_eq!(rows.len(), logical.len());
+                    assert!(rows.last().unwrap().to_string().ends_with('…'));
+                } else {
+                    assert!(rows.len() > logical.len());
+                }
                 assert!(
                     rows.iter()
                         .all(|row| row.width() <= usize::from(viewport.width))
                 );
                 let limit = detail_scroll_limit(&app, area);
-                assert_eq!(limit, rows.len() - usize::from(viewport.height));
+                assert_eq!(
+                    limit,
+                    rows.len().saturating_sub(usize::from(viewport.height))
+                );
                 app.scroll_detail(limit as isize, limit);
                 let mut terminal = Terminal::new(TestBackend::new(width, 25)).unwrap();
                 terminal.draw(|frame| render(frame, &app)).unwrap();
                 let last_row = (viewport.x..viewport.right())
                     .map(|x| terminal.backend().buffer()[(x, viewport.bottom() - 1)].symbol())
                     .collect::<String>();
-                assert_eq!(
-                    last_row.trim_end(),
-                    rows.last().unwrap().to_string().trim_end()
-                );
-                assert!(
-                    rows.iter()
-                        .map(ToString::to_string)
-                        .collect::<String>()
-                        .ends_with("TAIL")
-                );
+                if limit > 0 {
+                    assert_eq!(
+                        last_row.trim_end(),
+                        rows.last().unwrap().to_string().trim_end()
+                    );
+                }
+                if !is_diff {
+                    assert!(
+                        rows.iter()
+                            .map(ToString::to_string)
+                            .collect::<String>()
+                            .ends_with("TAIL")
+                    );
+                }
             }
         }
         for width in [18, 41, 78, 118] {
