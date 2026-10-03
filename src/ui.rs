@@ -206,11 +206,15 @@ fn browser_file_content_lines(
     let mut lines = preview_field("File", &browser_path(path));
     lines.extend(preview_field("Mode", "File content"));
     lines.push(Line::from(""));
-    lines.extend(
-        safe_display_text(text)
-            .lines()
-            .map(|line| Line::from(line.to_owned())),
-    );
+    lines.extend(browser_full_view_content_lines(text, truncated));
+    lines
+}
+
+fn browser_full_view_content_lines(text: &str, truncated: bool) -> Vec<Line<'static>> {
+    let mut lines = safe_display_text(text)
+        .lines()
+        .map(|line| Line::from(line.to_owned()))
+        .collect::<Vec<_>>();
     if truncated {
         lines.push(Line::from("... file content truncated ..."));
     }
@@ -349,7 +353,11 @@ fn render_file_browser(frame: &mut Frame, area: Rect, app: &App) {
             .preview_scroll
             .min(browser_preview_scroll_limit(app, area))
             .min(u16::MAX as usize) as u16;
-        frame.render_widget(panel_block("Preview", false), panes[1]);
+        frame.render_widget(
+            panel_block("Preview", false)
+                .title_style(Style::default().add_modifier(Modifier::BOLD)),
+            panes[1],
+        );
         let inner = preview_inner_areas(panes[1]);
         frame.render_widget(
             Paragraph::new(wrap_preview_lines(
@@ -1072,7 +1080,7 @@ fn selected_changed_file_path(app: &App) -> Option<String> {
 }
 fn detail_areas(app: &App, area: Rect) -> [Rect; 3] {
     let header_height = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
-        0
+        1
     } else {
         10
     };
@@ -1088,16 +1096,23 @@ fn detail_areas(app: &App, area: Rect) -> [Rect; 3] {
 fn full_view_lines(app: &App) -> Vec<Line<'static>> {
     match app.detail_target() {
         Some(DetailTarget::BrowserFile {
-            path,
-            text,
-            truncated,
-        }) => browser_file_content_lines(path, text, *truncated),
+            text, truncated, ..
+        }) => browser_full_view_content_lines(text, *truncated),
         _ => detail_inspection_lines(app.detail_inspection()),
     }
 }
 
 fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
     let areas = detail_areas(app, area);
+    if let Some(DetailTarget::BrowserFile { path, .. }) = app.detail_target() {
+        frame.render_widget(
+            Paragraph::new(truncate_text(
+                &format!("Path: {}", browser_path(path)),
+                usize::from(areas[0].width),
+            )),
+            areas[0],
+        );
+    }
     if let Some(DetailTarget::ChangedFile {
         path,
         status,
@@ -1119,7 +1134,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
     let title = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
-        "File Detail"
+        "File Content"
     } else {
         match app.detail_inspection() {
             Some(GitFileInspection::Diff { .. }) => "Diff",
@@ -2304,6 +2319,102 @@ mod tests {
     }
 
     #[test]
+    fn browser_preview_title_is_bold_and_full_view_has_one_external_path_row() {
+        use devscope::progress::{BrowserEntry, BrowserEntryKind};
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        for path in [
+            "README.md".to_owned(),
+            "src/progress/build_test_runner.rs".to_owned(),
+            format!("docs/{}\x1b.txt", "日本語".repeat(60)),
+        ] {
+            app.file_browser.entries = vec![BrowserEntry {
+                path: path.clone().into(),
+                name: "file.txt".into(),
+                kind: BrowserEntryKind::File,
+            }];
+            app.file_browser.selected = Some(0);
+            let content = format!(
+                "first content\ncontrol\x1b[2J\n{}last content",
+                "more content\n".repeat(60)
+            );
+            app.file_browser.preview = Some(Ok((content.clone(), true)));
+            let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let pane = browser_panes(browser_areas(&app, Rect::new(0, 0, 120, 30))[1])[1];
+            for x in pane.x + 2..pane.x + 9 {
+                let cell = &terminal.backend().buffer()[(x, pane.y)];
+                assert_eq!(cell.fg, Color::Reset);
+                assert!(cell.modifier.contains(Modifier::BOLD));
+            }
+            assert!(
+                browser_preview_lines(&app)[0]
+                    .to_string()
+                    .starts_with("File: ")
+            );
+            assert_eq!(
+                browser_preview_lines(&app)[1].to_string(),
+                "Mode: File content"
+            );
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+            assert!(app.has_detail_view());
+            let lines = full_view_lines(&app);
+            assert_eq!(lines[0].to_string(), "first content");
+            assert_eq!(lines[1].to_string(), "control\\u{1b}[2J");
+            assert!(
+                !lines
+                    .iter()
+                    .any(|line| line.to_string().starts_with("File: ")
+                        || line.to_string().contains("Mode: File content"))
+            );
+            for width in [1, 20, 80, 120] {
+                let area = Rect::new(0, 0, width, 30);
+                let areas = detail_areas(&app, area);
+                assert_eq!(areas[0].height, 1);
+                assert_eq!(areas[1].y, 1);
+                let viewport = panel_block("", false).inner(areas[1]);
+                let wrapped = fit_inspection_lines(lines.clone(), viewport.width, false);
+                let limit = wrapped.len().saturating_sub(usize::from(viewport.height));
+                assert_eq!(detail_scroll_limit(&app, area), limit);
+                app.scroll_detail(-isize::MAX, limit);
+                let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+                terminal.draw(|frame| render(frame, &app)).unwrap();
+                let buffer = terminal.backend().buffer();
+                let expected = truncate_text(
+                    &format!("Path: {}", browser_path(std::path::Path::new(&path))),
+                    usize::from(width),
+                );
+                let expected_buffer = ratatui::buffer::Buffer::with_lines([expected.as_str()]);
+                for x in 0..width {
+                    assert_eq!(
+                        buffer[(x, 0)].symbol(),
+                        if x < expected_buffer.area.width {
+                            expected_buffer[(x, 0)].symbol()
+                        } else {
+                            " "
+                        }
+                    );
+                    assert_eq!(buffer[(x, 0)].fg, Color::Reset);
+                    assert_eq!(buffer[(x, 0)].modifier, Modifier::empty());
+                }
+                assert!(!text(&terminal).contains("File Detail"));
+                if width >= 80 {
+                    assert!(text(&terminal).contains("File Content"));
+                    assert_eq!(buffer[(viewport.x, viewport.y)].symbol(), "f");
+                    app.scroll_detail(limit as isize, limit);
+                    terminal.draw(|frame| render(frame, &app)).unwrap();
+                    assert!(text(&terminal).contains("last content"));
+                    assert!(text(&terminal).contains("... file content truncated ..."));
+                    assert!(text(&terminal).contains(full_view_footer_text(width)));
+                }
+            }
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert!(app.is_file_browser_open());
+            assert_eq!(app.file_browser.preview, Some(Ok((content, true))));
+        }
+    }
+
+    #[test]
     fn browser_preview_and_full_view_wrap_paths_content_and_reach_last_row() {
         use devscope::progress::{BrowserEntry, BrowserEntryKind};
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
@@ -2365,7 +2476,7 @@ mod tests {
             );
             app.scroll_detail(limit as isize, limit);
             let output = draw(&app, width, height);
-            assert!(output.contains("File Detail"));
+            assert!(output.contains("File Content"));
             assert!(
                 output.contains("TAIL"),
                 "width={width}, height={height}, viewport={viewport:?}, rows={}, limit={limit}\n{output}",
@@ -5497,7 +5608,7 @@ mod tests {
         browser.file_browser.preview = Some(Ok(("text".into(), false)));
         browser.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         for width in [40, 80, 120] {
-            assert_view(&browser, &[("File Detail", 0)], width);
+            assert_view(&browser, &[("File Content", 1)], width);
         }
     }
 
