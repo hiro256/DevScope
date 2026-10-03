@@ -12,7 +12,7 @@ use devscope::progress::{
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
@@ -1209,9 +1209,15 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
         .to_string()
         .len();
     lines.extend(rows.into_iter().map(|(line, numbers)| {
-        let emphasized = line.starts_with("@@")
-            || (line.starts_with('+') && !line.starts_with("+++ "))
-            || (line.starts_with('-') && !line.starts_with("--- "));
+        let color = if line.starts_with("@@") {
+            Some(Color::Cyan)
+        } else if line.starts_with('+') && !line.starts_with("+++ ") {
+            Some(Color::Green)
+        } else if line.starts_with('-') && !line.starts_with("--- ") {
+            Some(Color::Red)
+        } else {
+            None
+        };
         let text = match numbers {
             Some((old, new)) => format!(
                 "{:>digits$} {:>digits$} │ {line}",
@@ -1220,10 +1226,9 @@ fn append_diff_section(lines: &mut Vec<Line<'static>>, title: &str, diff: Option
             ),
             None => line.to_owned(),
         };
-        Line::from(text).style(if emphasized {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
+        Line::from(text).style(match color {
+            Some(color) => Style::default().fg(color).add_modifier(Modifier::BOLD),
+            None => Style::default(),
         })
     }));
     if diff.truncated {
@@ -2134,25 +2139,25 @@ mod tests {
     #[test]
     fn diff_rows_preserve_hierarchy_and_truncate_without_continuations() {
         let source_cases = [
-            ("diff --git a/a.rs b/a.rs", false),
-            ("index 111..222 100644", false),
-            ("--- a/a.rs", false),
-            ("+++ b/a.rs", false),
-            ("--- /dev/null", false),
-            ("+++ /dev/null", false),
-            (" context", false),
-            ("@@ -1,3 +1,4 @@", true),
-            ("-old", true),
-            ("+new", true),
+            ("diff --git a/a.rs b/a.rs", false, None),
+            ("index 111..222 100644", false, None),
+            ("--- a/a.rs", false, None),
+            ("+++ b/a.rs", false, None),
+            ("--- /dev/null", false, None),
+            ("+++ /dev/null", false, None),
+            (" context", false, None),
+            ("@@ -1,3 +1,4 @@", true, Some(Color::Cyan)),
+            ("-old", true, Some(Color::Red)),
+            ("+new", true, Some(Color::Green)),
             // Repeated diff markers in source content are not file headers.
-            ("++++counter;", true),
-            ("----value;", true),
-            ("+追加された日本語", true),
-            ("-削除された日本語", true),
+            ("++++counter;", true, Some(Color::Green)),
+            ("----value;", true, Some(Color::Red)),
+            ("+追加された日本語", true, Some(Color::Green)),
+            ("-削除された日本語", true, Some(Color::Red)),
         ];
         let source = source_cases
             .iter()
-            .map(|(text, _)| *text)
+            .map(|(text, _, _)| *text)
             .collect::<Vec<_>>()
             .join("\n");
         let inspection = GitFileInspection::Diff {
@@ -2171,10 +2176,12 @@ mod tests {
             }),
         };
         let lines = detail_inspection_lines(Some(&inspection));
-        for (text, bold) in source_cases.into_iter().chain([
-            ("Unstaged", true),
-            ("Staged", true),
-            ("... diff truncated ...", false),
+        for (text, bold, color) in source_cases.into_iter().chain([
+            ("Unstaged", true, None),
+            ("Staged", true, None),
+            ("Mode", false, None),
+            ("  Git diff", false, None),
+            ("... diff truncated ...", false, None),
         ]) {
             let line = lines
                 .iter()
@@ -2183,6 +2190,7 @@ mod tests {
                     rendered == text || rendered.ends_with(&format!("│ {text}"))
                 })
                 .unwrap();
+            assert_eq!(line.style.fg, color, "{text}");
             assert_eq!(
                 line.style.add_modifier.contains(Modifier::BOLD),
                 bold,
@@ -2211,6 +2219,7 @@ mod tests {
             truncated: false,
         };
         let lines = detail_inspection_lines(Some(&content));
+        assert!(lines.iter().all(|line| line.style.fg.is_none()));
         assert!(
             lines
                 .iter()
@@ -2254,6 +2263,9 @@ mod tests {
         );
         for row in &rows {
             let text = row.to_string();
+            if text == "\\ No newline at end of file" {
+                assert_eq!(row.style.fg, None);
+            }
             let bold = text == "Unstaged"
                 || text.starts_with("@@")
                 || text.contains("│ -")
@@ -2285,10 +2297,16 @@ mod tests {
         assert_eq!(rows[2].to_string(), "  99  999 │  日本語");
         assert!(rows[3].to_string().starts_with(" 100      │ -削除"));
         assert!(rows[4].to_string().starts_with("     1000 │ +追加"));
+        assert_eq!(rows[2].style.fg, None);
+        assert_eq!(rows[3].style.fg, Some(Color::Red));
+        assert_eq!(rows[4].style.fg, Some(Color::Green));
         for width in [0, 1, 8, 13, 20, 40] {
             let fitted = fit_inspection_lines(rows.clone(), width, true);
             assert_eq!(fitted.len(), if width == 0 { 0 } else { rows.len() });
             assert!(fitted.iter().all(|row| row.width() <= usize::from(width)));
+            for (original, fitted) in rows.iter().zip(&fitted) {
+                assert_eq!(fitted.style, original.style);
+            }
             if width > 0 {
                 assert!(fitted[3].to_string().ends_with('…'));
                 assert!(fitted[4].to_string().ends_with('…'));
@@ -2399,6 +2417,7 @@ mod tests {
         assert!(output.contains("Ctrl+"));
         let last = &terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)];
         assert!(last.modifier.contains(Modifier::BOLD));
+        assert_eq!(last.fg, Color::Green);
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         app.apply_detail_inspection(inspection);
         let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
@@ -2416,6 +2435,10 @@ mod tests {
             terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)]
                 .modifier
                 .contains(Modifier::BOLD)
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(viewport.x, viewport.bottom() - 1)].fg,
+            Color::Green
         );
     }
 
