@@ -23,7 +23,6 @@ const CHANGE_COUNTS_GAP: usize = 2;
 const MAX_CHANGE_COUNTS_COLUMN: usize = 48;
 const MIN_NAVIGATION_PANE_WIDTH: u16 = 35;
 const MIN_PREVIEW_PANE_WIDTH: u16 = 43;
-const MUTED_AUXILIARY_COLOR: Color = Color::Rgb(99, 119, 119);
 
 #[derive(Clone, Copy)]
 enum LayoutVariant {
@@ -1438,27 +1437,19 @@ fn padded_title(title: impl AsRef<str>) -> String {
 
 fn project_progress(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(vec![
-        project_progress_line(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
-        project_progress_line(work_line(
+        Line::from(plan_line(app.plan(), usize::from(width.saturating_sub(2)))),
+        Line::from(work_line(
             app.current_work(),
             usize::from(width.saturating_sub(2)),
         )),
-        project_progress_line(format!("Activity   {}", activity(app.activity()))),
-        project_progress_line(format!("Evidence   {}", evidence(app))),
+        Line::from(format!("Activity   {}", activity(app.activity()))),
+        Line::from(format!("Evidence   {}", evidence(app))),
     ])
     .block(
         Block::default()
             .borders(Borders::ALL)
             .title(padded_title("Project Progress")),
     )
-}
-
-fn project_progress_line(text: String) -> Line<'static> {
-    let (label, value) = text.split_once(' ').expect("progress row contains a label");
-    Line::from(vec![
-        Span::styled(label.to_owned(), Style::default().fg(MUTED_AUXILIARY_COLOR)),
-        Span::raw(format!(" {value}")),
-    ])
 }
 
 fn plan_line(plan_state: PlanState, width: usize) -> String {
@@ -1937,17 +1928,14 @@ fn commit_line(
     };
     let mut remaining = prefix.chars().count();
     let mut spans = Vec::new();
-    for (index, (column, bold)) in [
+    for (column, bold) in [
         (commit.id.as_str(), phase == TransientEmphasisPhase::Hot),
         ("  ", false),
         (
             commit.summary.as_str(),
             phase != TransientEmphasisPhase::None,
         ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ] {
         let mut text: String = column.chars().take(remaining).collect();
         remaining = remaining.saturating_sub(column.chars().count());
         if remaining == 0 && truncated && clipped.ends_with('…') {
@@ -1957,8 +1945,6 @@ fn commit_line(
             text,
             if bold {
                 Style::default().add_modifier(Modifier::BOLD)
-            } else if index == 0 {
-                Style::default().fg(MUTED_AUXILIARY_COLOR)
             } else {
                 Style::default()
             },
@@ -4245,14 +4231,7 @@ mod tests {
         }
         for phase in [None, Hot, Warm, Settling, Cooling] {
             let row = commit_line(&commit, 100, phase);
-            assert_eq!(
-                row.spans[0].style.fg,
-                if phase == Hot {
-                    Option::None
-                } else {
-                    Some(Color::Rgb(99, 119, 119))
-                }
-            );
+            assert!(row.spans.iter().all(|span| span.style.fg.is_none()));
             assert!(
                 row.spans
                     .iter()
@@ -5374,7 +5353,7 @@ mod tests {
     }
 
     #[test]
-    fn overview_hierarchy_only_mutes_auxiliary_labels_across_layouts_and_preview_toggle() {
+    fn overview_hierarchy_only_colors_focus_across_layouts_and_preview_toggle() {
         let mut app = app(
             TaskState::Available(TaskSummary::new(1, task_items(1))),
             ActivityState::Unavailable,
@@ -5408,7 +5387,6 @@ mod tests {
                     let buffer = terminal.backend().buffer();
                     assert!(buffer[(0, 1)].modifier.contains(Modifier::BOLD));
                     assert!(!buffer[(0, height - 1)].modifier.contains(Modifier::BOLD));
-                    let progress = overview_areas(Rect::new(0, 0, width, height))[1];
                     let focused_y = (0..height)
                         .find(|y| buffer[(0, *y)].symbol() == "▌")
                         .unwrap();
@@ -5420,20 +5398,10 @@ mod tests {
                     for y in 0..height {
                         for x in 0..width {
                             let cell = &buffer[(x, y)];
-                            let muted_label = ["Plan", "Work", "Activity", "Evidence"]
-                                .iter()
-                                .enumerate()
-                                .any(|(index, label)| {
-                                    y == progress.y + 1 + index as u16
-                                        && x > progress.x
-                                        && x <= progress.x + label.len() as u16
-                                });
                             assert_eq!(
                                 cell.fg,
                                 if y == focused_y && usize::from(x) < focused_title.len() + 3 {
                                     Color::Blue
-                                } else if muted_label {
-                                    Color::Rgb(99, 119, 119)
                                 } else {
                                     Color::Reset
                                 },
@@ -5503,26 +5471,23 @@ mod tests {
         );
     }
     #[test]
-    fn project_progress_mutes_only_labels_without_changing_values_or_alignment() {
+    fn project_progress_uses_default_foreground_without_changing_text_or_alignment() {
         let app = app(
             TaskState::Available(TaskSummary::new(1, task_items(1))),
             ActivityState::Unavailable,
         );
         let expected = [
-            ("Plan", plan_line(app.plan(), 78)),
-            ("Work", work_line(app.current_work(), 78)),
-            (
-                "Activity",
-                format!("Activity   {}", activity(app.activity())),
-            ),
-            ("Evidence", format!("Evidence   {}", evidence(&app))),
+            plan_line(app.plan(), 78),
+            work_line(app.current_work(), 78),
+            format!("Activity   {}", activity(app.activity())),
+            format!("Evidence   {}", evidence(&app)),
         ];
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         terminal
             .draw(|frame| frame.render_widget(project_progress(&app, 80), frame.area()))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        for (index, (label, expected)) in expected.iter().enumerate() {
+        for (index, expected) in expected.iter().enumerate() {
             let y = index as u16 + 1;
             let rendered = (1..79).map(|x| buffer[(x, y)].symbol()).collect::<String>();
             assert_eq!(rendered.trim_end(), expected.trim_end());
@@ -5530,14 +5495,7 @@ mod tests {
                 let cell = &buffer[(x, y)];
                 assert!(!cell.modifier.contains(Modifier::DIM));
                 assert!(!cell.modifier.contains(Modifier::BOLD));
-                assert_eq!(
-                    cell.fg,
-                    if usize::from(x) <= label.len() {
-                        Color::Rgb(99, 119, 119)
-                    } else {
-                        Color::Reset
-                    }
-                );
+                assert_eq!(cell.fg, Color::Reset);
             }
         }
         assert!(!buffer[(0, 0)].modifier.contains(Modifier::DIM));
