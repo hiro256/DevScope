@@ -822,6 +822,8 @@ fn handle_navigation_key(
     app.handle_key_with_focusable_panels(key, ui::focusable_panels(area.width, area.height));
     if app.has_detail_view() {
         refresh_open_detail(project_root, app);
+        let initial_scroll = ui::evidence_initial_detail_scroll(app, area);
+        app.scroll_detail(initial_scroll as isize, ui::detail_scroll_limit(app, area));
     } else {
         if key.modifiers == KeyModifiers::CONTROL
             && ui::has_global_preview(area.width, area.height, app.preview_visible())
@@ -2065,6 +2067,52 @@ mod tests {
         git(&root, &["add", "."]);
         git(&root, &["commit", "-m", "initial"]);
         root
+    }
+
+    #[test]
+    fn evidence_initial_scroll_is_applied_only_on_open_and_reopen() {
+        use devscope::progress::{
+            BuildTestDiagnostic, BuildTestFreshness, BuildTestOutcome, BuildTestResult,
+        };
+        let mut app = App::new(devscope::project::ProjectSnapshot::unavailable());
+        app.reconcile_focus(&[crate::app::FocusedPanel::Evidence]);
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+                "fixture",
+                "fixture",
+                Some(1),
+                Duration::ZERO,
+                "failed",
+                Some(BuildTestDiagnostic::new(
+                    "context\n".repeat(40) + "panicked at\n" + &"after\n".repeat(30),
+                    "stderr",
+                )),
+            )),
+        );
+        app.select_evidence_detail(BuildTestKind::Test);
+        let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+        let open = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        handle_navigation_key(None, &mut app, open, area);
+        let initial = app.detail_scroll();
+        assert!(initial > 0);
+        handle_navigation_key(None, &mut app, key(KeyCode::Up), area);
+        assert_eq!(app.detail_scroll(), initial - 1);
+        handle_navigation_key(
+            None,
+            &mut app,
+            open,
+            ratatui::layout::Rect::new(0, 0, 40, 30),
+        );
+        assert_eq!(app.detail_scroll(), initial - 1);
+        assert!(!refresh_open_detail(None, &mut app));
+        assert_eq!(app.detail_scroll(), initial - 1);
+        handle_navigation_key(None, &mut app, key(KeyCode::Esc), area);
+        handle_navigation_key(None, &mut app, open, area);
+        assert_eq!(app.detail_scroll(), initial);
     }
 
     #[test]

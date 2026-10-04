@@ -807,6 +807,13 @@ pub fn contextual_verification_target(app: &App, area: Rect) -> Option<BuildTest
 
 fn preview_action_text(app: &App, limit: usize, width: u16) -> String {
     let primary = match app.focused_panel() {
+        FocusedPanel::Evidence if app.can_open_evidence_detail() => {
+            if app.runnable_evidence_kind().is_some() {
+                "Ctrl+Enter:Full Detail   Space:Run"
+            } else {
+                "Ctrl+Enter:Full Detail"
+            }
+        }
         FocusedPanel::Evidence if app.runnable_evidence_kind().is_some() => "Space:Run",
         FocusedPanel::Evidence
             if app.evidence_detail_kind().is_some_and(|kind| {
@@ -1006,29 +1013,17 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
                     "Project inputs changed after this verification.",
                 ));
             }
-            if result.outcome() == BuildTestOutcome::Failed
-                && let Some(diagnostic) = result.diagnostic()
-            {
-                for (text, truncated, label) in [
-                    (
-                        diagnostic.stdout(),
-                        diagnostic.stdout_truncated(),
-                        "Test output",
-                    ),
-                    (
-                        diagnostic.stderr(),
-                        diagnostic.stderr_truncated(),
-                        "Error output",
-                    ),
-                ] {
-                    if !text.is_empty() {
-                        let title = if truncated {
-                            format!("{label} (tail)")
-                        } else {
-                            label.into()
-                        };
-                        lines.extend(evidence_section(&title, text));
-                    }
+            if let Some(diagnostic) = result.diagnostic() {
+                let labels = evidence_output_labels(diagnostic);
+                if !labels.is_empty() {
+                    lines.extend(evidence_section(
+                        "Output",
+                        &labels
+                            .iter()
+                            .map(|(label, _)| label.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ));
                 }
             }
             lines
@@ -1040,6 +1035,26 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
             lines
         }
     }
+}
+
+fn evidence_output_labels(output: &devscope::progress::BuildTestDiagnostic) -> Vec<(String, &str)> {
+    [
+        ("Test output", output.stdout(), output.stdout_truncated()),
+        ("Error output", output.stderr(), output.stderr_truncated()),
+    ]
+    .into_iter()
+    .filter(|(_, text, _)| !text.is_empty())
+    .map(|(label, text, truncated)| {
+        (
+            if truncated {
+                format!("{label} (tail)")
+            } else {
+                label.into()
+            },
+            text,
+        )
+    })
+    .collect()
 }
 
 fn evidence_section(label: &str, value: &str) -> Vec<Line<'static>> {
@@ -1116,10 +1131,10 @@ fn selected_changed_file_path(app: &App) -> Option<String> {
         .map(|file| file.path.display().to_string())
 }
 fn detail_areas(app: &App, area: Rect) -> [Rect; 3] {
-    let header_height = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
-        1
-    } else {
-        5
+    let header_height = match app.detail_target() {
+        Some(DetailTarget::BrowserFile { .. }) => 1,
+        Some(DetailTarget::Evidence { .. }) => 6,
+        _ => 5,
     };
     let areas = Layout::vertical([
         Constraint::Length(header_height),
@@ -1135,12 +1150,137 @@ fn full_view_lines(app: &App) -> Vec<Line<'static>> {
         Some(DetailTarget::BrowserFile {
             text, truncated, ..
         }) => browser_full_view_content_lines(text, *truncated),
+        Some(DetailTarget::Evidence {
+            state: BuildTestState::Completed(result),
+            ..
+        }) => {
+            let mut lines = Vec::new();
+            if let Some(output) = result.diagnostic() {
+                for (title, text) in evidence_output_labels(output) {
+                    if !lines.is_empty() {
+                        lines.push(Line::from(""));
+                    }
+                    lines.push(
+                        Line::from(title).style(Style::default().add_modifier(Modifier::BOLD)),
+                    );
+                    lines.push(Line::from(""));
+                    lines.extend(
+                        safe_display_text(text)
+                            .split('\n')
+                            .map(|line| Line::from(line.to_owned())),
+                    );
+                }
+            }
+            lines
+        }
         _ => detail_inspection_lines(app.detail_inspection()),
+    }
+}
+
+pub fn evidence_initial_detail_scroll(app: &App, area: Rect) -> usize {
+    let Some(DetailTarget::Evidence {
+        state: BuildTestState::Completed(result),
+        ..
+    }) = app.detail_target()
+    else {
+        return 0;
+    };
+    if result.outcome() != BuildTestOutcome::Failed {
+        return 0;
+    }
+    let Some(output) = result.diagnostic() else {
+        return 0;
+    };
+    let viewport = panel_block("", false).inner(detail_areas(app, area)[1]);
+    let logical = full_view_lines(app);
+    let rendered = fit_inspection_lines(logical.clone(), viewport.width, false);
+    let limit = rendered.len().saturating_sub(viewport.height as usize);
+    let context = (viewport.height as usize / 4).max(1);
+    let mut section_start = 0;
+    let mut anchor = None;
+    for (index, (_, text)) in evidence_output_labels(output).into_iter().enumerate() {
+        if index != 0 {
+            section_start += 1;
+        }
+        let safe = safe_display_text(text);
+        let lines = safe.split('\n').collect::<Vec<_>>();
+        let priorities: &[&str] = if !output.stdout().is_empty() && index == 0 {
+            &["panicked at", "assertion", "FAILED", "failures:", "error:"]
+        } else {
+            &["error:", "FAILED", "panicked at"]
+        };
+        let found = priorities.iter().find_map(|keyword| {
+            lines.iter().position(|line| {
+                if *keyword == "failures:" {
+                    line.trim() == "failures:"
+                } else {
+                    line.contains(keyword)
+                }
+            })
+        });
+        if let Some(line) = found {
+            anchor = Some((section_start, section_start + 2 + line));
+            break;
+        }
+        section_start += 2 + lines.len();
+    }
+    if let Some((heading, line)) = anchor {
+        // Count the exact wrapped prefix, using the same path as rendering/limits.
+        let row = fit_inspection_lines(logical[..line].to_vec(), viewport.width, false).len();
+        let heading_row =
+            fit_inspection_lines(logical[..heading].to_vec(), viewport.width, false).len();
+        let start = if row.saturating_sub(heading_row) <= context {
+            heading_row
+        } else {
+            row.saturating_sub(context)
+        };
+        start.min(limit)
+    } else {
+        limit.saturating_sub(viewport.height as usize / 3)
     }
 }
 
 fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
     let areas = detail_areas(app, area);
+    if let Some(DetailTarget::Evidence {
+        kind,
+        state: BuildTestState::Completed(result),
+    }) = app.detail_target()
+    {
+        let block = panel_block("Evidence Detail", false)
+            .title_style(Style::default().add_modifier(Modifier::BOLD));
+        let width = usize::from(block.inner(areas[0]).width);
+        let rows = [
+            format!("Target:     {}", kind.label()),
+            format!(
+                "Status:     {}",
+                if result.outcome() == BuildTestOutcome::Passed {
+                    "Passed"
+                } else {
+                    "Failed"
+                }
+            ),
+            format!(
+                "Freshness:  {}",
+                if result.freshness() == BuildTestFreshness::Fresh {
+                    "Fresh"
+                } else {
+                    "Stale"
+                }
+            ),
+            format!(
+                "Duration:   {}   Exit code: {}",
+                format_duration(result.duration()),
+                result
+                    .exit_code()
+                    .map_or_else(|| "unavailable".into(), |code| code.to_string())
+            ),
+        ]
+        .into_iter()
+        .map(|row| Line::from(truncate_text(&row, width)))
+        .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(rows).block(block), areas[0]);
+    }
     if let Some(DetailTarget::BrowserFile { path, .. }) = app.detail_target() {
         frame.render_widget(
             Paragraph::new(truncate_text(
@@ -1169,7 +1309,9 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
         .collect::<Vec<_>>();
         frame.render_widget(Paragraph::new(lines).block(block), areas[0]);
     }
-    let title = if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
+    let title = if matches!(app.detail_target(), Some(DetailTarget::Evidence { .. })) {
+        "Evidence Output"
+    } else if matches!(app.detail_target(), Some(DetailTarget::BrowserFile { .. })) {
         "File Content"
     } else {
         match app.detail_inspection() {
@@ -5329,17 +5471,18 @@ mod tests {
                     if freshness == BuildTestFreshness::Stale {
                         assert!(text.contains("Project inputs changed after this verification."));
                     }
-                    let show_diagnostic = outcome == BuildTestOutcome::Failed
-                        && diagnostic.is_some_and(|d| !d.is_empty());
+                    let show_diagnostic = diagnostic.is_some_and(|d| !d.is_empty());
                     assert_eq!(text.contains("Test output"), show_diagnostic);
                     assert!(!text.contains("Diagnostic"));
                     assert!(!text.contains("Error output"));
                     if show_diagnostic {
-                        assert!(text.contains("Test output\n  日本語\n  error\\u{1b}[2J\\tend"));
+                        assert!(text.contains("Output\n  Test output"));
+                        assert!(!text.contains("日本語"));
+                        assert!(!text.contains("error\\u{1b}"));
                     }
                     assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
                     for heading in lines.iter().filter(|line| {
-                        ["Command", "Result", "Test output", "Freshness note"]
+                        ["Command", "Result", "Output", "Freshness note"]
                             .contains(&line.to_string().as_str())
                     }) {
                         assert!(heading.style.add_modifier.contains(Modifier::BOLD));
@@ -5431,9 +5574,23 @@ mod tests {
                     Some(diagnostic.clone()),
                 ));
                 let lines = evidence_preview_lines(BuildTestKind::Test, &state);
+                let preview_rows = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+                assert!(preview_rows.contains(&"Output".into()));
+                for (label, _) in evidence_output_labels(&diagnostic) {
+                    assert!(preview_rows.contains(&format!("  {label}")));
+                }
+                assert!(!preview_rows.contains(&format!("  {stdout}")));
+                assert!(!preview_rows.contains(&format!("  {stderr}")));
+                let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+                app.reconcile_focus(&[FocusedPanel::Evidence]);
+                app.apply_build_test_state(BuildTestKind::Test, state);
+                app.select_evidence_detail(BuildTestKind::Test);
+                assert!(app.can_open_evidence_detail());
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+                let lines = full_view_lines(&app);
                 let rows = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
                 assert!(!rows.iter().any(|row| row == "Diagnostic"));
-                assert!(rows.contains(&"Freshness note".into()));
+                assert!(preview_rows.contains(&"Freshness note".into()));
                 let mut indices = Vec::new();
                 for (label, text, truncated) in [
                     (
@@ -5453,13 +5610,11 @@ mod tests {
                         label.into()
                     };
                     let index = rows.iter().position(|row| row == &heading);
-                    assert_eq!(
-                        index.is_some(),
-                        outcome == BuildTestOutcome::Failed && !text.is_empty()
-                    );
+                    assert_eq!(index.is_some(), !text.is_empty());
                     if let Some(index) = index {
                         indices.push(index);
-                        assert_eq!(rows[index + 1], format!("  {text}"));
+                        assert_eq!(rows[index + 1], "");
+                        assert_eq!(rows[index + 2], text);
                         assert!(lines[index].style.add_modifier.contains(Modifier::BOLD));
                         assert_eq!(lines[index].style.fg, None);
                         assert!(
@@ -5476,7 +5631,174 @@ mod tests {
     }
 
     #[test]
-    fn failed_evidence_diagnostic_uses_existing_preview_scroll_viewport() {
+    fn evidence_initial_scroll_respects_priority_wrapping_and_tail_fallback() {
+        fn opened(
+            stdout: &str,
+            stderr: &str,
+            outcome: BuildTestOutcome,
+            freshness: BuildTestFreshness,
+        ) -> App {
+            let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+            app.reconcile_focus(&[FocusedPanel::Evidence]);
+            app.apply_build_test_state(
+                BuildTestKind::BuildDebug,
+                BuildTestState::Completed(BuildTestResult::new(
+                    BuildTestKind::BuildDebug,
+                    outcome,
+                    freshness,
+                    "fixture",
+                    "fixture",
+                    Some(1),
+                    Duration::ZERO,
+                    "failed",
+                    Some(BuildTestDiagnostic::new(stdout, stderr)),
+                )),
+            );
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+            app
+        }
+        let priorities = ["panicked at", "assertion", "FAILED", "failures:", "error:"];
+        for priority in 0..priorities.len() {
+            let mut rows = (0..70)
+                .map(|i| format!("context {i:02}"))
+                .collect::<Vec<_>>();
+            for (offset, keyword) in priorities[priority + 1..].iter().enumerate() {
+                rows[10 + offset] = keyword.to_string();
+            }
+            rows[40] = priorities[priority].into();
+            let stdout = rows.join("\n");
+            for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
+                let app = opened(
+                    &stdout,
+                    "error: stderr should not win",
+                    BuildTestOutcome::Failed,
+                    freshness,
+                );
+                let area = Rect::new(0, 0, 80, 30);
+                let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+                let start = evidence_initial_detail_scroll(&app, area);
+                assert_eq!(start, 42 - viewport.height as usize / 4);
+                assert!(start > 0);
+            }
+        }
+        let stdout = (0..35)
+            .map(|_| "long preceding line wrapping into many rows\n")
+            .collect::<String>()
+            + "panicked at\nlast\n";
+        let app = opened(
+            &stdout,
+            "stderr",
+            BuildTestOutcome::Failed,
+            BuildTestFreshness::Fresh,
+        );
+        let area = Rect::new(0, 0, 24, 30);
+        let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+        let rendered = fit_inspection_lines(full_view_lines(&app), viewport.width, false);
+        let start = evidence_initial_detail_scroll(&app, area);
+        assert!(start > 35);
+        assert!(
+            rendered[start..(start + viewport.height as usize).min(rendered.len())]
+                .iter()
+                .any(|line| line.to_string().contains("panicked at"))
+        );
+        let stdout = "ordinary output\n".repeat(40);
+        let stderr = "stderr context\n".repeat(25) + "error: failure\n" + &"after\n".repeat(20);
+        let app = opened(
+            &stdout,
+            &stderr,
+            BuildTestOutcome::Failed,
+            BuildTestFreshness::Fresh,
+        );
+        let area = Rect::new(0, 0, 80, 30);
+        let start = evidence_initial_detail_scroll(&app, area);
+        let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+        let rendered = fit_inspection_lines(full_view_lines(&app), viewport.width, false);
+        assert!(
+            rendered[start..start + viewport.height as usize]
+                .iter()
+                .any(|line| line.to_string().contains("error: failure"))
+        );
+        let mut app = opened(
+            &stdout,
+            &"plain stderr\n".repeat(50),
+            BuildTestOutcome::Failed,
+            BuildTestFreshness::Fresh,
+        );
+        let initial = evidence_initial_detail_scroll(&app, area);
+        assert!(initial > 0 && initial < detail_scroll_limit(&app, area));
+        app.scroll_detail(initial as isize, detail_scroll_limit(&app, area));
+        app.scroll_detail(-3, detail_scroll_limit(&app, area));
+        let manual = app.detail_scroll();
+        for width in [40, 80, 120] {
+            let _ = draw(&app, width, 30);
+            assert_eq!(app.detail_scroll(), manual);
+        }
+        let app = opened(
+            &stdout,
+            &stderr,
+            BuildTestOutcome::Passed,
+            BuildTestFreshness::Fresh,
+        );
+        assert_eq!(evidence_initial_detail_scroll(&app, area), 0);
+    }
+
+    #[test]
+    fn evidence_full_detail_metadata_and_primary_title_match_visual_contract() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        app.select_evidence_detail(BuildTestKind::Test);
+        app.apply_build_test_state(
+            BuildTestKind::Test,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::Test,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Fresh,
+                "cargo",
+                "cargo test",
+                None,
+                Duration::from_millis(8300),
+                "failed",
+                Some(BuildTestDiagnostic::new(
+                    "stdout line\ncontrol\x1b[2J",
+                    "stderr line",
+                )),
+            )),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        for width in [1, 20, 40, 80, 120] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let areas = detail_areas(&app, Rect::new(0, 0, width, 30));
+            assert_eq!(areas[0].height, 6);
+            if width >= 80 {
+                let output = text(&terminal);
+                for expected in [
+                    "Target:     Test",
+                    "Status:     Failed",
+                    "Freshness:  Fresh",
+                    "Duration:   8.3s   Exit code: unavailable",
+                    "stdout line",
+                    "stderr line",
+                    "control\\u{1b}[2J",
+                ] {
+                    assert!(output.contains(expected), "{expected}");
+                }
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(2, areas[1].y)].symbol(), "▌");
+                assert_eq!(buffer[(2, areas[1].y)].fg, Color::Blue);
+                for x in 4..19 {
+                    assert_eq!(buffer[(x, areas[1].y)].fg, Color::Reset);
+                    assert!(buffer[(x, areas[1].y)].modifier.contains(Modifier::BOLD));
+                }
+                assert_eq!(buffer[(1, areas[1].y + 3)].symbol(), "s");
+                assert!(!output.contains("▌ Evidence Detail"));
+                assert!(output.contains(full_view_footer_text(width)));
+            }
+        }
+    }
+
+    #[test]
+    fn failed_evidence_output_uses_existing_full_detail_scroll_viewport() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.reconcile_focus(&[FocusedPanel::Evidence]);
         let diagnostic = format!("{}FINAL-DIAGNOSTIC", "日本語 diagnostic line\n".repeat(60));
@@ -5495,13 +5817,25 @@ mod tests {
             )),
         );
         let area = Rect::new(0, 0, 80, 30);
-        let limit = preview_scroll_limit(&app, area);
+        let preview = draw(&app, 80, 30);
+        assert!(!preview.contains("FINAL-DIAGNOSTIC"));
+        assert!(preview.contains("Ctrl+Enter:Full Detail"));
+        assert!(preview.contains("Space:Run"));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        let viewport = panel_block("", false).inner(detail_areas(&app, area)[1]);
+        let limit = detail_scroll_limit(&app, area);
+        assert_eq!(
+            limit,
+            wrap_preview_lines(full_view_lines(&app), viewport.width)
+                .len()
+                .saturating_sub(viewport.height as usize)
+        );
         assert!(limit > 0);
-        app.scroll_preview(isize::MAX, limit);
+        app.scroll_detail(isize::MAX, limit);
         let output = draw(&app, 80, 30);
         assert!(output.contains("FINAL-DIAGNOSTIC"));
-        assert!(output.contains("Ctrl+↑/↓:Scroll"));
-        assert!(output.contains("Space:Run"));
+        assert!(output.contains(full_view_footer_text(80)));
+        assert!(output.contains("▌ Evidence Output"));
     }
 
     #[test]

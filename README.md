@@ -82,7 +82,8 @@ never inferred from Next. The CLI works without an agent or Skill.
   and Preview actually visible. Hidden/narrow-layout Preview, Artifact, Unavailable,
   or any active verification prevents execution. Global b/t execution shortcuts
   are removed; CLI verification is unchanged.
-- Ctrl+Enter opens Full View for a selected Changed File. Ctrl+F opens File Browser.
+- Ctrl+Enter opens Full View for a selected Changed File or Evidence Full Detail when
+  captured Build/Test output is available. Ctrl+F opens File Browser.
 - r reloads project state; q or Esc quits from Overview.
 
 Preview shows source-grounded Task context, separate Evidence outcome/freshness, or
@@ -102,7 +103,7 @@ Full View only for a readable cached file. Large/Medium uses a 40/60 Files/Previ
 split; Small shows only the list. Listing is bounded and on demand; symlink/reparse
 entries are not followed. No file editing or external editor launch is provided.
 
-In either Full View, Up/Down or j/k scrolls, plain Enter/Esc returns to its originating
+In any Full View, including Evidence Full Detail, Up/Down or j/k scrolls, plain Enter/Esc returns to its originating
 view (Overview or Browser) preserving selection and Preview state, and q quits.
 Ctrl+Enter does not close Full View. Long inspection lines wrap; safe text reads are
 bounded to 64 KiB with explicit truncation and unsupported-content reasons.
@@ -244,14 +245,14 @@ the TUI.
 
 ## Not yet implemented
 
-- Dedicated Full View for Evidence and Evidence history
+- Evidence history
 - Agent adapters, including a Codex adapter
 - IDE or Web/API frontends
 - Package-manager distribution
 
 Task editing and Git/file write operations are outside the current observation-focused
-scope, not promised onboarding features. Evidence Preview already scrolls; it is not a
-dedicated full-screen diagnostics or history view.
+scope, not promised onboarding features. Evidence Preview shows compact summaries;
+captured output is inspected explicitly in Full Detail, without Evidence history.
 
 ## Further reading
 

@@ -88,6 +88,10 @@ pub enum FocusedPanel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DetailTarget {
+    Evidence {
+        kind: BuildTestKind,
+        state: BuildTestState,
+    },
     BrowserFile {
         path: PathBuf,
         text: String,
@@ -541,7 +545,7 @@ impl App {
     pub fn detail_request(&self) -> Option<(PathBuf, GitFileStatus)> {
         match self.detail_target.as_ref()? {
             DetailTarget::ChangedFile { path, status, .. } => Some((path.clone(), status.clone())),
-            DetailTarget::BrowserFile { .. } => None,
+            DetailTarget::BrowserFile { .. } | DetailTarget::Evidence { .. } => None,
         }
     }
 
@@ -575,6 +579,29 @@ impl App {
             return None;
         }
         self.selected_changed_file_request().map(|(path, _)| path)
+    }
+
+    pub fn can_open_evidence_detail(&self) -> bool {
+        !self.is_file_browser_open()
+            && !self.has_detail_view()
+            && self.focused_panel == FocusedPanel::Evidence
+            && self.evidence_detail_kind().is_some_and(|kind| {
+                matches!(self.build_test_state(kind), BuildTestState::Completed(result)
+                    if result.diagnostic().is_some_and(|output| !output.stdout().is_empty() || !output.stderr().is_empty()))
+            })
+    }
+
+    fn open_evidence_detail(&mut self) {
+        if self.can_open_evidence_detail()
+            && let Some(kind) = self.evidence_detail_kind()
+        {
+            self.detail_target = Some(DetailTarget::Evidence {
+                kind,
+                state: self.build_test_state(kind).clone(),
+            });
+            self.detail_inspection = None;
+            self.detail_scroll = 0;
+        }
     }
 
     pub fn can_open_browser_file_detail(&self) -> bool {
@@ -658,7 +685,11 @@ impl App {
             return;
         }
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Enter {
-            self.open_changed_file_detail();
+            match self.focused_panel {
+                FocusedPanel::Evidence => self.open_evidence_detail(),
+                FocusedPanel::ChangedFiles => self.open_changed_file_detail(),
+                FocusedPanel::Tasks => {}
+            }
             return;
         }
         if key.modifiers == KeyModifiers::SHIFT
@@ -803,6 +834,108 @@ mod tests {
         fs,
         sync::atomic::{AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn evidence_detail_snapshots_output_and_preserves_overview_on_return() {
+        use devscope::progress::BuildTestDiagnostic;
+        for streams in [
+            ("stdout", ""),
+            ("", "stderr"),
+            ("stdout", "stderr"),
+            ("", ""),
+        ] {
+            for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+                let state = BuildTestState::Completed(BuildTestResult::new(
+                    BuildTestKind::Test,
+                    outcome,
+                    BuildTestFreshness::Stale,
+                    "cargo",
+                    "cargo test",
+                    Some(101),
+                    Duration::from_secs(1),
+                    "result",
+                    Some(BuildTestDiagnostic::new(streams.0, streams.1)),
+                ));
+                for close in [KeyCode::Enter, KeyCode::Esc] {
+                    let mut app = App::new(ProjectSnapshot::unavailable());
+                    app.reconcile_focus(&[FocusedPanel::Evidence]);
+                    app.select_evidence_detail(BuildTestKind::Test);
+                    app.apply_build_test_state(BuildTestKind::Test, state.clone());
+                    app.preview_scroll = 3;
+                    let visibility = app.preview_visible();
+                    let eligible = !streams.0.is_empty() || !streams.1.is_empty();
+                    assert_eq!(app.can_open_evidence_detail(), eligible);
+                    app.detail_scroll = 10;
+                    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+                    assert_eq!(app.has_detail_view(), eligible);
+                    if eligible {
+                        assert_eq!(
+                            app.detail_target(),
+                            Some(&DetailTarget::Evidence {
+                                kind: BuildTestKind::Test,
+                                state: state.clone()
+                            })
+                        );
+                        assert_eq!(app.detail_scroll(), 0);
+                        assert!(app.detail_request().is_none());
+                        app.apply_build_test_state(BuildTestKind::Test, BuildTestState::NotRun);
+                        assert_eq!(
+                            app.detail_target(),
+                            Some(&DetailTarget::Evidence {
+                                kind: BuildTestKind::Test,
+                                state: state.clone()
+                            })
+                        );
+                        app.handle_key(KeyEvent::new(close, KeyModifiers::NONE));
+                        assert!(!app.has_detail_view());
+                        assert_eq!(app.focused_panel(), FocusedPanel::Evidence);
+                        assert_eq!(app.evidence_detail_kind(), Some(BuildTestKind::Test));
+                        assert_eq!(app.preview_scroll(), 3);
+                        assert_eq!(app.preview_visible(), visibility);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn evidence_detail_rejects_unavailable_or_non_process_selections() {
+        for state in [
+            BuildTestState::Unavailable,
+            BuildTestState::NotRun,
+            BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::BuildDebug,
+                "cargo",
+                "cargo check",
+            )),
+            BuildTestState::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::BuildDebug,
+                "cargo",
+                "cargo check",
+                "error",
+            )),
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Passed,
+                BuildTestFreshness::Fresh,
+                "cargo",
+                "cargo check",
+                Some(0),
+                Duration::ZERO,
+                "passed",
+                None,
+            )),
+        ] {
+            let mut app = App::new(ProjectSnapshot::unavailable());
+            app.reconcile_focus(&[FocusedPanel::Evidence]);
+            app.apply_build_test_state(BuildTestKind::BuildDebug, state);
+            assert!(!app.can_open_evidence_detail());
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+            assert!(!app.has_detail_view());
+            app.evidence_selection = EvidenceSelection::Artifact;
+            assert!(!app.can_open_evidence_detail());
+        }
+    }
 
     static ID: AtomicUsize = AtomicUsize::new(0);
 
