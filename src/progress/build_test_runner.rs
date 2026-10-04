@@ -140,7 +140,10 @@ fn diagnostic_from_output(stdout: &[u8], stderr: &[u8]) -> Option<BuildTestDiagn
 
     let stdout = String::from_utf8_lossy(stdout);
     let stderr = String::from_utf8_lossy(stderr);
-    Some(BuildTestDiagnostic::new(format!("{stdout}{stderr}")))
+    Some(BuildTestDiagnostic::new(
+        stdout.into_owned(),
+        stderr.into_owned(),
+    ))
 }
 
 fn execution_error(run: &BuildTestRun, message: impl Into<String>) -> BuildTestExecutionError {
@@ -294,8 +297,10 @@ mod tests {
             panic!("large-output fixture should complete");
         };
         let diagnostic = result.diagnostic().expect("fixture should write output");
-        assert!(diagnostic.as_str().contains("fixture stderr tail"));
-        assert!(diagnostic.as_str().chars().count() <= super::super::MAX_DIAGNOSTIC_CHARS);
+        assert!(diagnostic.stderr().contains("fixture stderr tail"));
+        assert!(diagnostic.stdout().chars().count() <= super::super::MAX_DIAGNOSTIC_STREAM_CHARS);
+        assert!(diagnostic.stdout_truncated());
+        assert!(!diagnostic.stderr_truncated());
     }
 
     #[test]
@@ -308,8 +313,46 @@ mod tests {
             panic!("output fixture should complete");
         };
         let diagnostic = result.diagnostic().expect("fixture should write output");
-        assert!(diagnostic.as_str().contains("fixture stdout"));
-        assert!(diagnostic.as_str().contains("fixture stderr"));
+        assert!(diagnostic.stdout().contains("fixture stdout"));
+        assert!(diagnostic.stderr().contains("fixture stderr"));
+        assert!(!diagnostic.stdout_truncated());
+        assert!(!diagnostic.stderr_truncated());
+    }
+
+    #[test]
+    fn diagnostic_streams_decode_independently_and_omit_empty_output() {
+        assert_eq!(diagnostic_from_output(b"", b""), None);
+        for (stdout, stderr) in [
+            (b"stdout".as_slice(), b"".as_slice()),
+            (b"".as_slice(), b"stderr".as_slice()),
+        ] {
+            let diagnostic = diagnostic_from_output(stdout, stderr).unwrap();
+            assert_eq!(diagnostic.stdout(), String::from_utf8_lossy(stdout));
+            assert_eq!(diagnostic.stderr(), String::from_utf8_lossy(stderr));
+        }
+        let diagnostic = diagnostic_from_output(b"out\xff", b"err\xfe").unwrap();
+        assert_eq!(diagnostic.stdout(), "out�");
+        assert_eq!(diagnostic.stderr(), "err�");
+    }
+
+    #[test]
+    fn large_stderr_does_not_evict_stdout() {
+        let project = TempProject::new();
+        let mut execution =
+            BuildTestExecution::start(child_spec(&project.0, "large_stderr")).unwrap();
+        let BuildTestExecutionCompletion::Completed(result) = wait_for_completion(&mut execution)
+        else {
+            panic!("fixture should complete")
+        };
+        let diagnostic = result.diagnostic().unwrap();
+        assert!(diagnostic.stdout().contains("fixture stdout retained"));
+        assert!(!diagnostic.stdout_truncated());
+        assert!(diagnostic.stderr().ends_with("fixture stderr tail\n"));
+        assert!(diagnostic.stderr_truncated());
+        assert_eq!(
+            diagnostic.stderr().chars().count(),
+            super::super::MAX_DIAGNOSTIC_STREAM_CHARS
+        );
     }
 
     #[test]
@@ -327,7 +370,7 @@ mod tests {
             .expect("fixture should print its directory");
         assert!(
             diagnostic
-                .as_str()
+                .stdout()
                 .contains(&project.0.display().to_string())
         );
     }
@@ -392,9 +435,19 @@ mod tests {
     fn child_large_output() {
         println!(
             "fixture stdout {}",
-            "x".repeat(super::super::MAX_DIAGNOSTIC_CHARS + 100)
+            "x".repeat(super::super::MAX_DIAGNOSTIC_STREAM_CHARS + 100)
         );
         eprintln!("fixture stderr tail");
+    }
+
+    #[test]
+    #[ignore]
+    fn child_large_stderr() {
+        println!("fixture stdout retained");
+        eprintln!(
+            "{}fixture stderr tail",
+            "あ".repeat(super::super::MAX_DIAGNOSTIC_STREAM_CHARS + 100)
+        );
     }
 
     #[test]

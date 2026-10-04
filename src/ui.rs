@@ -1008,9 +1008,28 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
             }
             if result.outcome() == BuildTestOutcome::Failed
                 && let Some(diagnostic) = result.diagnostic()
-                && !diagnostic.as_str().is_empty()
             {
-                lines.extend(evidence_section("Diagnostic", diagnostic.as_str()));
+                for (text, truncated, label) in [
+                    (
+                        diagnostic.stdout(),
+                        diagnostic.stdout_truncated(),
+                        "Test output",
+                    ),
+                    (
+                        diagnostic.stderr(),
+                        diagnostic.stderr_truncated(),
+                        "Error output",
+                    ),
+                ] {
+                    if !text.is_empty() {
+                        let title = if truncated {
+                            format!("{label} (tail)")
+                        } else {
+                            label.into()
+                        };
+                        lines.extend(evidence_section(&title, text));
+                    }
+                }
             }
             lines
         }
@@ -4044,6 +4063,7 @@ mod tests {
                 "cargo test failed",
                 Some(BuildTestDiagnostic::new(
                     "first diagnostic\nlast diagnostic",
+                    "stderr diagnostic",
                 )),
             )),
         );
@@ -5290,7 +5310,7 @@ mod tests {
                         Some(101),
                         Duration::from_millis(3100),
                         "retained summary",
-                        diagnostic.map(BuildTestDiagnostic::new),
+                        diagnostic.map(|text| BuildTestDiagnostic::new(text, "")),
                     ));
                     let lines = evidence_preview_lines(BuildTestKind::Test, &state);
                     let text = lines
@@ -5311,13 +5331,15 @@ mod tests {
                     }
                     let show_diagnostic = outcome == BuildTestOutcome::Failed
                         && diagnostic.is_some_and(|d| !d.is_empty());
-                    assert_eq!(text.contains("Diagnostic"), show_diagnostic);
+                    assert_eq!(text.contains("Test output"), show_diagnostic);
+                    assert!(!text.contains("Diagnostic"));
+                    assert!(!text.contains("Error output"));
                     if show_diagnostic {
-                        assert!(text.contains("Diagnostic\n  日本語\n  error\\u{1b}[2J\\tend"));
+                        assert!(text.contains("Test output\n  日本語\n  error\\u{1b}[2J\\tend"));
                     }
                     assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
                     for heading in lines.iter().filter(|line| {
-                        ["Command", "Result", "Diagnostic", "Freshness note"]
+                        ["Command", "Result", "Test output", "Freshness note"]
                             .contains(&line.to_string().as_str())
                     }) {
                         assert!(heading.style.add_modifier.contains(Modifier::BOLD));
@@ -5387,6 +5409,73 @@ mod tests {
     }
 
     #[test]
+    fn failed_evidence_displays_independent_stream_sections_and_tail_flags() {
+        for outcome in [BuildTestOutcome::Failed, BuildTestOutcome::Passed] {
+            for (stdout, stderr) in [
+                ("stdout text".to_owned(), "stderr text".to_owned()),
+                ("stdout text".to_owned(), "".into()),
+                ("".into(), "stderr text".to_owned()),
+                ("日".repeat(2049), "stderr text".to_owned()),
+                ("stdout text".to_owned(), "誤".repeat(2049)),
+            ] {
+                let diagnostic = BuildTestDiagnostic::new(&stdout, &stderr);
+                let state = BuildTestState::Completed(BuildTestResult::new(
+                    BuildTestKind::Test,
+                    outcome,
+                    BuildTestFreshness::Stale,
+                    "cargo",
+                    "cargo test",
+                    Some(101),
+                    Duration::ZERO,
+                    "result",
+                    Some(diagnostic.clone()),
+                ));
+                let lines = evidence_preview_lines(BuildTestKind::Test, &state);
+                let rows = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+                assert!(!rows.iter().any(|row| row == "Diagnostic"));
+                assert!(rows.contains(&"Freshness note".into()));
+                let mut indices = Vec::new();
+                for (label, text, truncated) in [
+                    (
+                        "Test output",
+                        diagnostic.stdout(),
+                        diagnostic.stdout_truncated(),
+                    ),
+                    (
+                        "Error output",
+                        diagnostic.stderr(),
+                        diagnostic.stderr_truncated(),
+                    ),
+                ] {
+                    let heading = if truncated {
+                        format!("{label} (tail)")
+                    } else {
+                        label.into()
+                    };
+                    let index = rows.iter().position(|row| row == &heading);
+                    assert_eq!(
+                        index.is_some(),
+                        outcome == BuildTestOutcome::Failed && !text.is_empty()
+                    );
+                    if let Some(index) = index {
+                        indices.push(index);
+                        assert_eq!(rows[index + 1], format!("  {text}"));
+                        assert!(lines[index].style.add_modifier.contains(Modifier::BOLD));
+                        assert_eq!(lines[index].style.fg, None);
+                        assert!(
+                            !lines[index]
+                                .style
+                                .add_modifier
+                                .contains(Modifier::UNDERLINED)
+                        );
+                    }
+                }
+                assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+            }
+        }
+    }
+
+    #[test]
     fn failed_evidence_diagnostic_uses_existing_preview_scroll_viewport() {
         let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
         app.reconcile_focus(&[FocusedPanel::Evidence]);
@@ -5402,7 +5491,7 @@ mod tests {
                 Some(101),
                 Duration::from_secs(3),
                 "failed",
-                Some(BuildTestDiagnostic::new(diagnostic)),
+                Some(BuildTestDiagnostic::new(diagnostic, "")),
             )),
         );
         let area = Rect::new(0, 0, 80, 30);

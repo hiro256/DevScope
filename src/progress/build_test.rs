@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 /// The maximum number of Unicode scalar values retained for diagnostic output.
-pub const MAX_DIAGNOSTIC_CHARS: usize = 4096;
+pub const MAX_DIAGNOSTIC_STREAM_CHARS: usize = 2048;
 
 /// The three supported process verification targets; not an arbitrary command registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,26 +56,51 @@ pub enum BuildTestStatus {
 
 /// Bounded diagnostic output retained from the tail of a completed process.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuildTestDiagnostic(String);
+pub struct BuildTestDiagnostic {
+    stdout: String,
+    stderr: String,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+}
 
 impl BuildTestDiagnostic {
-    pub fn new(value: impl Into<String>) -> Self {
-        let value = value.into();
-        let char_count = value.chars().count();
-        if char_count <= MAX_DIAGNOSTIC_CHARS {
-            return Self(value);
+    pub fn new(stdout: impl Into<String>, stderr: impl Into<String>) -> Self {
+        let (stdout, stdout_truncated) = diagnostic_stream_tail(stdout.into());
+        let (stderr, stderr_truncated) = diagnostic_stream_tail(stderr.into());
+        Self {
+            stdout,
+            stderr,
+            stdout_truncated,
+            stderr_truncated,
         }
-
-        Self(
-            value
-                .chars()
-                .skip(char_count - MAX_DIAGNOSTIC_CHARS)
-                .collect(),
-        )
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn stdout(&self) -> &str {
+        &self.stdout
+    }
+    pub fn stderr(&self) -> &str {
+        &self.stderr
+    }
+    pub fn stdout_truncated(&self) -> bool {
+        self.stdout_truncated
+    }
+    pub fn stderr_truncated(&self) -> bool {
+        self.stderr_truncated
+    }
+}
+
+fn diagnostic_stream_tail(value: String) -> (String, bool) {
+    let count = value.chars().count();
+    if count <= MAX_DIAGNOSTIC_STREAM_CHARS {
+        (value, false)
+    } else {
+        (
+            value
+                .chars()
+                .skip(count - MAX_DIAGNOSTIC_STREAM_CHARS)
+                .collect(),
+            true,
+        )
     }
 }
 
@@ -278,7 +303,7 @@ mod tests {
             Some(0),
             Duration::from_millis(2400),
             "142 tests passed",
-            Some(BuildTestDiagnostic::new("diagnostic")),
+            Some(BuildTestDiagnostic::new("diagnostic", "stderr")),
         )
     }
 
@@ -383,7 +408,8 @@ mod tests {
         assert_eq!(result.exit_code(), Some(0));
         assert_eq!(result.duration(), Duration::from_millis(2400));
         assert_eq!(result.summary(), "142 tests passed");
-        assert_eq!(result.diagnostic().unwrap().as_str(), "diagnostic");
+        assert_eq!(result.diagnostic().unwrap().stdout(), "diagnostic");
+        assert_eq!(result.diagnostic().unwrap().stderr(), "stderr");
     }
 
     #[test]
@@ -400,15 +426,30 @@ mod tests {
 
     #[test]
     fn retains_a_unicode_safe_diagnostic_tail() {
-        let prefix = "あ".repeat(MAX_DIAGNOSTIC_CHARS + 10);
-        let diagnostic = BuildTestDiagnostic::new(format!("{prefix}最後の診断"));
-        assert_eq!(diagnostic.as_str().chars().count(), MAX_DIAGNOSTIC_CHARS);
-        assert!(diagnostic.as_str().ends_with("最後の診断"));
-        assert!(std::str::from_utf8(diagnostic.as_str().as_bytes()).is_ok());
+        let prefix = "あ".repeat(MAX_DIAGNOSTIC_STREAM_CHARS + 10);
+        let diagnostic = BuildTestDiagnostic::new(format!("{prefix}最後の診断"), "short stderr");
+        assert_eq!(
+            diagnostic.stdout().chars().count(),
+            MAX_DIAGNOSTIC_STREAM_CHARS
+        );
+        assert!(diagnostic.stdout().ends_with("最後の診断"));
+        assert!(std::str::from_utf8(diagnostic.stdout().as_bytes()).is_ok());
+        assert!(diagnostic.stdout_truncated());
+        assert!(!diagnostic.stderr_truncated());
+        assert_eq!(diagnostic.stderr(), "short stderr");
+        let diagnostic = BuildTestDiagnostic::new("short stdout", format!("{prefix}エラー末尾"));
+        assert_eq!(diagnostic.stdout(), "short stdout");
+        assert!(!diagnostic.stdout_truncated());
+        assert!(diagnostic.stderr_truncated());
+        assert_eq!(
+            diagnostic.stderr().chars().count(),
+            MAX_DIAGNOSTIC_STREAM_CHARS
+        );
+        assert!(diagnostic.stderr().ends_with("エラー末尾"));
     }
     #[test]
     fn mark_stale_preserves_every_completed_result_field() {
-        let diagnostic = BuildTestDiagnostic::new("diagnostic detail");
+        let diagnostic = BuildTestDiagnostic::new("diagnostic detail", "stderr detail");
         let mut result = BuildTestResult::new(
             BuildTestKind::BuildDebug,
             BuildTestOutcome::Failed,
@@ -437,12 +478,17 @@ mod tests {
 
     #[test]
     fn retains_empty_and_exactly_bounded_diagnostics() {
-        let empty = BuildTestDiagnostic::new("");
-        assert_eq!(empty.as_str(), "");
-
-        let exact = "x".repeat(MAX_DIAGNOSTIC_CHARS);
-        let diagnostic = BuildTestDiagnostic::new(exact.clone());
-        assert_eq!(diagnostic.as_str(), exact);
-        assert_eq!(diagnostic.as_str().chars().count(), MAX_DIAGNOSTIC_CHARS);
+        let exact = "x".repeat(MAX_DIAGNOSTIC_STREAM_CHARS);
+        for (stdout, stderr) in [
+            ("", exact.as_str()),
+            (exact.as_str(), ""),
+            (exact.as_str(), exact.as_str()),
+        ] {
+            let diagnostic = BuildTestDiagnostic::new(stdout, stderr);
+            assert_eq!(diagnostic.stdout(), stdout);
+            assert_eq!(diagnostic.stderr(), stderr);
+            assert!(!diagnostic.stdout_truncated());
+            assert!(!diagnostic.stderr_truncated());
+        }
     }
 }

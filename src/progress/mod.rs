@@ -13,7 +13,7 @@ pub use artifact::{
 pub use build_test::{
     BuildTestDiagnostic, BuildTestExecutionError, BuildTestFreshness, BuildTestKind,
     BuildTestOutcome, BuildTestResult, BuildTestRun, BuildTestState, BuildTestStatus,
-    MAX_DIAGNOSTIC_CHARS,
+    MAX_DIAGNOSTIC_STREAM_CHARS,
 };
 pub use build_test_freshness::{
     BuildTestFreshnessBaseline, BuildTestFreshnessError, BuildTestInputChange,
