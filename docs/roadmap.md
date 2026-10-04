@@ -117,7 +117,7 @@
 
 ### TUI refinement
 
-- [ ] Evidence Full Detailの失敗出力の初期表示位置を改善する
+- [x] Evidence Full Detailの失敗出力の初期表示位置を改善する
 
 - [x] Refine NOW presentation from explicit Current Work Active state
 - [x] Refine Project Progress visual hierarchy and progress indicators
