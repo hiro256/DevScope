@@ -249,6 +249,7 @@ requires project knowledge or diff inspection, not a five-second Overview summar
 - [x] Define AI-maintained Config workflow
 - [x] Dogfood Config maintenance through the DevScope Skill
 - [x] Refine DevScope Skill work lifecycle
+- [x] Clarify DevScope Skill canonical workflow
 
 ### Core observation
 

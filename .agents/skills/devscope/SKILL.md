@@ -20,27 +20,46 @@ Read the repository-root `docs/guides/devscope-setup.md` only when `devscope` is
 unavailable, Config is invalid, Build/Test is unexpectedly unavailable, the observation
 does not match the project, or project structure changed.
 
-## Workflow
+## Canonical workflow
 
 ```text
-context
-  -> classify request and identify or record one parent Plan task
-  -> create or update a small Current Work checklist
-  -> work list -> work active N
-  -> implement the meaningful Active item
-  -> work list -> work done N at its completion boundary
-  -> work list -> work active next N before continuing another item
-  -> relevant verification and explicit Plan completion
-  -> context and git status before stopping
+Observe: devscope context
+  ↓
+Classify request
+  ├─ Question / review / investigation / trivial read-only work
+  │    └─ inspect only what is needed → stop
+  └─ Implementation / modification (multi-step)
+       ↓
+     Plan: reuse a suitable incomplete parent;
+           otherwise record one minimal request-scoped checkbox
+       ↓
+     Current Work: create/update a small meaningful checklist
+       ↓
+     Active: devscope work list → devscope work active N
+       ↓
+     Implement one meaningful Active item
+       ↓
+     devscope work list → devscope work done N
+       ↓
+     More work?
+       ├─ yes → devscope work list → devscope work active N → Implement
+       └─ no → Verify: relevant verification
+                 ↓
+               Close: check parent Plan acceptance intent;
+                      complete its checkbox only if satisfied
+                 ↓
+               devscope context → git status --short
 ```
 
-Use `devscope task list` only to find Plan tasks not shown by `context`. Do not read the
-whole repository or create Current Work solely to satisfy this workflow.
+Questions, reviews, investigation-only requests, and trivial read-only work normally
+stop after Observe/Classify and the needed inspection. Do not create or mutate Plan,
+Current Work, or Active merely to satisfy this workflow. The implementation branch
+applies to explicit multi-step code, documentation, or settings changes, not as a rigid
+requirement to create Work for trivial edits.
 
-Apply the Plan / Current Work lifecycle to explicit user requests for multi-step
-implementation or modification of code, documentation, or settings. Questions, reviews,
-investigation-only requests, and trivial read-only work do not require a Plan task or
-Current Work.
+Use `devscope task list` only to find Plan tasks not shown by `context`. Do not read the
+whole repository solely to satisfy this workflow. The rules below define the Plan and
+Current Work authority used by the canonical path.
 
 Before implementation, reuse a suitable incomplete Plan task for the same purpose.
 If none exists, the explicit implementation request itself authorizes recording one
@@ -51,10 +70,11 @@ work or unrequested design changes, or split one request into many Plan tasks. P
 not naturally entailed by the request still require explicit user authorization.
 
 Under that parent, create or update a small Current Work checklist of the actual steps
-before implementation, then explicitly activate the first meaningful item. Use NOW-sized
-steps such as inspect current workflow, update lifecycle rules, and verify behavior;
-avoid individual file opens/commands or a single broad improve-project item. This is a
-temporary implementation breakdown, not a permanent Plan task hierarchy.
+before implementation, then read `devscope work list` and explicitly activate the first
+meaningful item. Good stages include Inspect Evidence behavior, Implement Evidence Full
+Detail, and Verify failure flow. Open ui.rs, Edit app.rs, and Run cargo fmt are individual
+files/commands, not meaningful Work stages. Avoid a single broad improve-project item.
+This is a temporary implementation breakdown, not a permanent Plan task hierarchy.
 
 There is currently no `devscope task add`, `devscope work add`, or `devscope work create`.
 Record the Plan task by a targeted edit to its canonical Markdown. For Current Work
@@ -79,23 +99,19 @@ unrelated Work to start a new request; resolve its disposition first. Direct fil
 are limited to creation and structural updates; prefer the available `work active` and
 `work done` CLI for ordinary mutations, and confirm structural edits with `work list`.
 
-Active is the live execution cursor driving TUI NOW: the meaningful Current Work item
-actually being executed. Switching work means moving to another meaningful checklist
-item, even within the same user request. Set the new Active before beginning that item;
+Active is the live execution cursor driving the TUI current-work state: the meaningful
+Current Work item actually being executed. Switching work means moving to another
+meaningful checklist item, even within the same user request. Set the new Active before beginning that item;
 do not switch for each command, file edit, or brief check. Completing the Active item
 with `work done` clears Active and does not activate a successor. If continuing another
-item, explicitly set it Active before implementation resumes:
-
-```text
-devscope work list
-devscope work done <current>
-devscope work list
-devscope work active <next>
-```
+item, read `work list` again and explicitly activate it before implementation resumes.
+Read `work list` immediately before each numbered `work active` or `work done` operation.
 
 Active may remain unset when the next step is undecided, work has ended or is paused,
 or a user decision is needed. At completion, verify the parent's acceptance intent and
 update its canonical checkbox explicitly only when satisfied.
+Verification passed does not automatically mean parent Plan complete: Observed Evidence
+is verification, not acceptance authority for the requested/accepted outcome.
 
 ## Current Work and Evidence
 
