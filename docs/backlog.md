@@ -28,11 +28,12 @@ are not committed roadmap work. An item must be promoted to
   with transient update feedback and Preview syntax emphasis, not full theme packs,
   arbitrary per-widget colors, or extensive styling configuration.
 - **Backlog inspection.** The read-only `devscope backlog list` CLI lists candidate
-  titles. Real-repository CLI evaluation found 15 titles useful for orientation, but
+  titles, and `devscope backlog show <number>` displays their stored descriptions.
+  Real-repository CLI evaluation found 15 titles useful for orientation, but
   broad Detail, CLI, and Human/AI candidates still needed their descriptions to assess
-  scope. Prefer exploring read-only CLI candidate detail next; defer TUI navigation
-  until browsing itself shows concrete friction. Syntax remains undecided; any numeric
-  selection should be a non-persistent document-order position, not a candidate ID.
+  scope; CLI detail now addresses that gap. Defer on-demand TUI navigation and richer
+  browsing until browsing itself shows concrete friction. CLI numeric selection is a
+  non-persistent current document-order position, not a candidate ID.
   Backlog is distinct from Plan, Tasks, Current
   Work, and Evidence: viewing a candidate never makes it accepted Plan or Roadmap work.
   Defer adding, editing, deleting, promotion, automatic Plan creation, and automatic

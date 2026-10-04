@@ -129,6 +129,7 @@ Use `devscope --help` for the current command list.
 devscope context
 devscope task list
 devscope backlog list
+devscope backlog show <number>
 devscope work list
 devscope activity suggest-excludes
 devscope verify build
@@ -140,7 +141,9 @@ devscope artifact inspect
 
 `context`, `task list`, and `work list` print compact plain text without entering the
 TUI. `backlog list` reads uncommitted candidate titles from `docs/backlog.md`, distinct
-from accepted Plan work. `context` includes Build/Test availability and latest saved outcome with current
+from accepted Plan work. `backlog show <number>` shows a candidate's stored description;
+both reread the document. List numbers are current-order positions, not persistent IDs.
+`context` includes Build/Test availability and latest saved outcome with current
 Fresh/Stale status or Not run. Verification runs the resolved command and persists the
 latest observed result locally for later CLI/TUI use; this is not Evidence history.
 `verify build` is the backward-compatible shorthand for `verify build debug`.

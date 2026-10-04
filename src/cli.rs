@@ -31,6 +31,7 @@ pub enum EntryMode {
     Context,
     TaskList,
     BacklogList,
+    BacklogShow(usize),
     WorkList,
     WorkHistory,
     WorkDone(usize),
@@ -67,8 +68,15 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("backlog") && second == OsStr::new("list") => {
             Ok(EntryMode::BacklogList)
         }
+        [first, second, number] if first == OsStr::new("backlog") && second == OsStr::new("show") => number
+            .to_string_lossy()
+            .parse::<usize>()
+            .ok()
+            .filter(|number| *number > 0)
+            .map(EntryMode::BacklogShow)
+            .ok_or(UsageError { message: "expected `devscope backlog list` or `devscope backlog show <number>`" }),
         [first, ..] if first == OsStr::new("backlog") => Err(UsageError {
-            message: "expected `devscope backlog list`",
+            message: "expected `devscope backlog list` or `devscope backlog show <number>`",
         }),
         [first, second]
             if first == OsStr::new("activity") && second == OsStr::new("suggest-excludes") =>
@@ -147,7 +155,7 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope backlog list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify build debug\n  devscope verify build release\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope backlog list\n  devscope backlog show <number>\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify build debug\n  devscope verify build release\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
 }
 
 pub fn render_backlog_list(backlog: Option<&devscope::backlog::Backlog>) -> String {
@@ -157,6 +165,36 @@ pub fn render_backlog_list(backlog: Option<&devscope::backlog::Backlog>) -> Stri
     let mut output = format!("Backlog: {} candidates\n", backlog.candidates.len());
     for (index, candidate) in backlog.candidates.iter().enumerate() {
         output.push_str(&format!("{}. {}\n", index + 1, candidate.title));
+    }
+    output
+}
+
+pub fn select_backlog_candidate(
+    backlog: Option<&devscope::backlog::Backlog>,
+    number: usize,
+) -> Result<&devscope::backlog::BacklogCandidate, String> {
+    let backlog = backlog.ok_or_else(|| "Backlog: not found".to_owned())?;
+    if backlog.candidates.is_empty() {
+        return Err("Backlog has no candidates".into());
+    }
+    number
+        .checked_sub(1)
+        .and_then(|index| backlog.candidates.get(index))
+        .ok_or_else(|| {
+            format!(
+                "Backlog candidate {number} does not exist; current range is 1..{}",
+                backlog.candidates.len()
+            )
+        })
+}
+
+pub fn render_backlog_candidate(
+    number: usize,
+    candidate: &devscope::backlog::BacklogCandidate,
+) -> String {
+    let mut output = format!("Backlog candidate {number}\n\n{}\n", candidate.title);
+    if !candidate.description.is_empty() {
+        output.push_str(&format!("\n{}\n", candidate.description));
     }
     output
 }
@@ -530,7 +568,7 @@ mod tests {
                 parse_args(args.into_iter().map(OsString::from))
                     .unwrap_err()
                     .to_string(),
-                "expected `devscope backlog list`"
+                "expected `devscope backlog list` or `devscope backlog show <number>`"
             );
         }
         assert!(usage().contains("devscope backlog list"));
@@ -547,6 +585,70 @@ mod tests {
         assert_eq!(
             render_backlog_list(Some(&devscope::backlog::Backlog::default())),
             "Backlog: 0 candidates\n"
+        );
+    }
+
+    #[test]
+    fn backlog_show_requires_one_positive_number() {
+        for number in ["1", "15"] {
+            assert_eq!(
+                parse_args(["backlog", "show", number].map(OsString::from)).unwrap(),
+                EntryMode::BacklogShow(number.parse().unwrap())
+            );
+        }
+        for args in [
+            vec!["backlog", "show", "0"],
+            vec!["backlog", "show", "abc"],
+            vec!["backlog", "show", "-1"],
+            vec!["backlog", "show"],
+            vec!["backlog", "show", "1", "extra"],
+            vec!["backlog", "show", "999999999999999999999999999999999999"],
+        ] {
+            assert_eq!(
+                parse_args(args.into_iter().map(OsString::from))
+                    .unwrap_err()
+                    .to_string(),
+                "expected `devscope backlog list` or `devscope backlog show <number>`"
+            );
+        }
+        assert!(usage().contains("devscope backlog list"));
+        assert!(usage().contains("devscope backlog show <number>"));
+    }
+
+    #[test]
+    fn backlog_show_selects_current_positions_and_reports_absence() {
+        let backlog = devscope::backlog::parse_backlog(
+            "## Implementation candidates\n- **First.** full wrapped\n  description\n- **Last.**",
+        )
+        .unwrap();
+        assert_eq!(
+            render_backlog_candidate(1, select_backlog_candidate(Some(&backlog), 1).unwrap()),
+            "Backlog candidate 1\n\nFirst\n\nfull wrapped description\n"
+        );
+        assert_eq!(
+            render_backlog_candidate(2, select_backlog_candidate(Some(&backlog), 2).unwrap()),
+            "Backlog candidate 2\n\nLast\n"
+        );
+        assert_eq!(
+            select_backlog_candidate(Some(&backlog), 3).unwrap_err(),
+            "Backlog candidate 3 does not exist; current range is 1..2"
+        );
+        assert!(select_backlog_candidate(Some(&backlog), 0).is_err());
+        assert_eq!(
+            select_backlog_candidate(Some(&devscope::backlog::Backlog::default()), 1).unwrap_err(),
+            "Backlog has no candidates"
+        );
+        assert_eq!(
+            select_backlog_candidate(None, 1).unwrap_err(),
+            "Backlog: not found"
+        );
+        let reordered = devscope::backlog::parse_backlog(
+            "## Implementation candidates\n- **Last.**\n- **First.** full wrapped description",
+        )
+        .unwrap();
+        assert_eq!(
+            select_backlog_candidate(Some(&reordered), 1).unwrap().title,
+            "Last"
         );
     }
 

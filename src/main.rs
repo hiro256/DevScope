@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::Context) => run_context(),
         Ok(EntryMode::TaskList) => run_task_list(),
         Ok(EntryMode::BacklogList) => run_backlog_list(),
+        Ok(EntryMode::BacklogShow(number)) => run_backlog_show(number),
         Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::WorkHistory) => run_work_history(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
@@ -103,6 +104,22 @@ fn run_backlog_list() -> ExitCode {
                 print!("{}", cli::render_backlog_list(backlog.as_ref()));
                 ExitCode::SUCCESS
             }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+
+fn run_backlog_show(number: usize) -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match devscope::backlog::read_backlog(&root) {
+            Ok(backlog) => match cli::select_backlog_candidate(backlog.as_ref(), number) {
+                Ok(candidate) => {
+                    print!("{}", cli::render_backlog_candidate(number, candidate));
+                    ExitCode::SUCCESS
+                }
+                Err(error) => report_runtime_error(error),
+            },
             Err(error) => report_runtime_error(error),
         },
         Err(error) => report_runtime_error(error),
