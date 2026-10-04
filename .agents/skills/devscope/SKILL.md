@@ -24,24 +24,78 @@ does not match the project, or project structure changed.
 
 ```text
 context
-  -> needed details
-  -> work list only when a Current Work number is needed
-  -> work active N only when starting or switching work
-  -> small implementation step
-  -> devscope verify build/test when relevant
-  -> work done N at an appropriate logical boundary
+  -> classify request and identify or record one parent Plan task
+  -> create or update a small Current Work checklist
+  -> work list -> work active N
+  -> implement the meaningful Active item
+  -> work list -> work done N at its completion boundary
+  -> work list -> work active next N before continuing another item
+  -> relevant verification and explicit Plan completion
   -> context and git status before stopping
 ```
 
 Use `devscope task list` only to find Plan tasks not shown by `context`. Do not read the
 whole repository or create Current Work solely to satisfy this workflow.
 
-Before starting a multi-step implementation task, identify its parent Plan task. When it matches an
-existing Plan task, create a small Current Work checklist under that parent before changing code and
-set one item Active. When it has no suitable Plan parent, add or clarify the parent Plan task first
-only when the user has authorized Plan editing; otherwise ask before changing the Roadmap. Do not
-apply this to one-shot questions, reviews, trivial read-only checks, or small regressions whose scope
-does not warrant a Plan task.
+Apply the Plan / Current Work lifecycle to explicit user requests for multi-step
+implementation or modification of code, documentation, or settings. Questions, reviews,
+investigation-only requests, and trivial read-only work do not require a Plan task or
+Current Work.
+
+Before implementation, reuse a suitable incomplete Plan task for the same purpose.
+If none exists, the explicit implementation request itself authorizes recording one
+minimal Markdown checkbox task in the appropriate Roadmap section. Read the relevant
+section and avoid duplicates. This authority covers only the requested work: do not
+reorganize unrelated Roadmap content, promote unrelated Backlog candidates, add future
+work or unrequested design changes, or split one request into many Plan tasks. Plan edits
+not naturally entailed by the request still require explicit user authorization.
+
+Under that parent, create or update a small Current Work checklist of the actual steps
+before implementation, then explicitly activate the first meaningful item. Use NOW-sized
+steps such as inspect current workflow, update lifecycle rules, and verify behavior;
+avoid individual file opens/commands or a single broad improve-project item. This is a
+temporary implementation breakdown, not a permanent Plan task hierarchy.
+
+There is currently no `devscope task add`, `devscope work add`, or `devscope work create`.
+Record the Plan task by a targeted edit to its canonical Markdown. For Current Work
+creation or structural updates that the CLI cannot express, inspect the existing
+`.devscope/work/current.md` (or the repository's documented storage example if absent)
+and minimally edit that file, preserving its format, parent/task association, and
+unrelated state. In this repository the existing structure is:
+
+```markdown
+# Current Work
+
+Parent: docs/roadmap.md
+Task: Refine DevScope Skill work lifecycle
+
+- [ ] Inspect current workflow
+- [ ] Update lifecycle rules
+- [ ] Verify behavior
+```
+
+Use the actual parent source path and exact Plan task text. Do not overwrite unfinished
+unrelated Work to start a new request; resolve its disposition first. Direct file edits
+are limited to creation and structural updates; prefer the available `work active` and
+`work done` CLI for ordinary mutations, and confirm structural edits with `work list`.
+
+Active is the live execution cursor driving TUI NOW: the meaningful Current Work item
+actually being executed. Switching work means moving to another meaningful checklist
+item, even within the same user request. Set the new Active before beginning that item;
+do not switch for each command, file edit, or brief check. Completing the Active item
+with `work done` clears Active and does not activate a successor. If continuing another
+item, explicitly set it Active before implementation resumes:
+
+```text
+devscope work list
+devscope work done <current>
+devscope work list
+devscope work active <next>
+```
+
+Active may remain unset when the next step is undecided, work has ended or is paused,
+or a user decision is needed. At completion, verify the parent's acceptance intent and
+update its canonical checkbox explicitly only when satisfied.
 
 ## Current Work and Evidence
 
@@ -79,7 +133,8 @@ changed duration is an approximate diagnostic hint, not a benchmark proof.
 
 ## Authority and stop
 
-The skill grants no authority for Plan edits, commits, pushes, or Config changes. Follow
+Beyond the request-scoped Plan recording above, this skill grants no authority for Plan edits,
+commits, pushes, or Config changes. Follow
 the user request and repository instructions. Before stopping, inspect `devscope context`,
 relevant verification, Current Work when active, and `git status`; report Recorded Work,
 Observed Evidence, and interpretation separately.
