@@ -87,11 +87,11 @@ unrelated state. In this repository the existing structure is:
 # Current Work
 
 Parent: docs/roadmap.md
-Task: Refine DevScope Skill work lifecycle
+Task: <exact parent Plan task text>
 
-- [ ] Inspect current workflow
-- [ ] Update lifecycle rules
-- [ ] Verify behavior
+- [ ] Inspect current behavior
+- [ ] Implement requested change
+- [ ] Verify outcome
 ```
 
 Use the actual parent source path and exact Plan task text. Do not overwrite unfinished
