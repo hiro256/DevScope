@@ -27,9 +27,9 @@ are not committed roadmap work. An item must be promoted to
   existing semantic styles derived consistently where appropriate. Consider it together
   with transient update feedback and Preview syntax emphasis, not full theme packs,
   arbitrary per-widget colors, or extensive styling configuration.
-- **Backlog inspection.** Explore read-only inspection/navigation of uncommitted
-  candidates through a TUI view or CLI listing (for example, `devscope backlog list`;
-  syntax and shortcuts remain undecided). Backlog is distinct from Plan, Tasks, Current
+- **Backlog inspection.** The read-only `devscope backlog list` CLI lists candidate
+  titles. Explore remaining candidate-detail inspection and on-demand TUI navigation;
+  their surfaces and shortcuts remain undecided. Backlog is distinct from Plan, Tasks, Current
   Work, and Evidence: viewing a candidate never makes it accepted Plan or Roadmap work.
   Defer adding, editing, deleting, promotion, automatic Plan creation, and automatic
   Current Work startup. A CLI surface could complement accepted-work orientation through
@@ -77,6 +77,16 @@ are not committed roadmap work. An item must be promoted to
   reduces the need for weighting.
 - **Current Work dedicated panel.** Reconsider only when overview-only Work progress
   is insufficient for a concrete drill-down need.
+
+## Format
+
+`docs/backlog.md` uses the exact `## Implementation candidates` heading, with one
+top-level `- **Title.** description` bullet per candidate and indented continuation
+lines. The next level-2 heading ends the section. Order is presentation, not priority
+or status. CLI listing shows titles only (without the conventional trailing period);
+descriptions remain available in the model. A missing file reports `Backlog: not found`;
+an absent/empty section reports zero candidates. Malformed bold candidate titles and
+read failures are errors; nested bullets and task checkboxes are not separate candidates.
 
 ## Promotion flow
 

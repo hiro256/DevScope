@@ -1,5 +1,6 @@
 //! UI-independent progress analysis for DevScope.
 
+pub mod backlog;
 pub mod change;
 pub mod config;
 pub mod current_work;

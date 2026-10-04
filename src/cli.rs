@@ -30,6 +30,7 @@ pub enum EntryMode {
     Tui,
     Context,
     TaskList,
+    BacklogList,
     WorkList,
     WorkHistory,
     WorkDone(usize),
@@ -63,6 +64,12 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
         [first, second] if first == OsStr::new("task") && second == OsStr::new("list") => {
             Ok(EntryMode::TaskList)
         }
+        [first, second] if first == OsStr::new("backlog") && second == OsStr::new("list") => {
+            Ok(EntryMode::BacklogList)
+        }
+        [first, ..] if first == OsStr::new("backlog") => Err(UsageError {
+            message: "expected `devscope backlog list`",
+        }),
         [first, second]
             if first == OsStr::new("activity") && second == OsStr::new("suggest-excludes") =>
         {
@@ -140,7 +147,18 @@ pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<EntryMode,
 }
 
 pub const fn usage() -> &'static str {
-    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify build debug\n  devscope verify build release\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+    "Usage:\n  devscope\n  devscope context\n  devscope task list\n  devscope backlog list\n  devscope work list\n  devscope work history\n  devscope work done <number>\n  devscope work active <number>\n  devscope work active clear\n  devscope activity suggest-excludes\n  devscope verify build\n  devscope verify build debug\n  devscope verify build release\n  devscope verify test\n  devscope artifact inspect [path]\n  devscope --help\n  devscope --version\n"
+}
+
+pub fn render_backlog_list(backlog: Option<&devscope::backlog::Backlog>) -> String {
+    let Some(backlog) = backlog else {
+        return "Backlog: not found\n".into();
+    };
+    let mut output = format!("Backlog: {} candidates\n", backlog.candidates.len());
+    for (index, candidate) in backlog.candidates.iter().enumerate() {
+        output.push_str(&format!("{}. {}\n", index + 1, candidate.title));
+    }
+    output
 }
 
 pub fn render_context(
@@ -496,6 +514,41 @@ fn activity_exclusion_reason_label(reason: &ActivityExcludeCandidateReason) -> &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backlog_cli_parses_and_rejects_other_subcommands() {
+        assert_eq!(
+            parse_args(["backlog", "list"].map(OsString::from)).unwrap(),
+            EntryMode::BacklogList
+        );
+        for args in [
+            vec!["backlog"],
+            vec!["backlog", "show"],
+            vec!["backlog", "list", "extra"],
+        ] {
+            assert_eq!(
+                parse_args(args.into_iter().map(OsString::from))
+                    .unwrap_err()
+                    .to_string(),
+                "expected `devscope backlog list`"
+            );
+        }
+        assert!(usage().contains("devscope backlog list"));
+    }
+
+    #[test]
+    fn backlog_cli_renders_only_titles_in_document_order() {
+        let backlog = devscope::backlog::parse_backlog("## Implementation candidates\n- **Second.** hidden description\n- **First.** another description").unwrap();
+        assert_eq!(
+            render_backlog_list(Some(&backlog)),
+            "Backlog: 2 candidates\n1. Second\n2. First\n"
+        );
+        assert_eq!(render_backlog_list(None), "Backlog: not found\n");
+        assert_eq!(
+            render_backlog_list(Some(&devscope::backlog::Backlog::default())),
+            "Backlog: 0 candidates\n"
+        );
+    }
 
     fn persisted_result(kind: BuildTestKind, outcome: BuildTestOutcome) -> BuildTestState {
         BuildTestState::Completed(BuildTestResult::new(

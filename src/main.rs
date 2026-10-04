@@ -34,6 +34,7 @@ fn main() -> ExitCode {
         Ok(EntryMode::Tui) => run_tui().map_or_else(report_runtime_error, |_| ExitCode::SUCCESS),
         Ok(EntryMode::Context) => run_context(),
         Ok(EntryMode::TaskList) => run_task_list(),
+        Ok(EntryMode::BacklogList) => run_backlog_list(),
         Ok(EntryMode::WorkList) => run_work_list(),
         Ok(EntryMode::WorkHistory) => run_work_history(),
         Ok(EntryMode::WorkDone(number)) => run_work_done(number),
@@ -87,6 +88,19 @@ fn run_task_list() -> ExitCode {
         Ok(root) => match cli::collect_task_list_state(&root) {
             Ok(tasks) => {
                 print!("{}", cli::render_task_list(&root, &tasks));
+                ExitCode::SUCCESS
+            }
+            Err(error) => report_runtime_error(error),
+        },
+        Err(error) => report_runtime_error(error),
+    }
+}
+
+fn run_backlog_list() -> ExitCode {
+    match env::current_dir() {
+        Ok(root) => match devscope::backlog::read_backlog(&root) {
+            Ok(backlog) => {
+                print!("{}", cli::render_backlog_list(backlog.as_ref()));
                 ExitCode::SUCCESS
             }
             Err(error) => report_runtime_error(error),

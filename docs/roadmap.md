@@ -263,6 +263,7 @@ requires project knowledge or diff inspection, not a five-second Overview summar
 
 ### Product clarity and onboarding
 
+- [x] Implement minimal read-only Backlog CLI inspection
 - [x] 現行main実装と公開文書・設計文書の整合性を確認する
 - [x] Align public documentation and first-use onboarding with current implementation
 - [x] Reassess UI and event-loop module boundaries after TUI refinement
