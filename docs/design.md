@@ -318,7 +318,10 @@ width; narrow layouts hide it, and resizing preserves the user's `p` toggle stat
 
 The interaction model is considered validated, but the exact contents remain provisional. Task
 Detail currently shows task text, source path, section, and Markdown context. Evidence Detail
-currently shows Status, Freshness, Source, Command, Duration, and Result or Error when available. Changed File Detail
+shows compact Status, Freshness, Duration, and Exit code fields for completed results,
+with Command and Result sections. Failed results show retained Diagnostic output when
+available; stale results explain that project inputs changed after verification. Running
+and ExecutionError show Command, with Error for execution failures. Changed File Detail
 currently shows status, change counts, and diff content, with Full Detail for scrolling. These are
 current useful contents, not final contracts: future observation sources and workflows may change
 them. Recent Commits remains overview-only until a concrete selection or drill-down need appears.

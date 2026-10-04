@@ -970,8 +970,7 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
         BuildTestState::NotRun => preview_field("Status", "Not run"),
         BuildTestState::Running(run) => {
             let mut lines = preview_field("Status", "Running");
-            lines.extend(preview_field("Source", run.source_label()));
-            lines.extend(preview_field("Command", run.command_label()));
+            lines.extend(evidence_section("Command", run.command_label()));
             lines
         }
         BuildTestState::Completed(result) => {
@@ -983,27 +982,58 @@ fn evidence_preview_lines(_kind: BuildTestKind, state: &BuildTestState) -> Vec<L
                 BuildTestFreshness::Fresh => "Fresh",
                 BuildTestFreshness::Stale => "Stale",
             };
-            let mut lines = preview_field("Status", outcome);
-            lines.extend(preview_field("Freshness", freshness));
-            lines.extend(preview_field("Source", result.source_label()));
-            lines.extend(preview_field("Command", result.command_label()));
-            lines.extend(preview_field(
-                "Duration",
-                &format_duration(result.duration()),
-            ));
+            let mut lines = [
+                ("Status:", outcome.to_owned()),
+                ("Freshness:", freshness.to_owned()),
+                ("Duration:", format_duration(result.duration())),
+                (
+                    "Exit code:",
+                    result
+                        .exit_code()
+                        .map_or_else(|| "unavailable".into(), |code| code.to_string()),
+                ),
+            ]
+            .into_iter()
+            .map(|(label, value)| Line::from(format!("{label:<11} {value}")))
+            .collect::<Vec<_>>();
+            lines.extend(evidence_section("Command", result.command_label()));
             if !result.summary().is_empty() {
-                lines.extend(preview_field("Result", result.summary()));
+                lines.extend(evidence_section("Result", result.summary()));
+            }
+            if result.freshness() == BuildTestFreshness::Stale {
+                lines.extend(evidence_section(
+                    "Freshness note",
+                    "Project inputs changed after this verification.",
+                ));
+            }
+            if result.outcome() == BuildTestOutcome::Failed
+                && let Some(diagnostic) = result.diagnostic()
+                && !diagnostic.as_str().is_empty()
+            {
+                lines.extend(evidence_section("Diagnostic", diagnostic.as_str()));
             }
             lines
         }
         BuildTestState::ExecutionError(error) => {
             let mut lines = preview_field("Status", "Execution error");
-            lines.extend(preview_field("Source", error.source_label()));
-            lines.extend(preview_field("Command", error.command_label()));
-            lines.extend(preview_field("Error", error.message()));
+            lines.extend(evidence_section("Command", error.command_label()));
+            lines.extend(evidence_section("Error", error.message()));
             lines
         }
     }
+}
+
+fn evidence_section(label: &str, value: &str) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(label.to_owned()).style(Style::default().add_modifier(Modifier::BOLD)),
+    ];
+    lines.extend(
+        safe_display_text(value)
+            .split('\n')
+            .map(|line| Line::from(format!("  {line}"))),
+    );
+    lines
 }
 
 fn preview_field(label: &str, value: &str) -> Vec<Line<'static>> {
@@ -3840,14 +3870,14 @@ mod tests {
             assert_eq!(title, format!("Detail: {}", kind.label()));
             let text = format!("{lines:?}");
             assert!(text.contains(if kind == BuildTestKind::BuildRelease {
-                "Status: Failed"
+                "Status:     Failed"
             } else {
-                "Status: Passed"
+                "Status:     Passed"
             }));
             assert!(text.contains(if kind == BuildTestKind::Test {
-                "Freshness: Stale"
+                "Freshness:  Stale"
             } else {
-                "Freshness: Fresh"
+                "Freshness:  Fresh"
             }));
             assert!(
                 evidence_selector_lines(&app, usize::MAX)[index]
@@ -3973,7 +4003,7 @@ mod tests {
         assert!(running.contains("Evidence"));
         assert!(running.contains("Build Debug    ▶ Running"));
         assert!(running.contains("cargo check"));
-        assert!(running.contains("Source: hidden source"));
+        assert!(!running.contains("Source: hidden source"));
         app.apply_build_test_state(
             BuildTestKind::BuildDebug,
             BuildTestState::Completed(BuildTestResult::new(
@@ -5247,18 +5277,164 @@ mod tests {
     }
 
     #[test]
+    fn evidence_detail_retains_diagnostics_and_explains_freshness_safely() {
+        for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
+            for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
+                for diagnostic in [None, Some(""), Some("日本語\nerror\x1b[2J\tend")] {
+                    let state = BuildTestState::Completed(BuildTestResult::new(
+                        BuildTestKind::Test,
+                        outcome,
+                        freshness,
+                        "cargo",
+                        "cargo test",
+                        Some(101),
+                        Duration::from_millis(3100),
+                        "retained summary",
+                        diagnostic.map(BuildTestDiagnostic::new),
+                    ));
+                    let lines = evidence_preview_lines(BuildTestKind::Test, &state);
+                    let text = lines
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert!(text.contains("Duration:   3.1s"));
+                    assert!(text.contains("Exit code:  101"));
+                    assert!(text.contains("Command\n  cargo test\n\nResult\n  retained summary"));
+                    assert!(!text.contains("Source:"));
+                    assert_eq!(
+                        text.contains("Freshness note"),
+                        freshness == BuildTestFreshness::Stale
+                    );
+                    if freshness == BuildTestFreshness::Stale {
+                        assert!(text.contains("Project inputs changed after this verification."));
+                    }
+                    let show_diagnostic = outcome == BuildTestOutcome::Failed
+                        && diagnostic.is_some_and(|d| !d.is_empty());
+                    assert_eq!(text.contains("Diagnostic"), show_diagnostic);
+                    if show_diagnostic {
+                        assert!(text.contains("Diagnostic\n  日本語\n  error\\u{1b}[2J\\tend"));
+                    }
+                    assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
+                    for heading in lines.iter().filter(|line| {
+                        ["Command", "Result", "Diagnostic", "Freshness note"]
+                            .contains(&line.to_string().as_str())
+                    }) {
+                        assert!(heading.style.add_modifier.contains(Modifier::BOLD));
+                        assert!(!heading.style.add_modifier.contains(Modifier::UNDERLINED));
+                        assert_eq!(heading.style.fg, None);
+                    }
+                }
+            }
+        }
+        let state = BuildTestState::Completed(BuildTestResult::new(
+            BuildTestKind::Test,
+            BuildTestOutcome::Failed,
+            BuildTestFreshness::Fresh,
+            "cargo",
+            "cargo test",
+            None,
+            Duration::ZERO,
+            "",
+            None,
+        ));
+        let lines = evidence_preview_lines(BuildTestKind::Test, &state);
+        assert_eq!(lines[3].to_string(), "Exit code:  unavailable");
+        assert!(!lines.iter().any(|line| line.to_string() == "Result"));
+        for (state, expected) in [
+            (BuildTestState::NotRun, "Status: Not run"),
+            (BuildTestState::Unavailable, "Status: Unavailable"),
+        ] {
+            assert_eq!(
+                evidence_preview_lines(BuildTestKind::Test, &state),
+                vec![Line::from(expected)]
+            );
+        }
+        let running = evidence_preview_lines(
+            BuildTestKind::Test,
+            &BuildTestState::Running(BuildTestRun::new(
+                BuildTestKind::Test,
+                "cargo",
+                "cargo test",
+            )),
+        );
+        assert_eq!(
+            running.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["Status: Running", "", "Command", "  cargo test"]
+        );
+        let error = evidence_preview_lines(
+            BuildTestKind::Test,
+            &BuildTestState::ExecutionError(BuildTestExecutionError::new(
+                BuildTestKind::Test,
+                "cargo",
+                "cargo test",
+                "cannot start\nreason",
+            )),
+        );
+        assert_eq!(
+            error.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [
+                "Status: Execution error",
+                "",
+                "Command",
+                "  cargo test",
+                "",
+                "Error",
+                "  cannot start",
+                "  reason"
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_evidence_diagnostic_uses_existing_preview_scroll_viewport() {
+        let mut app = app(TaskState::Unavailable, ActivityState::Unavailable);
+        app.reconcile_focus(&[FocusedPanel::Evidence]);
+        let diagnostic = format!("{}FINAL-DIAGNOSTIC", "日本語 diagnostic line\n".repeat(60));
+        app.apply_build_test_state(
+            BuildTestKind::BuildDebug,
+            BuildTestState::Completed(BuildTestResult::new(
+                BuildTestKind::BuildDebug,
+                BuildTestOutcome::Failed,
+                BuildTestFreshness::Stale,
+                "cargo",
+                "cargo check",
+                Some(101),
+                Duration::from_secs(3),
+                "failed",
+                Some(BuildTestDiagnostic::new(diagnostic)),
+            )),
+        );
+        let area = Rect::new(0, 0, 80, 30);
+        let limit = preview_scroll_limit(&app, area);
+        assert!(limit > 0);
+        app.scroll_preview(isize::MAX, limit);
+        let output = draw(&app, 80, 30);
+        assert!(output.contains("FINAL-DIAGNOSTIC"));
+        assert!(output.contains("Ctrl+↑/↓:Scroll"));
+        assert!(output.contains("Space:Run"));
+    }
+
+    #[test]
     fn compact_evidence_keeps_outcome_and_freshness_separate() {
         for outcome in [BuildTestOutcome::Passed, BuildTestOutcome::Failed] {
             for freshness in [BuildTestFreshness::Fresh, BuildTestFreshness::Stale] {
                 let state = completed_state(BuildTestKind::BuildDebug, outcome, freshness);
                 let lines = evidence_preview_lines(BuildTestKind::BuildDebug, &state);
-                assert_eq!(lines.len(), 6);
+                assert_eq!(
+                    lines.len(),
+                    if freshness == BuildTestFreshness::Stale {
+                        13
+                    } else {
+                        10
+                    }
+                );
                 assert!(lines[0].to_string().starts_with("Status: "));
                 assert!(lines[1].to_string().starts_with("Freshness: "));
-                assert!(lines[2].to_string().starts_with("Source: "));
-                assert!(lines[3].to_string().starts_with("Command: "));
-                assert_eq!(lines[4].to_string(), "Duration: 42.0s");
-                assert!(lines[5].to_string().starts_with("Result: "));
+                assert_eq!(lines[2].to_string(), "Duration:   42.0s");
+                assert!(lines[3].to_string().starts_with("Exit code: "));
+                assert_eq!(lines[5].to_string(), "Command");
+                assert_eq!(lines[8].to_string(), "Result");
             }
         }
         let multiline = preview_field("Error", "first\nsecond\x1b[2J");
