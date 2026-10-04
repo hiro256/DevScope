@@ -22,7 +22,8 @@ behind it; consult the package's release notes for its features and controls.
 
 ## Current capabilities
 
-v0.5.0 is a refinement release focused on faster project-state understanding and inspection.
+Current main focuses on faster project-state understanding and inspection; this list
+is not a feature guarantee for every published v0.5.0 binary.
 
 - Current Work with explicit Active state, NOW presentation, and compact history
 - Focused-panel Preview and Task Detail support for source-grounded context
@@ -30,6 +31,7 @@ v0.5.0 is a refinement release focused on faster project-state understanding and
 - Artifact Evidence alongside Build/Test Evidence
 - Background Git worktree observation with safe Activity exclusion proposals and an approval-gated workflow
 - Changed File Full View with Git diff or explicitly labeled safe current text
+- Evidence Full Detail for independently retained stdout/stderr output
 - Read-only File Browser with passive Preview and cached-file Full View
 - Refined Overview/Preview navigation, side-by-side terminal layouts, wrapped content, and contextual action hints
 - Transient visual cues for Evidence, Changed Files, newly added Tasks, and Recent Commits without persistent notification UI
@@ -77,7 +79,7 @@ never inferred from Next. The CLI works without an agent or Skill.
 
 - Left/Right moves panel focus; Tab/Shift+Tab remains compatible. Up/Down or j/k
   moves local selection. `▌` marks focus; `>` marks selection.
-- Enter or p toggles passive Preview; Ctrl+Up/Down scrolls it when visible.
+- Enter or p toggles passive Preview (initially hidden); Ctrl+Up/Down scrolls it when visible.
 - Space runs/re-runs the selected runnable Build/Test only with Evidence focused
   and Preview actually visible. Hidden/narrow-layout Preview, Artifact, Unavailable,
   or any active verification prevents execution. Global b/t execution shortcuts
@@ -90,6 +92,14 @@ Preview shows source-grounded Task context, separate Evidence outcome/freshness,
 Changed File inspection. Git diff is preferred; unavailable diff may fall back to
 safe current UTF-8 text explicitly labeled **File content**, never presented as a diff.
 Contextual action hints stay fixed near Preview, separate from the global footer.
+
+Evidence Preview keeps compact execution metadata and output-availability labels.
+Ctrl+Enter opens a snapshot of completed output, including Passed or Stale results,
+when a retained stream is nonempty. Full Detail separates Test output (stdout) and
+Error output (stderr). Failed results initially scroll near a recognizable failure
+anchor or toward the retained tail; this is a small heuristic, not diagnostic analysis.
+Each stream retains at most 2,048 Unicode scalar values independently, with `(tail)`
+labels for truncation. Output is session-local, not restored from saved results.
 
 ### File Browser and Full View
 
@@ -105,7 +115,8 @@ entries are not followed. No file editing or external editor launch is provided.
 
 In any Full View, including Evidence Full Detail, Up/Down or j/k scrolls, plain Enter/Esc returns to its originating
 view (Overview or Browser) preserving selection and Preview state, and q quits.
-Ctrl+Enter does not close Full View. Long inspection lines wrap; safe text reads are
+Ctrl+Enter does not close Full View. Non-diff inspection lines wrap; Git diff keeps one
+source line per visual row with width-safe truncation. Safe text reads are
 bounded to 64 KiB with explicit truncation and unsupported-content reasons.
 
 ## CLI reference (main)
@@ -181,8 +192,9 @@ Change detection is lightweight: unchanged polling does not recollect Git Activi
 Git status and commit data are collected only after a relevant worktree or Git
 metadata change is detected.
 
-The Overview header identifies the observed directory on the left and places refresh
-metadata on the right. For example:
+The Overview top row shows `●` with explicit Active work or an inactive/unavailable
+Current Work state, and refresh metadata on the right. Project identity appears in
+`Project Progress · <project>`. Refresh examples:
 
 ```text
 Watching · Initial 09:42
@@ -192,7 +204,7 @@ Retry pending · Markdown 09:44
 
 The time is the local 24-hour clock at the latest recorded refresh, not data age,
 refresh duration, or watcher health. `--:--` means local time could not be obtained.
-Narrow headers omit lower-priority metadata while retaining project identity where possible.
+Narrow top rows omit lower-priority refresh metadata while retaining Current Work state.
 
 ## Changed Files
 

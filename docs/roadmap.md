@@ -238,7 +238,7 @@ for active/unset NOW, partial Plan/Work progress, Passed/Fresh, Passed/Stale, Te
 multiple Tasks/Changed Files, Preview ON/OFF, and Large/Medium layouts. NOW drew attention
 first; `(stale)` and Passed/Failed markers distinguished freshness from outcome.
 The observed Work-marker ambiguity was resolved with `[Work parent]` for association,
-while NOW alone denotes explicit Active. The header now identifies the observed directory
+while NOW alone denoted explicit Active at that stage. The header then identified the observed directory
 on the left and shows refresh source plus recorded local clock time on the right.
 The user accepted the clearer layout without additional Overview panels or color.
 Changed paths are discoverable; understanding unfamiliar areas or actual edits still
@@ -262,6 +262,7 @@ requires project knowledge or diff inspection, not a five-second Overview summar
 
 ### Product clarity and onboarding
 
+- [x] 現行main実装と公開文書・設計文書の整合性を確認する
 - [x] Align public documentation and first-use onboarding with current implementation
 - [x] Reassess UI and event-loop module boundaries after TUI refinement
 - [ ] Explore package-manager distribution after onboarding refinement
@@ -270,6 +271,13 @@ The completed documentation slice covers current controls, implementation status
 first-use path, and the existing Skill workflow. Five-second project-state understanding
 remains the separate TUI dogfood task above; module reassessment and distribution exploration
 do not authorize refactoring or packaging implementation in this slice.
+
+Current-main documentation now distinguishes compact Evidence Preview from snapshot
+output Full Detail, independently retained runtime-only stdout/stderr tails, and failure-
+oriented initial positioning. It also records the current Current Work top row, primary-
+region markers, Browser content-first Preview, and terminal-Blue diff styling. Earlier
+TUI dogfood descriptions above are historical stages, not the latest visual contract;
+see [design.md](design.md) for current behavior. No new feature work is added by this pass.
 
 ### External surfaces
 

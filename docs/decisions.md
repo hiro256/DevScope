@@ -1,5 +1,14 @@
 # Decision Log
 
+## 2026-10-04 — Compact Evidence Preview and snapshot output inspection
+
+- **Decision:** Keep Evidence Preview focused on result metadata and output availability;
+  inspect completed retained output in explicitly opened snapshot Full Detail. Retain
+  stdout and stderr independently as bounded runtime-only tails, not persisted logs.
+- **Reason:** A noisy stream must not evict the other, and output volume must not obscure
+  Overview state. This is a concrete process-Evidence inspection boundary, not a generic
+  Evidence API, history database, or failure-analysis framework.
+
 ## 2026-09-27 — Fixed Build Debug and Release identities
 
 - **Decision:** Extend process Evidence with exactly Build Debug, Build Release, and Test.
@@ -21,8 +30,9 @@
   browser visibility separate from Plan, Activity, and Verify exclusions.
 - **Reason:** Optional surrounding-file inspection should not turn Overview into a file
   manager, depend on Git membership, or become a new Plan/Activity/Evidence authority.
-  The [initial contract](file-browser-proposal.md) closes exploration only; implementation
-  and Windows dogfood remain pending, and entry-key details are not fixed by this decision.
+  At the time, the [initial contract](file-browser-proposal.md) closed exploration only;
+  implementation and Windows dogfood were pending. They are now complete as recorded in
+  the Roadmap; entry-key details were not fixed by this decision.
 
 ## 2026-08-23 — Project-centric architecture
 

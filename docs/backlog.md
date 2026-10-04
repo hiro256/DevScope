@@ -22,11 +22,10 @@ are not committed roadmap work. An item must be promoted to
 - **Task weighting.** Reconsider only if equal-weight Markdown task counting creates
   a concrete progress-reporting problem. The current Plan + Current Work split
   reduces the need for weighting.
-- **TUI visual polish.** Side-by-side Codex alignment, border reduction, restrained
-  focus emphasis, footer density, and responsive balance are promoted to the TUI
-  refinement track in [roadmap.md](roadmap.md). Richer typography experiments remain
-  exploratory; this promotion does not authorize a theme system, permanent overview
-  panels, or decorative dashboard widgets.
+- **Evidence output follow-up.** If retained output still makes failures hard to locate,
+  explore failure extraction, noise reduction, or output navigation using concrete
+  dogfood cases. Current compact Preview and snapshot Full Detail are implemented;
+  this candidate does not authorize implementation or Evidence history.
 - **Current Work dedicated panel.** Reconsider only when overview-only Work progress
   is insufficient for a concrete drill-down need.
 

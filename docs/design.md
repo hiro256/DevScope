@@ -13,7 +13,7 @@ Artifact       = Filesystem Evidence
 ```
 
 Markdown and Git are implemented as Plan and Activity sources. Build/Test and Artifact
-Evidence, Current Work with explicit Active/NOW, passive Preview, Changed File Full View,
+Evidence with output Full Detail, Current Work with explicit Active, passive Preview, Changed File Full View,
 and read-only File Browser with Browser Full View are implemented. Agent integrations
 remain optional future adapters.
 
@@ -50,7 +50,9 @@ Agent integrations are adapters. They may enrich the observed state, but must no
 become a dependency of the core model.
 ## TUI interaction model
 
-Overview begins with one bold NOW row; refresh metadata remains normal-weight and
+Overview begins with a `●` Current Work state row, without a literal NOW label;
+explicit Active is shown when recorded, otherwise an inactive/unavailable state.
+Refresh metadata remains normal-weight and
 right-aligned on that row when space permits. The Project Progress title identifies
 the observed root's final directory component as `Project Progress · <name>`;
 it is a directory label, not a configured title or Git repository identity.
@@ -58,8 +60,8 @@ An unusable component falls back to `Project`, without exposing the absolute pat
 Refresh metadata is right-aligned as status, source, and recorded local `HH:mm`.
 The clock is captured when a refresh is recorded, never recomputed during rendering;
 `--:--` means local time was unavailable. It is not data age, duration, or watcher health.
-Narrow headers prioritize NOW, dropping time, source, and ordinary status.
-Actual refresh errors retain explicit error text alongside NOW where space permits.
+Narrow headers prioritize Current Work, dropping time, source, and ordinary status.
+Actual refresh errors retain explicit error text alongside Current Work where space permits.
 
 The TUI supports human-oriented project understanding, while the CLI remains the
 precise interface for AI and automation. A focused panel identifies the visible
@@ -78,12 +80,18 @@ The initial panel-focus experiment validated Tasks, Evidence, and Changed Files 
 Hidden panels are excluded from navigation, and panel-local selection persists independently.
 
 Current Work is Recorded state and may appear in the human overview without becoming Plan or Evidence.
-Current Work changes update independently from Plan and Activity observation. Active is explicit Recorded state within Current Work: it is never inferred from checklist order. `first_incomplete` remains a Next candidate only. Completing the active item clears Active without selecting another item. NOW is the TUI representation of explicit Current Work Active state, not an inference from Next or checklist order. In Overview navigation, `▌` and a bold title denote the focused section; `>` denotes only a selected item; `[Work parent]` denotes Current Work association; `● NOW` denotes explicit Active state; and `│` in Task context denotes the source task line, not selection.
+Current Work changes update independently from Plan and Activity observation. Active is
+explicit Recorded state, never inferred from Next or checklist order. Completing Active
+clears it without selecting a successor. In navigation, bright Blue `▌` plus a bold title
+denotes focus; unfocused interactive sections use Blue+DIM `▌`, while passive Recent
+Commits uses `•`. `>` is local selection, `[Work parent]` is association, and `│` in Task
+context marks the source task line. The top-row `●` accompanies Current Work state,
+including inactive/unavailable states; it does not by itself mean work is active.
 
 Overview navigation sections are borderless and separated by whitespace; Project Progress
 retains its status-card frame and passive Preview retains its inspection frame. Nonfocused
 navigation titles remain normal, and truncated navigation rows use `…` within terminal-cell
-width, preserving selection/status cues and the reserved `[Work parent]` suffix. NOW remains bold;
+width, preserving selection/status cues and the reserved `[Work parent]` suffix;
 the footer remains subordinate. Focus does not depend on color or bold support alone.
 Side-by-side Windows Terminal dogfood accepted this hierarchy; displaying bold weight there
 may require the terminal profile's `intenseTextStyle` to be `bold` rather than `bright`.
@@ -173,7 +181,10 @@ remains available for supported inspection targets. Ctrl+Enter opens the selecte
 plain Enter or Esc returns when detail is open,
 and q always quits.
 Changed File Detail may surface observed change magnitude in addition to path and status.
-Change magnitude remains Activity data, not Evidence.
+Change magnitude remains Activity data, not Evidence. Overview Activity summarizes changed
+files with A/M/D/R counts and observed additions/deletions; these are not quality signals.
+Changed File Full Detail keeps compact File/Status/Changes metadata above its primary
+`▌ Diff`, `▌ File content`, or `▌ Inspection` region.
 Changed Files may also surface observed change magnitude for quick comparison across files.
 Change counts are secondary to path and status and may be omitted in narrow layouts.
 Changed File Detail uses optional on-demand Activity drill-down for file content changes.
@@ -224,7 +235,7 @@ The current panel roles are:
 
 ```text
 Tasks          Detail Pane; no Full Detail
-Evidence       Detail Pane; no Full Detail
+Evidence       Detail Pane and output Full Detail for supported completed results
 Changed Files  Detail Pane and Full Detail
 Recent Commits overview-only
 ```
@@ -233,12 +244,15 @@ Navigation uses Left/Right for previous/next visible panel focus, with Tab / Shi
 retained as compatible navigation. Up/Down and j/k move selection within the focused panel.
 Preview remains a passive common detail area, never a focus target. Plain Enter and `p`
 toggle the same visibility preference, initially off; responsive layouts may still hide Preview.
-The framed Overview Preview title is bold in the default foreground, without changing
-the title styling of File Browser Preview or Full View.
+The framed Overview Preview title is bold in the default foreground;
+the passive File Browser Preview also has a bold default-foreground title. Neither split
+Preview uses Blue `▌`; that marker belongs to primary interaction surfaces, including
+full-screen inspection content.
 Ctrl+Up/Down scroll visible Preview one line without moving focus or selection. The scroll
 offset resets when its focused panel or selected target changes; hiding and showing the same
 target preserves it, and rendering clamps it to the current content and viewport.
-Ctrl+Enter opens Full Detail from Overview only for a selected Changed File. Changed File Full Detail
+Ctrl+Enter opens Full Detail from Overview for a selected Changed File or a completed
+Build/Test result with nonempty retained output. Full Detail
 keeps Up/Down and j/k scrolling; plain Enter or Esc returns to Overview without changing
 focus, selection, or Preview visibility/scroll. Ctrl/Shift/Alt+Enter is a no-op within
 Full Detail. Enter on Overview remains the Preview toggle; Esc on Overview retains quit
@@ -249,12 +263,13 @@ The global footer owns navigation and application-wide controls. Preview owns cu
 available contextual actions in a fixed bottom row, separate from scrolling content;
 scroll limits use the remaining content viewport. Ctrl+Up/Down is advertised only when
 content can scroll, including in File Browser. Changed Files Preview advertises
-Ctrl+Enter Full Detail only when a file is selected.
+Ctrl+Enter Full Detail only when a file is selected; Evidence advertises it only for
+completed results with at least one nonempty retained output stream.
 
 TUI verification uses plain Space only with Evidence focused, its Overview Preview
-actually visible, and a runnable Build or Test selected. NotRun can run, Completed can
-rerun, and ExecutionError can retry; Unavailable and Artifact cannot run. Neither target
-can start while either verification is Running. Run hints follow these same conditions;
+actually visible, and a runnable Debug, Release, or Test selected. NotRun can run, Completed can
+rerun, and ExecutionError can retry; Unavailable and Artifact cannot run. No target
+can start while any verification is Running. Run hints follow these same conditions;
 the selected running target shows Running instead. Hidden or responsive-hidden Preview,
 File Browser, and Full Detail cannot start verification. Global b/t shortcuts are removed,
 without compatibility aliases. CLI verify build/test and the runner, freshness, and
@@ -276,7 +291,7 @@ bin, obj, other dotfiles, and Git-ignored files remain visible. Plan/Activity/Ve
 are not reused. Paths remain root-confined; symlink/reparse entries are shown but not followed.
 
 The passive Browser Preview shares the bounded 64 KiB UTF-8 reader with Changed File
-inspection, explicitly labels File content, escapes terminal controls, and explains
+inspection, escapes terminal controls, and explains
 unsupported content and truncation. Large/Medium use a 40/60 Files/Preview split with
 the existing visibility thresholds (Overview retains its 45/55 split);
 narrow/Small layouts show only the list. Ctrl+Up/Down scroll visible Preview independently
@@ -299,11 +314,13 @@ advertising Up/Down and j/k scrolling, Enter/Esc Back, and q Quit where space pe
 File Browser follows Overview's visual rule: borderless `▌ Files` with a bold focus title,
 `>` for selection, and a framed passive Preview. The list uses its actual inner area through
 the last row, without a bottom separator. Preview metadata uses compact `Label: value`
-fields, retaining `File: <path>` because its title is only `Preview`; existing safe text and
+fields for directory/parent/unsupported/error states. Readable file Preview starts directly
+with cached content, without File/Mode metadata; existing safe text and
 fixed scroll hints are preserved. The Browser header uses one title row, one status row
 only when notice/error text exists, and one incomplete-listing row only when needed.
 Rendering and scroll limits share this geometry, reclaiming unused rows for Files and
-Preview. Windows Terminal dogfood accepted the 40/60 split, compact header, and consistent
+Preview. The Browser header is `Path: <directory>`; Full View keeps external `Path: <file>`
+and primary `▌ File Content`. Windows Terminal dogfood accepted the 40/60 split, compact header, and consistent
 Full View footer without changing navigation, wrapping, or Small list-only behavior.
 
 Status markers are source-state cues, separate from focus, selection, Current Work association, and
@@ -319,8 +336,8 @@ width; narrow layouts hide it, and resizing preserves the user's `p` toggle stat
 The interaction model is considered validated, but the exact contents remain provisional. Task
 Detail currently shows task text, source path, section, and Markdown context. Evidence Detail
 shows compact Status, Freshness, Duration, and Exit code fields for completed results,
-with Command and Result sections. Failed results show retained Diagnostic output when
-available; stale results explain that project inputs changed after verification. Running
+with Command and Result sections. Output shows availability labels only, not logs;
+stale results explain that project inputs changed after verification. Running
 and ExecutionError show Command, with Error for execution failures. Changed File Detail
 currently shows status, change counts, and diff content, with Full Detail for scrolling. These are
 current useful contents, not final contracts: future observation sources and workflows may change
@@ -335,11 +352,12 @@ limits use these same rendered rows and exclude the fixed action row. Browser Pr
 Browser Full View, and Changed File Full Detail use the same width-aware wrapping for
 non-diff inspection content, with scroll limits derived from their actual content viewport.
 Git diff in Changed File Preview and Full View preserves one source line per visual row;
-wide rows use display-width-safe ellipsis truncation. Section titles, hunk headers, and
-added/removed content use bold; file-header metadata and context remain plain. Diff scroll
+wide rows use display-width-safe ellipsis truncation. Section titles and hunk headers
+use underline; added content uses Blue+Bold and removed
+content Blue+DIM. File-header metadata and context remain default. Diff scroll
 limits use those same fitted rows. Hunk body rows show aligned old/new line-number gutters;
-metadata and hunk headers have no gutter. Added rows use green, removed rows red, and hunk
-headers cyan. Bold and one-source-line-per-row remain the non-color structure; there is no
+metadata and hunk headers have no gutter. Terminal Blue supplies the restrained source-row
+accent; signs, gutters, and one-source-line-per-row remain the non-color structure. There is no
 theme or configurable color system.
 Windows Terminal dogfood accepted the wrapped inspection and Browser return behavior.
 Half-screen Windows Terminal dogfood
@@ -347,8 +365,26 @@ accepted the denser layout without changing the interaction model.
 
 Future Detail Pane work, if justified, may examine a Recent Commits detail,
 or consider syntax highlighting and colors. It does not imply Detail Pane focus or Full
-Detail for Tasks or Evidence.
+Detail for Tasks. Artifact remains Preview-only.
 ## Instrumented verification experiment
+
+### Evidence output inspection
+
+Preview stays compact: completed Status, Freshness, Duration, and Exit code, followed by
+Command, Result, a Stale Freshness note, and output-availability labels. stdout is labeled
+`Test output`, stderr `Error output`, with `(tail)` when that stream was truncated.
+Each stream independently retains at most 2,048 Unicode scalar values; a noisy stream
+cannot evict the other. These tails are runtime-only: `build-test-v1.tsv` persists latest
+result/freshness state, not output, and restoration does not restore logs.
+
+Ctrl+Enter opens Evidence Full Detail only for Completed results with nonempty retained
+stdout or stderr, including Passed and Stale results. Artifact remains Preview-only.
+Opening captures a snapshot, not a live view: `Evidence Detail` contains metadata and
+`▌ Evidence Output` is the primary scrolling region. Terminal controls are escaped.
+Failed results initially seek a small recognizable failure anchor in stdout, then stderr,
+falling back toward the retained tail. The initial offset accounts for wrapped rows;
+after opening, user scrolling is authoritative. Passed results start at zero. This is
+not failure analysis, an Evidence history, or a persisted log database.
 
 Process verification has exactly three typed identities: Build Debug, Build Release, and
 Test. Each owns its lifecycle, latest result, freshness baseline, and persisted slot.
